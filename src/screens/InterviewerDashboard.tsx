@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -6,6 +6,7 @@ import {
   Dimensions,
   RefreshControl,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import {
   Text,
   Card,
@@ -35,6 +36,13 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  
+  // Calculate interview stats
+  const interviewStats = useMemo(() => {
+    const approved = myInterviews.filter(interview => interview.status === 'Approved').length;
+    const pending = myInterviews.filter(interview => interview.status === 'Pending_Approval').length;
+    return { approved, pending };
+  }, [myInterviews]);
 
   useEffect(() => {
     loadDashboardData();
@@ -184,6 +192,20 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
               <Text style={styles.statLabel}>My Interviews</Text>
             </Card.Content>
           </Card>
+          
+          <Card style={styles.statCard}>
+            <Card.Content style={styles.statContent}>
+              <Text style={styles.statNumber}>{interviewStats.approved}</Text>
+              <Text style={styles.statLabel}>Accepted</Text>
+            </Card.Content>
+          </Card>
+          
+          <Card style={styles.statCard}>
+            <Card.Content style={styles.statContent}>
+              <Text style={styles.statNumber}>{interviewStats.pending}</Text>
+              <Text style={styles.statLabel}>Pending</Text>
+            </Card.Content>
+          </Card>
         </View>
 
         {/* Available Surveys */}
@@ -224,13 +246,67 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                     </View>
                     <View style={styles.metaItem}>
                       <Text style={styles.metaLabel}>Questions</Text>
-                      <Text style={styles.metaValue}>{survey.questions?.length || 0}</Text>
+                      <Text style={styles.metaValue}>
+                        {survey.sections?.reduce((total, section) => 
+                          total + (section.questions?.length || 0), 0) || 0}
+                      </Text>
                     </View>
                     <View style={styles.metaItem}>
                       <Text style={styles.metaLabel}>Target</Text>
                       <Text style={styles.metaValue}>{survey.sampleSize?.toLocaleString() || 0}</Text>
                     </View>
                   </View>
+
+                  {/* Assigned ACs */}
+                  {survey.assignedACs && survey.assignedACs.length > 0 && (
+                    <View style={styles.assignedACsContainer}>
+                      <View style={styles.assignedACsHeader}>
+                        <Ionicons name="location" size={14} color="#6b7280" />
+                        <Text style={styles.assignedACsLabel}>Areas:</Text>
+                      </View>
+                      <View style={styles.assignedACsChips}>
+                        {survey.assignedACs.slice(0, 3).map((ac, index) => (
+                          <View key={index} style={styles.acChip}>
+                            <Text style={styles.acChipText}>{ac}</Text>
+                          </View>
+                        ))}
+                        {survey.assignedACs.length > 3 && (
+                          <View style={styles.acChip}>
+                            <Text style={styles.acChipText}>+{survey.assignedACs.length - 3} more</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Quick targeting info */}
+                  {survey.targetAudience && (
+                    <View style={styles.quickTargeting}>
+                      {survey.targetAudience.demographics?.ageRange && (
+                        <Text style={styles.quickTargetingText}>
+                          Age: {survey.targetAudience.demographics.ageRange.min || 'N/A'}-{survey.targetAudience.demographics.ageRange.max || 'N/A'}
+                        </Text>
+                      )}
+                      {survey.targetAudience.demographics?.genderRequirements && (
+                        <Text style={styles.quickTargetingText}>
+                          Gender: {(() => {
+                            const requirements = survey.targetAudience.demographics.genderRequirements;
+                            const selectedGenders = Object.keys(requirements).filter(g => requirements[g] && !g.includes('Percentage'));
+                            return selectedGenders.map(gender => {
+                              const percentage = requirements[`${gender}Percentage`];
+                              const displayPercentage = selectedGenders.length === 1 && !percentage ? 100 : (percentage || 0);
+                              return `${gender}: ${displayPercentage}%`;
+                            }).join(', ');
+                          })()}
+                        </Text>
+                      )}
+                      {survey.targetAudience.geographic?.stateRequirements && (
+                        <Text style={styles.quickTargetingText}>
+                          State: {survey.targetAudience.geographic.stateRequirements}
+                        </Text>
+                      )}
+                    </View>
+                  )}
                 </Card.Content>
               </Card>
             ))
@@ -396,14 +472,15 @@ const styles = StyleSheet.create({
   },
   statsContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     marginTop: 20,
     marginBottom: 24,
     paddingHorizontal: 4,
   },
   statCard: {
-    flex: 1,
-    marginHorizontal: 5,
+    width: '48%',
+    marginBottom: 12,
     elevation: 6,
     shadowColor: '#000',
     shadowOffset: {
@@ -570,5 +647,51 @@ const styles = StyleSheet.create({
   },
   snackbar: {
     backgroundColor: '#dc2626',
+  },
+  // Assigned ACs styles for dashboard
+  assignedACsContainer: {
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  assignedACsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  assignedACsLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginLeft: 4,
+    fontWeight: '500',
+  },
+  assignedACsChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  acChip: {
+    backgroundColor: '#dbeafe',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+  },
+  acChipText: {
+    fontSize: 10,
+    color: '#1e40af',
+    fontWeight: '500',
+  },
+  // Quick targeting styles
+  quickTargeting: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  quickTargetingText: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginBottom: 2,
   },
 });

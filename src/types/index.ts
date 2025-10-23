@@ -21,6 +21,7 @@ export interface Survey {
   mode: 'capi' | 'cati' | 'online';
   status: 'draft' | 'active' | 'completed' | 'archived';
   questions: Question[];
+  sections?: Section[];
   targetAudience: {
     demographics?: any;
     geographic?: any;
@@ -42,6 +43,15 @@ export interface Survey {
   selectedCountry?: string;
   maxInterviews?: number;
   completedInterviews?: number;
+  deadline?: string;
+}
+
+export interface Section {
+  _id: string;
+  title: string;
+  description?: string;
+  questions: Question[];
+  order: number;
 }
 
 export interface Question {

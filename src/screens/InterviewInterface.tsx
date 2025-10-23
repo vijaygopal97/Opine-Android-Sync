@@ -642,7 +642,13 @@ export default function InterviewInterface({ navigation, route }: any) {
           [
             {
               text: 'OK',
-              onPress: () => navigation.navigate('Dashboard')
+              onPress: () => {
+                // Reset navigation stack to prevent going back to interview
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Dashboard' }],
+                });
+              }
             }
           ]
         );
