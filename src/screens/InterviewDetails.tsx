@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Chip } from 'react-native-paper';
+import { Chip, Button } from 'react-native-paper';
+import { Audio } from 'expo-av';
 import { apiService } from '../services/api';
 import { SurveyResponse } from '../types';
 
@@ -30,10 +31,29 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
   const { interview } = route.params;
   const [isLoading, setIsLoading] = useState(false);
   const [detailedInterview, setDetailedInterview] = useState<SurveyResponse | null>(null);
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
 
   useEffect(() => {
     loadDetailedInterview();
+    
+    // Cleanup audio when component unmounts
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+    };
   }, []);
+
+  useEffect(() => {
+    // Cleanup audio when component unmounts
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+    };
+  }, [sound]);
 
   const loadDetailedInterview = async () => {
     setIsLoading(true);
@@ -78,12 +98,46 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
     }
   };
 
-  const handlePlayAudio = () => {
-    if (interview.audioRecording?.audioUrl) {
-      const audioUrl = `https://opine.exypnossolutions.com${interview.audioRecording.audioUrl}`;
-      Linking.openURL(audioUrl);
-    } else {
+  const handlePlayAudio = async () => {
+    if (!interview.audioRecording?.audioUrl) {
       Alert.alert('No Audio', 'No audio recording available for this interview.');
+      return;
+    }
+
+    try {
+      if (sound) {
+        if (isPlaying) {
+          await sound.pauseAsync();
+          setIsPlaying(false);
+        } else {
+          await sound.playAsync();
+          setIsPlaying(true);
+        }
+      } else {
+        setIsLoadingAudio(true);
+        const audioUrl = `https://opine.exypnossolutions.com${interview.audioRecording.audioUrl}`;
+        
+        const { sound: newSound } = await Audio.Sound.createAsync(
+          { uri: audioUrl },
+          { shouldPlay: true }
+        );
+        
+        setSound(newSound);
+        setIsPlaying(true);
+        
+        newSound.setOnPlaybackStatusUpdate((status) => {
+          if (status.isLoaded) {
+            if (status.didJustFinish) {
+              setIsPlaying(false);
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      Alert.alert('Audio Error', 'Failed to play audio recording.');
+    } finally {
+      setIsLoadingAudio(false);
     }
   };
 
@@ -269,9 +323,19 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
                       {(interview.audioRecording.fileSize / 1024 / 1024).toFixed(2)} MB
                     </Text>
                   </View>
-                  <TouchableOpacity style={styles.playButton} onPress={handlePlayAudio}>
-                    <Ionicons name="play" size={20} color="#ffffff" />
-                    <Text style={styles.playButtonText}>Play Audio</Text>
+                  <TouchableOpacity 
+                    style={[styles.playButton, isLoadingAudio && styles.disabledButton]} 
+                    onPress={handlePlayAudio}
+                    disabled={isLoadingAudio}
+                  >
+                    <Ionicons 
+                      name={isLoadingAudio ? "hourglass" : (isPlaying ? "pause" : "play")} 
+                      size={20} 
+                      color="#ffffff" 
+                    />
+                    <Text style={styles.playButtonText}>
+                      {isLoadingAudio ? "Loading..." : (isPlaying ? "Pause Audio" : "Play Audio")}
+                    </Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -552,6 +616,10 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: 8,
   },
+  disabledButton: {
+    backgroundColor: '#9ca3af',
+    opacity: 0.6,
+  },
   qualityRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -618,3 +686,4 @@ const styles = StyleSheet.create({
 });
 
 export default InterviewDetails;
+

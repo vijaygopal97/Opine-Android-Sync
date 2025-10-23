@@ -37,18 +37,24 @@ export default function AvailableSurveys({ navigation }: any) {
   }, []);
 
   useEffect(() => {
-    filterSurveys();
-  }, [surveys, searchQuery, selectedMode]);
+    loadSurveys();
+  }, [searchQuery, selectedMode]);
 
   const loadSurveys = async () => {
     setIsLoading(true);
     try {
-      const result = await apiService.getAvailableSurveys();
+      const filters = {
+        mode: selectedMode !== 'all' ? selectedMode : undefined,
+        search: searchQuery.trim() || undefined
+      };
+      
+      const result = await apiService.getAvailableSurveys(filters);
       
       if (result.success) {
         console.log('AvailableSurveys - Loaded surveys:', result.surveys?.length || 0);
         console.log('AvailableSurveys - Survey data:', result.surveys);
         setSurveys(result.surveys || []);
+        setFilteredSurveys(result.surveys || []);
       } else {
         console.log('AvailableSurveys - Error:', result.message);
         showSnackbar(result.message || 'Failed to load surveys');
@@ -67,24 +73,6 @@ export default function AvailableSurveys({ navigation }: any) {
     setIsRefreshing(false);
   };
 
-  const filterSurveys = () => {
-    let filtered = surveys;
-
-    // Filter by search query
-    if (searchQuery.trim()) {
-      filtered = filtered.filter(survey =>
-        survey.surveyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        survey.description.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    // Filter by mode
-    if (selectedMode !== 'all') {
-      filtered = filtered.filter(survey => survey.mode === selectedMode);
-    }
-
-    setFilteredSurveys(filtered);
-  };
 
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
@@ -121,7 +109,7 @@ export default function AvailableSurveys({ navigation }: any) {
 
   const getModeIcon = (mode: string) => {
     switch (mode) {
-      case 'capi': return 'phone-in-talk';
+      case 'capi': return 'account';
       case 'cati': return 'phone';
       case 'online': return 'web';
       default: return 'help-circle';
@@ -378,15 +366,16 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   surveyCard: {
-    marginBottom: 16,
-    elevation: 3,
+    marginBottom: 20,
+    elevation: 6,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 3,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    borderRadius: 16,
   },
   surveyHeader: {
     marginBottom: 12,
@@ -398,26 +387,30 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   surveyTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#1f2937',
     flex: 1,
     marginRight: 12,
+    lineHeight: 26,
   },
   badgesContainer: {
     flexDirection: 'row',
     gap: 8,
   },
   modeChip: {
-    height: 28,
+    height: 32,
+    borderRadius: 16,
   },
   statusChip: {
-    height: 28,
+    height: 32,
+    borderRadius: 16,
   },
   chipText: {
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
     color: '#ffffff',
+    textTransform: 'uppercase',
   },
   surveyDescription: {
     fontSize: 14,

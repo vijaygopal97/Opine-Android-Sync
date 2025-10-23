@@ -63,18 +63,59 @@ export default function InterviewInterface({ navigation, route }: any) {
   const [recording, setRecording] = useState<any>(null);
   const [audioPermission, setAudioPermission] = useState<boolean | null>(null);
   const [isCreatingRecording, setIsCreatingRecording] = useState(false);
+  
+  // AC selection state
+  const [selectedAC, setSelectedAC] = useState<string | null>(null);
+  const [assignedACs, setAssignedACs] = useState<string[]>([]);
+  const [requiresACSelection, setRequiresACSelection] = useState(false);
 
   // Get all questions from all sections
   const allQuestions = useMemo(() => {
-    if (!survey.sections) return [];
-    return survey.sections.flatMap((section: any) => 
-      section.questions.map((question: any) => ({
-        ...question,
-        sectionId: section.id,
-        sectionTitle: section.title
-      }))
-    );
-  }, [survey.sections]);
+    const questions = [];
+    
+    // Check if AC selection is required
+    const needsACSelection = requiresACSelection && assignedACs.length > 0;
+    
+    // Add AC selection question as first question if required
+    if (needsACSelection) {
+      const acQuestion = {
+        id: 'ac-selection',
+        type: 'single_choice',
+        text: 'Select Assembly Constituency',
+        description: 'Please select the Assembly Constituency where you are conducting this interview.',
+        required: true,
+        order: -1, // Make it appear first
+        options: assignedACs.map(ac => ({
+          id: `ac-${ac}`,
+          text: ac,
+          value: ac
+        })),
+        sectionIndex: -1, // Special section for AC selection
+        questionIndex: -1,
+        sectionId: 'ac-selection',
+        sectionTitle: 'Assembly Constituency Selection',
+        isACSelection: true // Flag to identify this special question
+      };
+      questions.push(acQuestion);
+    }
+    
+    // Add regular survey questions
+    if (survey.sections) {
+      survey.sections.forEach((section: any, sectionIndex: number) => {
+        section.questions.forEach((question: any, questionIndex: number) => {
+          questions.push({
+            ...question,
+            sectionIndex,
+            questionIndex,
+            sectionId: section.id,
+            sectionTitle: section.title
+          });
+        });
+      });
+    }
+    
+    return questions;
+  }, [survey.sections, requiresACSelection, assignedACs]);
 
   // Helper function to check if response has content
   const hasResponseContent = (response: any): boolean => {
@@ -208,6 +249,18 @@ export default function InterviewInterface({ navigation, route }: any) {
           setSessionData(result.response);
           setIsInterviewActive(true);
           
+          // Check for AC assignment
+          console.log('Session data loaded:', result.response);
+          const needsACSelection = result.response.requiresACSelection && 
+                                   result.response.assignedACs && 
+                                   result.response.assignedACs.length > 0;
+          
+          console.log('AC Selection required:', needsACSelection);
+          console.log('Assigned ACs:', result.response.assignedACs);
+          
+          setRequiresACSelection(needsACSelection);
+          setAssignedACs(result.response.assignedACs || []);
+          
           // Start audio recording automatically for CAPI mode
           if (survey.mode === 'capi' && audioPermission && !isRecording) {
             console.log('Auto-starting audio recording for CAPI mode...');
@@ -278,6 +331,12 @@ export default function InterviewInterface({ navigation, route }: any) {
       ...prev,
       [questionId]: response
     }));
+    
+    // Handle AC selection specially
+    if (questionId === 'ac-selection') {
+      setSelectedAC(response);
+      console.log('AC selected:', response);
+    }
   };
 
   const goToNextQuestion = () => {
@@ -568,6 +627,7 @@ export default function InterviewInterface({ navigation, route }: any) {
               uploadedAt: audioUrl ? new Date().toISOString() : null
             },
           location: locationData,
+          selectedAC: selectedAC, // Include selected AC in response data
           totalQuestions: allQuestions.length,
           answeredQuestions: finalResponses.filter((r: any) => hasResponseContent(r.response)).length,
           skippedQuestions: finalResponses.filter((r: any) => !hasResponseContent(r.response)).length,

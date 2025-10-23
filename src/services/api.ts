@@ -89,13 +89,29 @@ class ApiService {
   }
 
   // Surveys
-  async getAvailableSurveys() {
+  async getAvailableSurveys(filters?: { mode?: string; search?: string }) {
     try {
       const headers = await this.getHeaders();
-      console.log('Making request to:', `${this.baseURL}/api/surveys/available`);
+      let url = `${this.baseURL}/api/surveys/available`;
+      
+      // Add query parameters if filters are provided
+      if (filters) {
+        const params = new URLSearchParams();
+        if (filters.mode && filters.mode !== 'all') {
+          params.append('mode', filters.mode);
+        }
+        if (filters.search) {
+          params.append('search', filters.search);
+        }
+        if (params.toString()) {
+          url += `?${params.toString()}`;
+        }
+      }
+      
+      console.log('Making request to:', url);
       console.log('Headers:', headers);
       
-      const response = await axios.get(`${this.baseURL}/api/surveys/available`, { headers });
+      const response = await axios.get(url, { headers });
       console.log('Available surveys response:', response.data);
       
       if (response.data.success) {

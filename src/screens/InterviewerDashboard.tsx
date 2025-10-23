@@ -214,8 +214,22 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                     {survey.description}
                   </Text>
                   <View style={styles.surveyMeta}>
-                    <Text style={styles.surveyMetaText}>Mode: {survey.mode.toUpperCase()}</Text>
-                    <Text style={styles.surveyMetaText}>Duration: {survey.estimatedDuration} min</Text>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Mode</Text>
+                      <Text style={styles.metaValue}>{survey.mode.toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Duration</Text>
+                      <Text style={styles.metaValue}>{survey.estimatedDuration || 0} min</Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Questions</Text>
+                      <Text style={styles.metaValue}>{survey.questions?.length || 0}</Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Target</Text>
+                      <Text style={styles.metaValue}>{survey.sampleSize?.toLocaleString() || 0}</Text>
+                    </View>
                   </View>
                 </Card.Content>
               </Card>
@@ -249,14 +263,37 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
               <Card key={interview._id} style={styles.interviewCard}>
                 <Card.Content>
                   <View style={styles.interviewHeader}>
-                    <Text style={styles.interviewTitle}>{interview.survey?.surveyName}</Text>
+                    <Text style={styles.interviewTitle}>{interview.survey?.surveyName || 'Unknown Survey'}</Text>
                     <View style={[styles.statusBadge, { backgroundColor: getStatusColor(interview.status) }]}>
                       <Text style={styles.statusText}>{getStatusText(interview.status)}</Text>
                     </View>
                   </View>
-                  <Text style={styles.interviewDate}>
-                    Started: {new Date(interview.startedAt).toLocaleDateString()}
-                  </Text>
+                  <View style={styles.interviewMeta}>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Started</Text>
+                      <Text style={styles.metaValue}>
+                        {interview.startedAt ? new Date(interview.startedAt).toLocaleDateString() : 'Unknown'}
+                      </Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Duration</Text>
+                      <Text style={styles.metaValue}>
+                        {interview.totalTimeSpent ? `${Math.floor(interview.totalTimeSpent / 60)} min` : 'N/A'}
+                      </Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Progress</Text>
+                      <Text style={styles.metaValue}>
+                        {interview.completionPercentage ? `${interview.completionPercentage}%` : 'N/A'}
+                      </Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Status</Text>
+                      <Text style={styles.metaValue}>
+                        {interview.status?.replace('_', ' ') || 'Unknown'}
+                      </Text>
+                    </View>
+                  </View>
                   {interview.completedAt && (
                     <Text style={styles.interviewDate}>
                       Completed: {new Date(interview.completedAt).toLocaleDateString()}
@@ -281,6 +318,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         style={styles.fab}
         onPress={() => navigation.navigate('AvailableSurveys')}
         label="Start Interview"
+        iconColor="#ffffff"
+        labelTextColor="#ffffff"
       />
 
       <Snackbar
@@ -313,7 +352,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingTop: 50,
-    paddingBottom: 20,
+    paddingBottom: 30,
     paddingHorizontal: 20,
   },
   headerContent: {
@@ -358,28 +397,38 @@ const styles = StyleSheet.create({
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: -20,
-    marginBottom: 20,
+    marginTop: 20,
+    marginBottom: 24,
+    paddingHorizontal: 4,
   },
   statCard: {
     flex: 1,
     marginHorizontal: 5,
-    elevation: 4,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    borderRadius: 12,
   },
   statContent: {
     alignItems: 'center',
     paddingVertical: 20,
   },
   statNumber: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#2563eb',
     marginBottom: 4,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#6b7280',
     textAlign: 'center',
+    fontWeight: '500',
   },
   section: {
     marginBottom: 24,
@@ -396,8 +445,16 @@ const styles = StyleSheet.create({
     color: '#1f2937',
   },
   surveyCard: {
-    marginBottom: 12,
-    elevation: 2,
+    marginBottom: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    borderRadius: 12,
   },
   surveyHeader: {
     flexDirection: 'row',
@@ -421,14 +478,41 @@ const styles = StyleSheet.create({
   surveyMeta: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 12,
   },
-  surveyMetaText: {
-    fontSize: 12,
+  metaItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  metaLabel: {
+    fontSize: 10,
     color: '#9ca3af',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  metaValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1f2937',
+    textAlign: 'center',
+  },
+  interviewMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    marginBottom: 8,
   },
   interviewCard: {
-    marginBottom: 12,
-    elevation: 2,
+    marginBottom: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    borderRadius: 12,
   },
   interviewHeader: {
     flexDirection: 'row',
