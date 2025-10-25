@@ -430,6 +430,20 @@ export default function InterviewInterface({ navigation, route }: any) {
       showSnackbar('Please correct the validation error before proceeding');
       return;
     }
+
+    // Check if current question is required and not answered
+    if (currentQuestion.required) {
+      const response = responses[currentQuestion.id];
+      const hasValidResponse = response !== null && 
+                              response !== undefined && 
+                              response !== '' && 
+                              (Array.isArray(response) ? response.length > 0 : true);
+      
+      if (!hasValidResponse) {
+        showSnackbar('This is a required question. Please provide an answer before proceeding.');
+        return;
+      }
+    }
     
     if (currentQuestionIndex < visibleQuestions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
@@ -626,6 +640,31 @@ export default function InterviewInterface({ navigation, route }: any) {
     }
   };
 
+  // Function to validate required questions
+  const validateRequiredQuestions = () => {
+    const unansweredRequiredQuestions: Array<{question: any, index: number}> = [];
+    
+    // Check all visible questions (questions that were actually shown to the user)
+    visibleQuestions.forEach((question, index) => {
+      if (question.required) {
+        const response = responses[question.id];
+        const hasValidResponse = response !== null && 
+                                response !== undefined && 
+                                response !== '' && 
+                                (Array.isArray(response) ? response.length > 0 : true);
+        
+        if (!hasValidResponse) {
+          unansweredRequiredQuestions.push({
+            question: question,
+            index: index
+          });
+        }
+      }
+    });
+    
+    return unansweredRequiredQuestions;
+  };
+
   const completeInterview = async () => {
     if (!sessionId) return;
 
@@ -633,6 +672,19 @@ export default function InterviewInterface({ navigation, route }: any) {
     if (targetAudienceErrors.size > 0) {
       showSnackbar('Please correct all validation errors before completing the interview');
       return;
+    }
+
+    // Check for unanswered required questions
+    const unansweredRequired = validateRequiredQuestions();
+    if (unansweredRequired.length > 0) {
+      const firstUnanswered = unansweredRequired[0];
+      const questionIndex = visibleQuestions.findIndex(q => q.id === firstUnanswered.question.id);
+      
+      if (questionIndex !== -1) {
+        setCurrentQuestionIndex(questionIndex);
+        showSnackbar(`Please answer the required question: "${firstUnanswered.question.text}"`);
+        return;
+      }
     }
 
     try {
@@ -1218,9 +1270,13 @@ export default function InterviewInterface({ navigation, route }: any) {
             onPress={goToNextQuestion}
             style={[
               styles.nextButton,
-              targetAudienceErrors.has(visibleQuestions[currentQuestionIndex]?.id) && styles.disabledButton
+              (targetAudienceErrors.has(visibleQuestions[currentQuestionIndex]?.id) || 
+               (visibleQuestions[currentQuestionIndex]?.required && 
+                !responses[visibleQuestions[currentQuestionIndex]?.id])) && styles.disabledButton
             ]}
-            disabled={targetAudienceErrors.has(visibleQuestions[currentQuestionIndex]?.id)}
+            disabled={targetAudienceErrors.has(visibleQuestions[currentQuestionIndex]?.id) || 
+                     (visibleQuestions[currentQuestionIndex]?.required && 
+                      !responses[visibleQuestions[currentQuestionIndex]?.id])}
           >
             Next
           </Button>
