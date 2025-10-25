@@ -381,6 +381,7 @@ export default function InterviewInterface({ navigation, route }: any) {
   };
 
   const handleResponseChange = (questionId: string, response: any) => {
+    console.log('🔍 handleResponseChange - questionId:', questionId, 'response:', response, 'type:', typeof response);
     setResponses(prev => ({
       ...prev,
       [questionId]: response
@@ -674,19 +675,23 @@ export default function InterviewInterface({ navigation, route }: any) {
         }
       
       // Prepare final response data for ALL questions (including skipped ones)
-      const finalResponses = allQuestions.map((question: any, index: number) => ({
-        sectionIndex: 0,
-        questionIndex: index,
-        questionId: question.id,
-        questionType: question.type,
-        questionText: question.text,
-        questionDescription: question.description,
-        questionOptions: question.options?.map((opt: any) => opt.value) || [],
-        response: responses[question.id] || '', // Empty string for skipped questions
-        responseTime: 0,
-        isRequired: question.required,
-        isSkipped: !responses[question.id] // True if no response provided
-      }));
+      const finalResponses = allQuestions.map((question: any, index: number) => {
+        const response = responses[question.id] || '';
+        console.log('🔍 Final response for question:', question.id, 'response:', response, 'type:', typeof response);
+        return {
+          sectionIndex: 0,
+          questionIndex: index,
+          questionId: question.id,
+          questionType: question.type,
+          questionText: question.text,
+          questionDescription: question.description,
+          questionOptions: question.options?.map((opt: any) => opt.value) || [],
+          response: response, // Empty string for skipped questions
+          responseTime: 0,
+          isRequired: question.required,
+          isSkipped: !responses[question.id] // True if no response provided
+        };
+      });
 
       const result = await apiService.completeInterview(sessionId, {
         responses: finalResponses,
