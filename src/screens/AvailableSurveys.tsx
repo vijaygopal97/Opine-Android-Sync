@@ -83,7 +83,14 @@ export default function AvailableSurveys({ navigation }: any) {
 
     // Filter by mode
     if (selectedMode !== 'all') {
-      filtered = filtered.filter(survey => survey.mode === selectedMode);
+      filtered = filtered.filter(survey => {
+        // For multi-mode surveys, check the assigned mode
+        if (survey.mode === 'multi_mode') {
+          return survey.assignedMode === selectedMode;
+        }
+        // For single-mode surveys, check the survey mode
+        return survey.mode === selectedMode;
+      });
     }
 
     console.log('Filtered surveys:', filtered.length, 'Mode:', selectedMode);
@@ -103,22 +110,49 @@ export default function AvailableSurveys({ navigation }: any) {
   };
 
   const handleStartInterview = (survey: Survey) => {
-    Alert.alert(
-      'Start Interview',
-      `Are you sure you want to start the interview for "${survey.surveyName}"?`,
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Start',
-          onPress: () => {
-            navigation.navigate('InterviewInterface', { survey });
+    // Check if this is a multi-mode survey with CAPI assignment
+    if (survey.mode === 'multi_mode' && survey.assignedMode === 'capi') {
+      Alert.alert(
+        'CAPI Interview',
+        `This is a CAPI (Computer-Assisted Personal Interviewing) interview for "${survey.surveyName}". You can start the interview using the mobile app.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              navigation.navigate('InterviewInterface', { survey });
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    } else if (survey.mode === 'multi_mode' && survey.assignedMode === 'cati') {
+      Alert.alert(
+        'CATI Interview',
+        `This is a CATI (Computer-Assisted Telephonic Interviewing) interview for "${survey.surveyName}". This feature is coming soon!`,
+        [
+          {
+            text: 'OK',
+            style: 'cancel',
+          },
+        ]
+      );
+    } else {
+      Alert.alert(
+        'Start Interview',
+        `Are you sure you want to start the interview for "${survey.surveyName}"?`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Start',
+            onPress: () => {
+              navigation.navigate('InterviewInterface', { survey });
+            },
+          },
+        ]
+      );
+    }
   };
 
   const getModeColor = (mode: string) => {
@@ -126,6 +160,7 @@ export default function AvailableSurveys({ navigation }: any) {
       case 'capi': return '#059669';
       case 'cati': return '#2563eb';
       case 'online': return '#7c3aed';
+      case 'multi_mode': return '#dc2626';
       default: return '#6b7280';
     }
   };
@@ -135,6 +170,7 @@ export default function AvailableSurveys({ navigation }: any) {
       case 'capi': return 'account';
       case 'cati': return 'phone';
       case 'online': return 'web';
+      case 'multi_mode': return 'layers';
       default: return 'help-circle';
     }
   };
@@ -245,8 +281,18 @@ export default function AvailableSurveys({ navigation }: any) {
                         textStyle={styles.chipText}
                         compact
                       >
-                        {survey.mode.toUpperCase()}
+                        {survey.mode === 'multi_mode' ? 'MULTI-MODE' : survey.mode.toUpperCase()}
                       </Chip>
+                      {survey.assignedMode && survey.assignedMode !== 'single' && (
+                        <Chip
+                          icon={getModeIcon(survey.assignedMode)}
+                          style={[styles.modeChip, { backgroundColor: getModeColor(survey.assignedMode) }]}
+                          textStyle={styles.chipText}
+                          compact
+                        >
+                          {survey.assignedMode.toUpperCase()}
+                        </Chip>
+                      )}
                       <Chip
                         style={[styles.statusChip, { backgroundColor: getStatusColor(survey.status) }]}
                         textStyle={styles.chipText}
@@ -431,14 +477,29 @@ export default function AvailableSurveys({ navigation }: any) {
                     View Details
                   </Button>
                   
-                  <Button
-                    mode="contained"
-                    onPress={() => handleStartInterview(survey)}
-                    style={styles.startButton}
-                    compact
-                  >
-                    Start Interview
-                  </Button>
+                  {survey.mode === 'multi_mode' && survey.assignedMode === 'cati' ? (
+                    <Button
+                      mode="outlined"
+                      onPress={() => handleStartInterview(survey)}
+                      style={[styles.startButton, { borderColor: '#2563eb' }]}
+                      compact
+                      disabled
+                    >
+                      CATI Coming Soon
+                    </Button>
+                  ) : (
+                    <Button
+                      mode="contained"
+                      onPress={() => handleStartInterview(survey)}
+                      style={styles.startButton}
+                      compact
+                    >
+                      {survey.mode === 'multi_mode' && survey.assignedMode === 'capi' 
+                        ? 'Start CAPI Interview' 
+                        : 'Start Interview'
+                      }
+                    </Button>
+                  )}
                 </View>
               </Card.Content>
             </Card>

@@ -77,6 +77,15 @@ export default function InterviewInterface({ navigation, route }: any) {
   const allQuestions = useMemo(() => {
     const questions = [];
     
+    // Debug survey data
+    console.log('🔍 Survey data received:', {
+      surveyName: survey.surveyName,
+      sectionsCount: survey.sections ? survey.sections.length : 0,
+      questionsCount: survey.questions ? survey.questions.length : 0,
+      sections: survey.sections,
+      questions: survey.questions
+    });
+    
     // Check if AC selection is required
     const needsACSelection = requiresACSelection && assignedACs.length > 0;
     
@@ -103,23 +112,41 @@ export default function InterviewInterface({ navigation, route }: any) {
       questions.push(acQuestion);
     }
     
-    // Add regular survey questions
-    if (survey.sections) {
+    // Add regular survey questions from sections
+    if (survey.sections && survey.sections.length > 0) {
       survey.sections.forEach((section: any, sectionIndex: number) => {
-        section.questions.forEach((question: any, questionIndex: number) => {
-          questions.push({
-            ...question,
-            sectionIndex,
-            questionIndex,
-            sectionId: section.id,
-            sectionTitle: section.title
+        if (section.questions && section.questions.length > 0) {
+          section.questions.forEach((question: any, questionIndex: number) => {
+            questions.push({
+              ...question,
+              sectionIndex,
+              questionIndex,
+              sectionId: section.id,
+              sectionTitle: section.title
+            });
           });
+        }
+      });
+    }
+    
+    // Add direct survey questions (not in sections)
+    if (survey.questions && survey.questions.length > 0) {
+      survey.questions.forEach((question: any, questionIndex: number) => {
+        questions.push({
+          ...question,
+          sectionIndex: 0, // Default section for direct questions
+          questionIndex,
+          sectionId: 'direct-questions',
+          sectionTitle: 'Survey Questions'
         });
       });
     }
     
+    console.log('🔍 Total questions processed:', questions.length);
+    console.log('🔍 Questions array:', questions.map(q => ({ id: q.id, text: q.text, type: q.type })));
+    
     return questions;
-  }, [survey.sections, requiresACSelection, assignedACs]);
+  }, [survey.sections, survey.questions, requiresACSelection, assignedACs]);
 
   // Helper function to check if response has content
   const hasResponseContent = (response: any): boolean => {
@@ -265,9 +292,13 @@ export default function InterviewInterface({ navigation, route }: any) {
           setRequiresACSelection(needsACSelection);
           setAssignedACs(result.response.assignedACs || []);
           
-          // Start audio recording automatically for CAPI mode
-          if (survey.mode === 'capi' && audioPermission && !isRecording) {
+          // Start audio recording automatically for CAPI mode (both single-mode and multi-mode)
+          const shouldRecordAudio = (survey.mode === 'capi') || 
+                                   (survey.mode === 'multi_mode' && survey.assignedMode === 'capi');
+          
+          if (shouldRecordAudio && audioPermission && !isRecording) {
             console.log('Auto-starting audio recording for CAPI mode...');
+            console.log('Survey mode:', survey.mode, 'Assigned mode:', survey.assignedMode);
             // Add a longer delay to ensure component is fully mounted and ready
             setTimeout(() => {
               console.log('Attempting to start recording after delay...');
@@ -674,7 +705,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           startTime: sessionData?.startTime || new Date(),
           endTime: new Date(),
           totalTimeSpent: duration,
-          interviewMode: survey.mode || 'capi',
+          interviewMode: survey.mode === 'multi_mode' ? (survey.assignedMode || 'capi') : (survey.mode || 'capi'),
           deviceInfo: {
             userAgent: 'React Native App',
             platform: 'Mobile',
@@ -1127,7 +1158,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         )}
 
         {/* Audio Recording Indicator */}
-        {survey.mode === 'capi' && (
+        {((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && (
           <Card style={styles.audioCard}>
             <Card.Content>
               <View style={styles.audioHeader}>

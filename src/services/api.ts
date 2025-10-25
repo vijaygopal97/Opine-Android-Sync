@@ -21,6 +21,8 @@ class ApiService {
 
   private async getHeaders(): Promise<any> {
     const token = await this.getAuthToken();
+    console.log('🔍 API Service - Auth token exists:', !!token);
+    console.log('🔍 API Service - Token preview:', token ? token.substring(0, 20) + '...' : 'No token');
     return {
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
@@ -154,18 +156,26 @@ class ApiService {
     }
   }
 
-  // Survey Responses
+  // Survey Responses - Start interview session
   async startInterview(surveyId: string) {
     try {
       const headers = await this.getHeaders();
+      console.log('🔍 Starting interview for survey:', surveyId);
+      console.log('🔍 API URL:', `${this.baseURL}/api/survey-responses/start/${surveyId}`);
+      console.log('🔍 Headers:', headers);
+      
       const response = await axios.post(
-        `${this.baseURL}/api/survey-responses/start`,
-        { surveyId },
+        `${this.baseURL}/api/survey-responses/start/${surveyId}`,
+        {},
         { headers }
       );
-      return { success: true, response: response.data.response };
+      
+      console.log('🔍 Start interview response:', response.data);
+      return { success: true, response: response.data.data };
     } catch (error: any) {
       console.error('Start interview error:', error);
+      console.error('🔍 Error response:', error.response?.data);
+      console.error('🔍 Error status:', error.response?.status);
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to start interview',
@@ -227,24 +237,6 @@ class ApiService {
     }
   }
 
-  // Start interview session
-  async startInterview(surveyId: string) {
-    try {
-      const headers = await this.getHeaders();
-      const response = await axios.post(
-        `${this.baseURL}/api/survey-responses/start/${surveyId}`,
-        {},
-        { headers }
-      );
-      return { success: true, response: response.data.data };
-    } catch (error: any) {
-      console.error('Start interview error:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to start interview',
-      };
-    }
-  }
 
   // Pause interview
   async pauseInterview(sessionId: string) {
@@ -489,10 +481,17 @@ class ApiService {
   async getGenderResponseCounts(surveyId: string) {
     try {
       const headers = await this.getHeaders();
+      console.log('🔍 Getting gender response counts for survey:', surveyId);
+      console.log('🔍 API URL:', `${this.baseURL}/api/survey-responses/survey/${surveyId}/gender-counts`);
+      console.log('🔍 Headers:', headers);
+      
       const response = await axios.get(`${this.baseURL}/api/survey-responses/survey/${surveyId}/gender-counts`, { headers });
+      console.log('🔍 Gender response counts response:', response.data);
       return response.data;
     } catch (error: any) {
       console.error('Get gender response counts error:', error);
+      console.error('🔍 Error response:', error.response?.data);
+      console.error('🔍 Error status:', error.response?.status);
       return {
         success: false,
         message: 'Failed to get gender response counts',

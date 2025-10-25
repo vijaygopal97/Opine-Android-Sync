@@ -18,7 +18,22 @@ export interface Survey {
   _id: string;
   surveyName: string;
   description: string;
-  mode: 'capi' | 'cati' | 'online';
+  mode: 'capi' | 'cati' | 'online' | 'multi_mode';
+  modes?: string[];
+  modeAllocation?: {
+    capi?: number;
+    cati?: number;
+  };
+  modeQuotas?: {
+    capi?: number | null;
+    cati?: number | null;
+  };
+  modeGigWorkers?: {
+    capi?: boolean;
+    cati?: boolean;
+  };
+  includeGigWorkers?: boolean;
+  assignedMode?: 'capi' | 'cati' | 'single';
   status: 'draft' | 'active' | 'completed' | 'archived';
   questions: Question[];
   sections?: Section[];
