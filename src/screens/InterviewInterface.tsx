@@ -673,8 +673,8 @@ export default function InterviewInterface({ navigation, route }: any) {
           console.log('No audio file to upload');
         }
       
-      // Prepare final response data
-      const finalResponses = visibleQuestions.map((question: any, index: number) => ({
+      // Prepare final response data for ALL questions (including skipped ones)
+      const finalResponses = allQuestions.map((question: any, index: number) => ({
         sectionIndex: 0,
         questionIndex: index,
         questionId: question.id,
@@ -682,10 +682,10 @@ export default function InterviewInterface({ navigation, route }: any) {
         questionText: question.text,
         questionDescription: question.description,
         questionOptions: question.options?.map((opt: any) => opt.value) || [],
-        response: responses[question.id] || '',
+        response: responses[question.id] || '', // Empty string for skipped questions
         responseTime: 0,
         isRequired: question.required,
-        isSkipped: !responses[question.id]
+        isSkipped: !responses[question.id] // True if no response provided
       }));
 
       const result = await apiService.completeInterview(sessionId, {
