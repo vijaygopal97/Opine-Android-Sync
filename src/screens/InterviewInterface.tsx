@@ -36,6 +36,15 @@ let globalRecording: Audio.Recording | null = null;
 export default function InterviewInterface({ navigation, route }: any) {
   const { survey, responseId, isContinuing } = route.params;
   
+  // Helper function to check if an option is "Other", "Others", or "Others (Specify)"
+  const isOthersOption = (optText: string | null | undefined): boolean => {
+    if (!optText) return false;
+    const normalized = optText.toLowerCase().trim();
+    return normalized === 'other' || 
+           normalized === 'others' || 
+           normalized === 'others (specify)';
+  };
+  
   // State management
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [responses, setResponses] = useState<Record<string, any>>({});
@@ -823,7 +832,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         // Find "Others" option value for this question
         const othersOption = question.options?.find((opt: any) => {
           const optText = opt.text || '';
-          return optText.toLowerCase().trim() === 'others' || optText.toLowerCase().trim() === 'other';
+          return isOthersOption(optText);
         });
         const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
         
@@ -842,9 +851,9 @@ export default function InterviewInterface({ navigation, route }: any) {
               if (selectedOption) {
                 const optText = selectedOption.text || '';
                 const optCode = selectedOption.code || null;
-                const isOthersOption = optText.toLowerCase().trim() === 'others' || optText.toLowerCase().trim() === 'other';
+                const isOthers = isOthersOption(optText);
                 
-                if (isOthersOption) {
+                if (isOthers) {
                   // Get the "Others" text input value
                   const othersText = othersTextInputs[`${question.id}_${respValue}`] || '';
                   if (othersText) {
@@ -885,9 +894,9 @@ export default function InterviewInterface({ navigation, route }: any) {
             if (selectedOption) {
               const optText = selectedOption.text || '';
               const optCode = selectedOption.code || null;
-              const isOthersOption = optText.toLowerCase().trim() === 'others' || optText.toLowerCase().trim() === 'other';
+              const isOthers = isOthersOption(optText);
               
-              if (isOthersOption) {
+              if (isOthers) {
                 // Get the "Others" text input value
                 const othersText = othersTextInputs[`${question.id}_${processedResponse}`] || '';
                 if (othersText) {
@@ -922,7 +931,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         if (question.type === 'multiple_choice' && responseWithCodes) {
           // Check if any response has "Others" with specified text
           if (Array.isArray(responseWithCodes)) {
-            const othersResponse = responseWithCodes.find((r: any) => r.optionText && (r.optionText.toLowerCase().trim() === 'others' || r.optionText.toLowerCase().trim() === 'other') && r.answer !== r.optionText);
+            const othersResponse = responseWithCodes.find((r: any) => r.optionText && isOthersOption(r.optionText) && r.answer !== r.optionText);
             if (othersResponse) {
               // Replace the "Others" value with the specified text in the response array
               finalResponse = (processedResponse as string[]).map((val: string) => {
@@ -932,7 +941,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                 return val;
               });
             }
-          } else if (responseWithCodes.optionText && (responseWithCodes.optionText.toLowerCase().trim() === 'others' || responseWithCodes.optionText.toLowerCase().trim() === 'other') && responseWithCodes.answer !== responseWithCodes.optionText) {
+          } else if (responseWithCodes.optionText && isOthersOption(responseWithCodes.optionText) && responseWithCodes.answer !== responseWithCodes.optionText) {
             // Single selection with "Others" specified text
             finalResponse = `Others: ${responseWithCodes.answer}`;
           }
@@ -1189,7 +1198,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         // Check if "Others" option exists
         const othersOption = shuffledMultipleChoiceOptions.find((opt: any) => {
           const optText = opt.text || '';
-          return optText.toLowerCase().trim() === 'others' || optText.toLowerCase().trim() === 'other';
+          return isOthersOption(optText);
         });
         const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
         
@@ -1211,7 +1220,7 @@ export default function InterviewInterface({ navigation, route }: any) {
               const optionValue = option.value || option.text;
               const optionText = option.text || '';
               const isNoneOption = optionText.toLowerCase().trim() === 'none';
-              const isOthersOption = optionText.toLowerCase().trim() === 'others' || optionText.toLowerCase().trim() === 'other';
+              const isOthers = isOthersOption(optionText);
               const isSelected = allowMultiple 
                 ? (Array.isArray(currentResponse) && currentResponse.includes(optionValue))
                 : (currentResponse === optionValue);
@@ -1230,7 +1239,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                           currentAnswers = currentAnswers.filter((a: string) => a !== optionValue);
                           
                           // Clear "Others" text input if "Others" is deselected
-                          if (isOthersOption) {
+                          if (isOthers) {
                             setOthersTextInputs(prev => {
                               const updated = { ...prev };
                               delete updated[`${questionId}_${optionValue}`];
@@ -1251,7 +1260,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                                 return updated;
                               });
                             }
-                          } else if (isOthersOption) {
+                          } else if (isOthers) {
                             // If "Others" is selected, clear all other selections (mutual exclusivity)
                             currentAnswers = [optionValue];
                             // Clear "None" if it exists
@@ -1295,7 +1304,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                               return updated;
                             });
                           }
-                        } else if (isOthersOption) {
+                        } else if (isOthers) {
                           // "Others" selected - just set it
                           handleResponseChange(question.id, optionValue);
                         } else {
