@@ -315,10 +315,26 @@ class ApiService {
       const formData = new FormData();
       
       // Create file object from URI - match web app format exactly
+      // Determine file type based on URI extension
+      const uriLower = audioUri.toLowerCase();
+      let mimeType = 'audio/m4a'; // Default for React Native
+      let extension = '.m4a';
+      
+      if (uriLower.includes('.wav')) {
+        mimeType = 'audio/wav';
+        extension = '.wav';
+      } else if (uriLower.includes('.webm')) {
+        mimeType = 'audio/webm';
+        extension = '.webm';
+      } else if (uriLower.includes('.m4a')) {
+        mimeType = 'audio/m4a';
+        extension = '.m4a';
+      }
+      
       const file = {
         uri: audioUri,
-        type: 'audio/wav',
-        name: `interview_${sessionId}_${Date.now()}.wav`,
+        type: mimeType,
+        name: `interview_${sessionId}_${Date.now()}${extension}`,
       } as any;
       
       formData.append('audio', file);

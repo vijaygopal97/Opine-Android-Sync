@@ -567,8 +567,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       console.log('Starting recording...');
       await recording.startAsync();
       
-      const audioPath = `${FileSystem.documentDirectory}audio_${Date.now()}.m4a`;
-      setAudioUri(audioPath);
+      // Don't set audioUri here - it will be set when we stop recording and get the actual URI
       setIsRecording(true);
       setIsAudioPaused(false);
       setAudioPermission(true);
@@ -590,7 +589,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       
       if (!isRecording || !globalRecording) {
         console.log('No recording to stop');
-        return null;
+        return audioUri; // Return existing URI if available
       }
       
       console.log('Stopping and unloading recording...');
@@ -598,6 +597,11 @@ export default function InterviewInterface({ navigation, route }: any) {
       
       const uri = globalRecording.getURI();
       console.log('Recording URI:', uri);
+      
+      // Update audioUri state with the actual file URI
+      if (uri) {
+        setAudioUri(uri);
+      }
       
       setIsRecording(false);
       setIsAudioPaused(false);
@@ -608,7 +612,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     } catch (error) {
       console.error('Error stopping recording:', error);
       showSnackbar('Failed to stop recording');
-      return null;
+      return audioUri; // Return existing URI if available, even if stop failed
     }
   };
 
@@ -706,24 +710,37 @@ export default function InterviewInterface({ navigation, route }: any) {
       
       console.log('Final currentAudioUri:', currentAudioUri);
       
-        // Upload audio file if available
-        let audioFileSize = 0;
-        if (currentAudioUri) {
-          console.log('Uploading audio file...', currentAudioUri);
-          
-          const uploadResult = await apiService.uploadAudioFile(currentAudioUri, sessionId, survey._id);
-          if (uploadResult.success) {
-            audioUrl = uploadResult.response.audioUrl;
-            audioFileSize = uploadResult.response.size || 0;
-            console.log('Audio uploaded successfully:', audioUrl, 'Size:', audioFileSize);
-            showSnackbar('Audio recording uploaded successfully');
+      // Upload audio file if available
+      let audioFileSize = 0;
+      if (currentAudioUri) {
+        console.log('Uploading audio file...', currentAudioUri);
+        
+        try {
+          // Check if file exists before uploading
+          const fileInfo = await FileSystem.getInfoAsync(currentAudioUri);
+          if (!fileInfo.exists) {
+            console.error('Audio file does not exist at path:', currentAudioUri);
+            showSnackbar('Audio file not found, continuing without audio');
           } else {
-            console.error('Failed to upload audio:', uploadResult.message);
-            showSnackbar('Failed to upload audio, continuing without audio');
+            console.log('Audio file exists, size:', fileInfo.size);
+            const uploadResult = await apiService.uploadAudioFile(currentAudioUri, sessionId, survey._id);
+            if (uploadResult.success) {
+              audioUrl = uploadResult.response.audioUrl;
+              audioFileSize = uploadResult.response.size || 0;
+              console.log('Audio uploaded successfully:', audioUrl, 'Size:', audioFileSize);
+              showSnackbar('Audio recording uploaded successfully');
+            } else {
+              console.error('Failed to upload audio:', uploadResult.message);
+              showSnackbar('Failed to upload audio, continuing without audio');
+            }
           }
-        } else {
-          console.log('No audio file to upload');
+        } catch (uploadError: any) {
+          console.error('Error during audio upload:', uploadError);
+          showSnackbar('Failed to upload audio, continuing without audio');
         }
+      } else {
+        console.log('No audio file to upload');
+      }
       
       // Prepare final response data for ALL questions (including skipped ones)
       const finalResponses = allQuestions.map((question: any, index: number) => ({
