@@ -76,7 +76,7 @@ export interface Section {
 export interface Question {
   _id?: string;
   id?: string;
-  type: 'text' | 'multiple_choice' | 'single_choice' | 'rating' | 'date' | 'number';
+  type: 'text' | 'multiple_choice' | 'single_choice' | 'rating' | 'date' | 'number' | 'numeric';
   text: string;
   options?: string[] | Array<{ id?: string; text: string; value?: string; code?: string }>;
   required: boolean;

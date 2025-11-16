@@ -155,7 +155,8 @@ export default function InterviewInterface({ navigation, route }: any) {
     if (response === null || response === undefined) return false;
     if (typeof response === 'string') return response.trim().length > 0;
     if (Array.isArray(response)) return response.length > 0;
-    if (typeof response === 'number') return !isNaN(response);
+    if (typeof response === 'number') return !isNaN(response) && isFinite(response); // Allow 0 and negative numbers
+    if (typeof response === 'boolean') return true;
     return true;
   };
 
@@ -1081,11 +1082,22 @@ export default function InterviewInterface({ navigation, route }: any) {
         );
 
       case 'number':
+      case 'numeric':
         return (
           <TextInput
             mode="outlined"
-            value={currentResponse?.toString() || ''}
-            onChangeText={(text) => handleResponseChange(question.id, parseFloat(text) || 0)}
+            value={currentResponse !== null && currentResponse !== undefined ? currentResponse.toString() : ''}
+            onChangeText={(text) => {
+              // Allow empty string or valid number (including 0 and negative numbers)
+              if (text === '') {
+                handleResponseChange(question.id, '');
+              } else {
+                const numValue = parseFloat(text);
+                if (!isNaN(numValue) && isFinite(numValue)) {
+                  handleResponseChange(question.id, numValue);
+                }
+              }
+            }}
             placeholder="Enter a number..."
             keyboardType="numeric"
             style={styles.textInput}
