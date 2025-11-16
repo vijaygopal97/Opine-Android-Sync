@@ -176,18 +176,119 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
     }
   };
 
-  const renderResponseItem = (response: any, index: number) => (
-    <View key={index} style={styles.responseItem}>
-      <Text style={styles.questionText}>{response.questionText}</Text>
-      <Text style={styles.answerText}>
-        {response.isSkipped ? (
-          <Text style={styles.skippedText}>Skipped</Text>
-        ) : (
-          response.response || 'No response'
-        )}
-      </Text>
-    </View>
-  );
+  // Helper function to format response display text (similar to web version)
+  const formatResponseDisplay = (response: any, surveyQuestion: any) => {
+    if (!response || response === null || response === undefined) {
+      return 'No response';
+    }
+
+    // If it's an array (multiple selections)
+    if (Array.isArray(response)) {
+      if (response.length === 0) return 'No selections';
+      
+      // Map each value to its display text using the question options
+      const displayTexts = response.map((value: any) => {
+        // Check if this is an "Others: [specified text]" response
+        if (typeof value === 'string' && value.startsWith('Others: ')) {
+          return value; // Return as-is (e.g., "Others: Custom text")
+        }
+        
+        if (surveyQuestion && surveyQuestion.options) {
+          const option = surveyQuestion.options.find((opt: any) => {
+            const optValue = opt.value || opt.text;
+            return optValue === value;
+          });
+          return option ? option.text : value;
+        }
+        return value;
+      });
+      
+      return displayTexts.join(', ');
+    }
+
+    // If it's a string or single value
+    if (typeof response === 'string' || typeof response === 'number') {
+      // Check if this is an "Others: [specified text]" response
+      if (typeof response === 'string' && response.startsWith('Others: ')) {
+        return response; // Return as-is (e.g., "Others: Custom text")
+      }
+      
+      // Handle rating responses with labels
+      if (surveyQuestion && surveyQuestion.type === 'rating' && typeof response === 'number') {
+        const scale = surveyQuestion.scale || {};
+        const labels = scale.labels || [];
+        const min = scale.min || 1;
+        const label = labels[response - min];
+        if (label) {
+          return `${response} (${label})`;
+        }
+        return response.toString();
+      }
+      
+      // Map to display text using question options
+      if (surveyQuestion && surveyQuestion.options) {
+        const option = surveyQuestion.options.find((opt: any) => {
+          const optValue = opt.value || opt.text;
+          return optValue === response;
+        });
+        return option ? option.text : response.toString();
+      }
+      return response.toString();
+    }
+
+    return JSON.stringify(response);
+  };
+
+  // Helper function to find question by text in survey
+  const findQuestionByText = (questionText: string, survey: any) => {
+    if (!survey || !questionText) return null;
+    
+    // Search in sections
+    if (survey.sections) {
+      for (const section of survey.sections) {
+        if (section.questions) {
+          for (const question of section.questions) {
+            if (question.text === questionText || question.questionText === questionText) {
+              return question;
+            }
+          }
+        }
+      }
+    }
+    
+    // Search in top-level questions
+    if (survey.questions) {
+      for (const question of survey.questions) {
+        if (question.text === questionText || question.questionText === questionText) {
+          return question;
+        }
+      }
+    }
+    
+    return null;
+  };
+
+  const renderResponseItem = (response: any, index: number) => {
+    // Find the corresponding question in the survey to get options
+    const survey = detailedInterview?.survey || interview?.survey;
+    const surveyQuestion = findQuestionByText(response.questionText, survey);
+    
+    // Format the response for display
+    const formattedResponse = formatResponseDisplay(response.response, surveyQuestion);
+    
+    return (
+      <View key={index} style={styles.responseItem}>
+        <Text style={styles.questionText}>{response.questionText}</Text>
+        <Text style={styles.answerText}>
+          {response.isSkipped ? (
+            <Text style={styles.skippedText}>Skipped</Text>
+          ) : (
+            formattedResponse
+          )}
+        </Text>
+      </View>
+    );
+  };
 
   if (!interview) {
     return (

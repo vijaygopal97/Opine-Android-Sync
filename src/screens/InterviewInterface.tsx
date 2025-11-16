@@ -822,10 +822,27 @@ export default function InterviewInterface({ navigation, route }: any) {
       
       // Prepare final response data for ALL questions (including skipped ones)
       const finalResponses = allQuestions.map((question: any, index: number) => {
-        const response = responses[question.id] || '';
+        // For multiple_choice with allowMultiple, default to array; otherwise default to empty string
+        const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
+        const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
         
         // Process response to include option codes and handle "Others" text input
-        let processedResponse = response || (question.type === 'multiple_choice' ? [] : '');
+        // Ensure processedResponse is an array for multiple_choice with allowMultiple
+        let processedResponse: any;
+        if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
+          // Ensure it's an array - if it's not, try to convert it
+          if (Array.isArray(response)) {
+            processedResponse = response;
+          } else if (response && response !== '') {
+            // If it's a single value, convert to array
+            processedResponse = [response];
+          } else {
+            // Empty array
+            processedResponse = [];
+          }
+        } else {
+          processedResponse = response || '';
+        }
         let responseCodes: string | string[] | null = null;
         let responseWithCodes: any = null;
         
@@ -1113,8 +1130,17 @@ export default function InterviewInterface({ navigation, route }: any) {
   };
 
   // Get shuffled options for a question (shuffle once, then reuse)
-  const getShuffledOptions = (questionId: string, originalOptions: any[]): any[] => {
+  // ONLY for multiple_choice questions, and only if shuffleOptions is enabled
+  const getShuffledOptions = (questionId: string, originalOptions: any[], question?: any): any[] => {
     if (!originalOptions || originalOptions.length === 0) return originalOptions || [];
+    
+    // Check if shuffling is enabled for this question (default to true if not set for backward compatibility)
+    const shouldShuffle = question?.settings?.shuffleOptions !== false;
+    
+    // If shuffling is disabled, return original options
+    if (!shouldShuffle) {
+      return originalOptions;
+    }
     
     // If already shuffled for this question, return cached shuffled order
     if (shuffledOptions[questionId]) {
@@ -1133,13 +1159,17 @@ export default function InterviewInterface({ navigation, route }: any) {
 
   // Render question based on type
   const renderQuestion = (question: any) => {
-    const currentResponse = responses[question.id] || '';
+    // For multiple_choice questions with allowMultiple, initialize as array if not set
+    const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
+    const currentResponse = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
     const questionId = question.id;
     
-    // Get shuffled options for display (for multiple_choice, single_choice, and dropdown)
-    const displayOptions = (question.type === 'multiple_choice' || question.type === 'single_choice' || question.type === 'dropdown') 
-      ? getShuffledOptions(questionId, question.options || [])
-      : question.options;
+    // Get shuffled options ONLY for multiple_choice questions (if shuffleOptions is enabled)
+    // Dropdown and other question types use original order
+    let displayOptions = question.options;
+    if (question.type === 'multiple_choice') {
+      displayOptions = getShuffledOptions(questionId, question.options || [], question);
+    }
 
     switch (question.type) {
       case 'text':
@@ -1547,7 +1577,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         <View style={styles.headerTop}>
           <Button
             mode="text"
-            onPress={() => navigation.goBack()}
+            onPress={() => setShowAbandonConfirm(true)}
             icon="arrow-left"
           >
             Back
@@ -1752,13 +1782,13 @@ export default function InterviewInterface({ navigation, route }: any) {
         )}
       </View>
 
-      {/* Abandon Confirmation Modal */}
+      {/* Abandon/Exit Confirmation Modal */}
       {showAbandonConfirm && (
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Abandon Interview</Text>
+            <Text style={styles.modalTitle}>Leave Interview</Text>
             <Text style={styles.modalText}>
-              Are you sure you want to abandon this interview? All progress will be lost.
+              Are you sure you want to leave this interview? All progress will be lost.
             </Text>
             <View style={styles.modalButtons}>
               <Button
@@ -1776,7 +1806,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                 }}
                 style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
               >
-                Abandon
+                Leave
               </Button>
             </View>
           </View>
