@@ -1164,10 +1164,8 @@ export default function InterviewInterface({ navigation, route }: any) {
     return shuffled;
   };
 
-  // Get shuffled options for a question (shuffle once, then reuse)
-  // ONLY for multiple_choice questions, and only if shuffleOptions is enabled
-  // Special options (None, Others, NOTA, etc.) are kept in their original positions
-  const getShuffledOptions = (questionId: string, originalOptions: any[], question?: any): any[] => {
+  // Helper function to compute shuffled options (pure function, no side effects)
+  const computeShuffledOptions = useCallback((questionId: string, originalOptions: any[], question?: any): any[] => {
     if (!originalOptions || originalOptions.length === 0) return originalOptions || [];
     
     // Check if shuffling is enabled for this question (default to true if not set for backward compatibility)
@@ -1192,35 +1190,12 @@ export default function InterviewInterface({ navigation, route }: any) {
       return [...regularOptions, ...othersOptions];
     }
     
-    // If already shuffled for this question, ensure "Others" is at the end and return
+    // If already shuffled for this question, return cached (should already have "Others" at end)
     if (shuffledOptions[questionId]) {
-      const cached = shuffledOptions[questionId];
-      // Always check and ensure "Others" is at the end
-      const othersOptions: any[] = [];
-      const regularOptions: any[] = [];
-      cached.forEach((option) => {
-        const optionText = typeof option === 'object' ? (option.text || option.value || '') : String(option);
-        if (isOthersOption(optionText)) {
-          othersOptions.push(option);
-        } else {
-          regularOptions.push(option);
-        }
-      });
-      
-      // If "Others" options exist and are not at the end, reorder
-      if (othersOptions.length > 0) {
-        const finalResult = [...regularOptions, ...othersOptions];
-        setShuffledOptions(prev => ({
-          ...prev,
-          [questionId]: finalResult
-        }));
-        return finalResult;
-      }
-      
-      // No "Others" options, return as is
-      return cached;
+      return shuffledOptions[questionId];
     }
     
+    // Compute shuffled options but don't call setState here (will be done in useEffect)
     // Separate options: shufflable, non-shufflable (except Others), and Others
     const nonShufflableOptions: Array<{ option: any; originalIndex: number }> = []; // Non-shufflable options except "Others"
     const shufflableOptions: any[] = [];
@@ -1271,13 +1246,59 @@ export default function InterviewInterface({ navigation, route }: any) {
     // Combine: regular options first, then "Others" options at the end
     const finalResult = [...result, ...othersOptions];
     
-    setShuffledOptions(prev => ({
-      ...prev,
-      [questionId]: finalResult
-    }));
-    
     return finalResult;
-  };
+  }, [shuffledOptions]);
+
+  // Memoize display options for current question to avoid re-computation
+  const currentQuestionDisplayOptions = useMemo(() => {
+    if (!currentQuestion) return [];
+    
+    const questionId = currentQuestion.id;
+    let displayOptions = currentQuestion.options || [];
+    
+    if (currentQuestion.type === 'multiple_choice') {
+      // Check if we have cached shuffled options
+      if (shuffledOptions[questionId]) {
+        displayOptions = shuffledOptions[questionId];
+      } else {
+        // Compute shuffled options (will be cached in useEffect)
+        displayOptions = computeShuffledOptions(questionId, currentQuestion.options || [], currentQuestion);
+      }
+    } else if (currentQuestion.type === 'single_choice' || currentQuestion.type === 'single_select' || currentQuestion.type === 'dropdown') {
+      // Move "Others" to the end for single_choice and dropdown
+      const othersOptions: any[] = [];
+      const regularOptions: any[] = [];
+      (currentQuestion.options || []).forEach((option: any) => {
+        const optionText = typeof option === 'object' ? (option.text || option.value || '') : String(option);
+        if (isOthersOption(optionText)) {
+          othersOptions.push(option);
+        } else {
+          regularOptions.push(option);
+        }
+      });
+      displayOptions = [...regularOptions, ...othersOptions];
+    }
+    
+    return displayOptions;
+  }, [currentQuestion, shuffledOptions, computeShuffledOptions]);
+
+  // Update shuffledOptions state when current question changes (useEffect to avoid render loop)
+  useEffect(() => {
+    if (!currentQuestion || currentQuestion.type !== 'multiple_choice') return;
+    
+    const questionId = currentQuestion.id;
+    // Only compute and cache if not already cached
+    if (!shuffledOptions[questionId] && currentQuestion.options) {
+      const computed = computeShuffledOptions(questionId, currentQuestion.options, currentQuestion);
+      setShuffledOptions(prev => {
+        if (!prev[questionId]) {
+          return { ...prev, [questionId]: computed };
+        }
+        return prev;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentQuestion?.id, currentQuestion?.type]);
 
   // Render question based on type
   const renderQuestion = (question: any) => {
@@ -1286,12 +1307,17 @@ export default function InterviewInterface({ navigation, route }: any) {
     const currentResponse = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
     const questionId = question.id;
     
-    // Get shuffled options ONLY for multiple_choice questions (if shuffleOptions is enabled)
-    // For single_choice and dropdown, move "Others" to the end
-    // Dropdown and other question types use original order
+    // Use memoized display options for current question, or compute for other questions
     let displayOptions = question.options;
-    if (question.type === 'multiple_choice') {
-      displayOptions = getShuffledOptions(questionId, question.options || [], question);
+    if (question.id === currentQuestion?.id && currentQuestionDisplayOptions.length > 0) {
+      displayOptions = currentQuestionDisplayOptions;
+    } else if (question.type === 'multiple_choice') {
+      if (shuffledOptions[questionId]) {
+        displayOptions = shuffledOptions[questionId];
+      } else {
+        // Compute shuffled options (will be cached in useEffect if this is the current question)
+        displayOptions = computeShuffledOptions(questionId, question.options || [], question);
+      }
     } else if (question.type === 'single_choice' || question.type === 'single_select' || question.type === 'dropdown') {
       // Move "Others" to the end for single_choice and dropdown
       const othersOptions: any[] = [];
