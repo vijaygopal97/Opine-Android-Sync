@@ -270,15 +270,7 @@ export default function App() {
                 name="InterviewInterface" 
                 component={InterviewInterface}
                 options={{
-                  headerShown: true,
-                  title: 'Interview',
-                  headerStyle: {
-                    backgroundColor: theme.colors.primary,
-                  },
-                  headerTintColor: '#ffffff',
-                  headerTitleStyle: {
-                    fontWeight: 'bold',
-                  },
+                  headerShown: false,
                 }}
               />
               <Stack.Screen 

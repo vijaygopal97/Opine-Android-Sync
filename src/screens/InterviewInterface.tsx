@@ -5,6 +5,9 @@ import {
   ScrollView,
   Alert,
   Dimensions,
+  BackHandler,
+  Platform,
+  StatusBar as RNStatusBar,
 } from 'react-native';
 import {
   Text,
@@ -21,6 +24,7 @@ import {
   Divider,
 } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { apiService } from '../services/api';
@@ -83,6 +87,7 @@ export default function InterviewInterface({ navigation, route }: any) {
   const [targetAudienceErrors, setTargetAudienceErrors] = useState<Map<string, string>>(new Map());
   const [othersTextInputs, setOthersTextInputs] = useState<Record<string, string>>({}); // Store "Others" text input values by questionId_optionValue
   const [shuffledOptions, setShuffledOptions] = useState<Record<string, any[]>>({}); // Store shuffled options per questionId to maintain consistent order
+  const scrollViewRef = React.useRef<ScrollView>(null); // Ref for ScrollView to scroll to top
 
   // Get all questions from all sections
   const allQuestions = useMemo(() => {
@@ -402,6 +407,17 @@ export default function InterviewInterface({ navigation, route }: any) {
       fetchGenderQuotas();
     }
   }, [survey._id, fetchGenderQuotas]);
+
+  // Handle Android back button - show abandon confirmation
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Show abandon confirmation instead of going back
+      setShowAbandonConfirm(true);
+      return true; // Prevent default back behavior
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
@@ -1028,7 +1044,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       if (result.success) {
         Alert.alert(
           'Interview Completed',
-          `Interview completed successfully! Response ID: ${result.response.responseId}. Your response has been submitted for quality approval.`,
+          'Interview Completed and submitted for Quality Review.',
           [
             {
               text: 'OK',
@@ -1299,6 +1315,13 @@ export default function InterviewInterface({ navigation, route }: any) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentQuestion?.id, currentQuestion?.type]);
+
+  // Scroll to top when question changes
+  useEffect(() => {
+    if (scrollViewRef.current) {
+      scrollViewRef.current.scrollTo({ y: 0, animated: true });
+    }
+  }, [currentQuestionIndex]);
 
   // Render question based on type
   const renderQuestion = (question: any) => {
@@ -1636,11 +1659,11 @@ export default function InterviewInterface({ navigation, route }: any) {
         }
         return (
           <View style={styles.ratingContainer}>
-            <View style={styles.ratingButtonsRow}>
+            <View style={styles.ratingButtonsColumn}>
               {ratings.map((rating) => {
                 const label = labels[rating - min] || '';
                 return (
-                  <View key={rating} style={styles.ratingButtonWrapper}>
+                  <View key={rating} style={styles.ratingButtonWrapperVertical}>
                     <Button
                       mode={currentResponse === rating ? 'contained' : 'outlined'}
                       onPress={() => handleResponseChange(question.id, rating)}
@@ -1731,43 +1754,29 @@ export default function InterviewInterface({ navigation, route }: any) {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
       
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Button
-            mode="text"
-            onPress={() => setShowAbandonConfirm(true)}
-            icon="arrow-left"
-          >
-            Back
-          </Button>
-          
-          {/* Pause/Resume and Abandon buttons */}
+          {/* Recording Indicator and Abandon button */}
           <View style={styles.headerActions}>
-            {isPaused ? (
-              <Button
-                mode="contained"
-                onPress={resumeInterview}
-                icon="play"
-                style={styles.actionButton}
-                buttonColor="#10b981"
-              >
-                Resume
-              </Button>
-            ) : (
-              <Button
-                mode="outlined"
-                onPress={pauseInterview}
-                icon="pause"
-                style={styles.actionButton}
-                buttonColor="#f59e0b"
-              >
-                Pause
-              </Button>
-            )}
+            {/* Recording Indicator - Just the red dot */}
+          {((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && (
+              <View style={styles.recordingDotIndicator}>
+              <View style={[
+                  styles.recordingDot,
+                {
+                  backgroundColor: audioPermission === false 
+                    ? '#ef4444'
+                    : isRecording 
+                      ? (isAudioPaused ? '#fbbf24' : '#ef4444') 
+                      : '#6b7280'
+                }
+              ]} />
+            </View>
+          )}
             <Button
               mode="contained"
               onPress={() => setShowAbandonConfirm(true)}
@@ -1777,66 +1786,25 @@ export default function InterviewInterface({ navigation, route }: any) {
             >
               Abandon
             </Button>
-          </View>
-        </View>
-        
-        {/* Recording Indicator and Location (compact) - Separate line */}
-        <View style={styles.headerStatusRow}>
-          {/* Recording Indicator */}
-          {((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && (
-            <View style={styles.recordingIndicator}>
-              <View style={[
-                styles.recordingDotSmall,
-                {
-                  backgroundColor: audioPermission === false 
-                    ? '#ef4444'
-                    : isRecording 
-                      ? (isAudioPaused ? '#fbbf24' : '#ef4444') 
-                      : '#6b7280'
-                }
-              ]} />
-              <Text style={styles.recordingStatusTextSmall}>
-                {audioPermission === false 
-                  ? 'No Permission'
-                  : isRecording 
-                    ? (isAudioPaused ? 'Paused' : 'Recording') 
-                    : 'Ready'
-                }
-              </Text>
-            </View>
-          )}
-          
-            {/* Location (only for first question) */}
-            {currentQuestionIndex === 0 && (
-              <>
-                {locationLoading ? (
-                  <View style={styles.locationIndicator}>
-                    <ActivityIndicator size="small" color="#2563eb" />
-                    <Text style={styles.locationTextSmall}>Getting location...</Text>
                   </View>
-                ) : locationData && locationData.address ? (
-                  <View style={styles.locationIndicator}>
-                    <Text style={styles.locationTextSmall} numberOfLines={1}>
-                      📍 {locationData.address}
-                    </Text>
-                  </View>
-                ) : null}
-              </>
-            )}
         </View>
         
         <View style={styles.headerInfo}>
-          <Text style={styles.surveyTitle}>{survey.surveyName}</Text>
+          <View style={styles.progressAndTimerRow}>
           <Text style={styles.progressText}>
             Question {currentQuestionIndex + 1} of {visibleQuestions.length}
           </Text>
           <Text style={styles.durationText}>{formatTime(duration)}</Text>
+          </View>
         </View>
         
         <ProgressBar progress={progress} color="#2563eb" style={styles.progressBar} />
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView 
+        ref={scrollViewRef}
+        style={styles.content}
+      >
         <Card style={styles.questionCard}>
           <Card.Content>
             {/* Show loading/blocking overlay if recording hasn't started */}
@@ -1862,12 +1830,14 @@ export default function InterviewInterface({ navigation, route }: any) {
               </View>
             )}
             
-            <Text style={styles.questionText}>{currentQuestion.text}</Text>
+            <View style={styles.questionHeader}>
+              <Text style={styles.questionText}>
+                {currentQuestion.text}
+                {currentQuestion.required && <Text style={styles.requiredAsterisk}> *</Text>}
+              </Text>
+            </View>
             {currentQuestion.description && (
               <Text style={styles.questionDescription}>{currentQuestion.description}</Text>
-            )}
-            {currentQuestion.required && (
-              <Text style={styles.requiredText}>* Required</Text>
             )}
             
             <View style={[
@@ -1982,7 +1952,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       >
         {snackbarMessage}
       </Snackbar>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -2024,50 +1994,19 @@ const styles = StyleSheet.create({
   },
   headerTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     marginBottom: 8,
   },
-  headerStatusRow: {
-    flexDirection: 'row',
+  recordingDotIndicator: {
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-    paddingHorizontal: 4,
+    justifyContent: 'center',
+    marginRight: 8,
   },
-  recordingIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f3f4f6',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 6,
-  },
-  recordingDotSmall: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  recordingStatusTextSmall: {
-    fontSize: 11,
-    color: '#374151',
-    fontWeight: '500',
-  },
-  locationIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f3f4f6',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    maxWidth: 200,
-    gap: 6,
-  },
-  locationTextSmall: {
-    fontSize: 11,
-    color: '#374151',
-    fontWeight: '500',
+  recordingDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
   },
   headerActions: {
     flexDirection: 'row',
@@ -2078,19 +2017,18 @@ const styles = StyleSheet.create({
   },
   headerInfo: {
     alignItems: 'center',
-    marginBottom: 16,
-  },
-  surveyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1f2937',
-    textAlign: 'center',
     marginBottom: 8,
+  },
+  progressAndTimerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 16,
   },
   progressText: {
     fontSize: 14,
     color: '#6b7280',
-    marginBottom: 4,
   },
   durationText: {
     fontSize: 14,
@@ -2146,23 +2084,25 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     pointerEvents: 'none',
   },
+  questionHeader: {
+    marginBottom: 2,
+  },
   questionText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#1f2937',
-    marginBottom: 4,
     lineHeight: 24,
+  },
+  requiredAsterisk: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#ef4444',
   },
   questionDescription: {
     fontSize: 14,
     color: '#6b7280',
-    marginBottom: 12,
+    marginBottom: 4,
     lineHeight: 20,
-  },
-  requiredText: {
-    fontSize: 12,
-    color: '#ef4444',
-    marginBottom: 16,
   },
   textInput: {
     marginTop: 8,
@@ -2181,12 +2121,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   optionsContainer: {
-    marginTop: 4,
+    marginTop: 2,
   },
   optionItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingVertical: 2,
     paddingHorizontal: 4,
   },
   optionText: {
@@ -2220,18 +2160,17 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   ratingContainer: {
-    marginTop: 16,
+    marginTop: 2,
   },
-  ratingButtonsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    flexWrap: 'wrap',
+  ratingButtonsColumn: {
+    flexDirection: 'column',
     marginBottom: 8,
   },
-  ratingButtonWrapper: {
+  ratingButtonWrapperVertical: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 4,
-    marginVertical: 4,
+    marginVertical: 2,
+    paddingVertical: 2,
   },
   ratingButton: {
     minWidth: 50,
@@ -2240,11 +2179,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#fbbf24',
   },
   ratingLabel: {
-    fontSize: 10,
+    fontSize: 14,
     color: '#6b7280',
-    marginTop: 4,
-    textAlign: 'center',
-    maxWidth: 60,
+    marginLeft: 12,
+    flex: 1,
   },
   ratingLabelsRow: {
     flexDirection: 'row',
@@ -2290,12 +2228,6 @@ const styles = StyleSheet.create({
   audioIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  recordingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
   },
   startRecordingButton: {
     marginTop: 8,
