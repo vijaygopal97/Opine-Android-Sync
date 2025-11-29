@@ -515,6 +515,77 @@ class ApiService {
       };
     }
   }
+
+  // Polling Station API methods
+  async getGroupsByAC(state: string, acIdentifier: string) {
+    try {
+      const headers = await this.getHeaders();
+      const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}`;
+      console.log('🔍 getGroupsByAC - URL:', url);
+      console.log('🔍 getGroupsByAC - State:', state, 'AC Identifier:', acIdentifier);
+      const response = await axios.get(url, { headers });
+      console.log('🔍 getGroupsByAC - Response:', JSON.stringify(response.data, null, 2));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get groups by AC error:', error);
+      console.error('Error response:', error.response?.data);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to fetch groups',
+      };
+    }
+  }
+
+  async getPollingStationsByGroup(state: string, acIdentifier: string, groupName: string) {
+    try {
+      const headers = await this.getHeaders();
+      const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}`;
+      console.log('🔍 getPollingStationsByGroup - URL:', url);
+      console.log('🔍 getPollingStationsByGroup - State:', state, 'AC:', acIdentifier, 'Group:', groupName);
+      const response = await axios.get(url, { headers });
+      console.log('🔍 getPollingStationsByGroup - Response:', JSON.stringify(response.data, null, 2));
+      return response.data;
+    } catch (error: any) {
+      console.error('Get polling stations by group error:', error);
+      console.error('Error response:', error.response?.data);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to fetch polling stations',
+      };
+    }
+  }
+
+  async getPollingStationGPS(state: string, acIdentifier: string, groupName: string, stationName: string) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(
+        `${this.baseURL}/api/polling-stations/gps/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}/${encodeURIComponent(stationName)}`,
+        { headers }
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error('Get polling station GPS error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to fetch polling station GPS',
+      };
+    }
+  }
+
+  // Get current user profile (to check locationControlBooster)
+  async getCurrentUser() {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(`${this.baseURL}/api/auth/me`, { headers });
+      return { success: true, user: response.data.data || response.data.user };
+    } catch (error: any) {
+      console.error('Get current user error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to get user profile',
+      };
+    }
+  }
 }
 
 export const apiService = new ApiService();

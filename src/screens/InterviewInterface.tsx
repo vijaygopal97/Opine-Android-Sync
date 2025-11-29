@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -8,6 +8,9 @@ import {
   BackHandler,
   Platform,
   StatusBar as RNStatusBar,
+  Modal,
+  TouchableOpacity,
+  FlatList,
 } from 'react-native';
 import {
   Text,
@@ -36,6 +39,8 @@ const { width, height } = Dimensions.get('window');
 // Simple audio recorder
 // Global recording instance
 let globalRecording: Audio.Recording | null = null;
+// Lock to prevent concurrent recording starts
+let isStartingRecording = false;
 
 export default function InterviewInterface({ navigation, route }: any) {
   const { survey, responseId, isContinuing } = route.params;
@@ -75,12 +80,49 @@ export default function InterviewInterface({ navigation, route }: any) {
   const [isAudioPaused, setIsAudioPaused] = useState(false);
   const [recording, setRecording] = useState<any>(null);
   const [audioPermission, setAudioPermission] = useState<boolean | null>(null);
-  const [isCreatingRecording, setIsCreatingRecording] = useState(false);
   
   // AC selection state
   const [selectedAC, setSelectedAC] = useState<string | null>(null);
   const [assignedACs, setAssignedACs] = useState<string[]>([]);
   const [requiresACSelection, setRequiresACSelection] = useState(false);
+  
+  // Polling Station Selection state
+  const [selectedPollingStation, setSelectedPollingStation] = useState<any>({
+    state: null,
+    acName: null,
+    acNo: null,
+    pcNo: null,
+    pcName: null,
+    district: null,
+    groupName: null,
+    stationName: null,
+    gpsLocation: null,
+    latitude: null,
+    longitude: null
+  });
+  const [availableGroups, setAvailableGroups] = useState<any[]>([]);
+  const [availablePollingStations, setAvailablePollingStations] = useState<any[]>([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [loadingStations, setLoadingStations] = useState(false);
+  const [geofencingError, setGeofencingError] = useState<string | null>(null);
+  const [locationControlBooster, setLocationControlBooster] = useState(false);
+  
+  // Dropdown states for polling station selection
+  const [showGroupDropdown, setShowGroupDropdown] = useState(false);
+  const [showStationDropdown, setShowStationDropdown] = useState(false);
+  
+  // Close other dropdown when one opens
+  useEffect(() => {
+    if (showGroupDropdown) {
+      setShowStationDropdown(false);
+    }
+  }, [showGroupDropdown]);
+  
+  useEffect(() => {
+    if (showStationDropdown) {
+      setShowGroupDropdown(false);
+    }
+  }, [showStationDropdown]);
   
   // Quota management state
   const [genderQuotas, setGenderQuotas] = useState<any>(null);
@@ -126,6 +168,28 @@ export default function InterviewInterface({ navigation, route }: any) {
         isACSelection: true // Flag to identify this special question
       };
       questions.push(acQuestion);
+      
+      // Add Polling Station selection question after AC selection (if AC is selected)
+      if (selectedAC) {
+        const pollingStationQuestion = {
+          id: 'polling-station-selection',
+          type: 'polling_station',
+          text: 'Select Polling Station',
+          description: 'Please select the Group and Polling Station where you are conducting this interview.',
+          required: true,
+          order: -0.5, // Make it appear after AC selection
+          sectionIndex: -1,
+          questionIndex: -0.5,
+          sectionId: 'polling-station-selection',
+          sectionTitle: 'Polling Station Selection',
+          isPollingStationSelection: true,
+          availableGroups: availableGroups,
+          availablePollingStations: availablePollingStations,
+          selectedGroup: selectedPollingStation.groupName,
+          selectedStation: selectedPollingStation.stationName
+        };
+        questions.push(pollingStationQuestion);
+      }
     }
     
     // Add regular survey questions from sections
@@ -162,7 +226,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     console.log('🔍 Questions array:', questions.map(q => ({ id: q.id, text: q.text, type: q.type })));
     
     return questions;
-  }, [survey.sections, survey.questions, requiresACSelection, assignedACs]);
+  }, [survey.sections, survey.questions, requiresACSelection, assignedACs, selectedAC, availableGroups, availablePollingStations, selectedPollingStation.groupName, selectedPollingStation.stationName]);
 
   // Helper function to check if response has content
   const hasResponseContent = (response: any): boolean => {
@@ -265,8 +329,10 @@ export default function InterviewInterface({ navigation, route }: any) {
   useEffect(() => {
     const checkAudioPermission = async () => {
       try {
-        // For now, assume permission is granted
-        setAudioPermission(true);
+        console.log('Checking audio permissions on mount...');
+        const permissionResult = await Audio.requestPermissionsAsync();
+        console.log('Initial permission result:', permissionResult);
+        setAudioPermission(permissionResult.status === 'granted');
       } catch (error) {
         console.error('Error checking audio permission:', error);
         setAudioPermission(false);
@@ -313,10 +379,11 @@ export default function InterviewInterface({ navigation, route }: any) {
           const shouldRecordAudio = (survey.mode === 'capi') || 
                                    (survey.mode === 'multi_mode' && survey.assignedMode === 'capi');
           
-          if (shouldRecordAudio && audioPermission && !isRecording) {
+          if (shouldRecordAudio && !isRecording) {
             console.log('Auto-starting audio recording for CAPI mode...');
             console.log('Survey mode:', survey.mode, 'Assigned mode:', survey.assignedMode);
-            // Add a longer delay to ensure component is fully mounted and ready
+            // Add a delay to ensure component is fully mounted and ready
+            // Permission will be requested inside startAudioRecording
             setTimeout(() => {
               console.log('Attempting to start recording after delay...');
               startAudioRecording();
@@ -334,7 +401,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     };
 
     initializeInterview();
-  }, [survey, audioPermission]);
+  }, [survey._id]); // Only depend on survey ID, not audioPermission to prevent multiple calls
 
   // Update duration
   useEffect(() => {
@@ -364,19 +431,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           console.log('Cleanup on mount error (non-fatal):', error);
         }
         globalRecording = null;
-      }
-      // Also reset audio mode to ensure clean state
-      try {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: false,
-          shouldDuckAndroid: false,
-          playThroughEarpieceAndroid: false,
-        });
-        // Wait a bit before allowing new recording
-        await new Promise(resolve => setTimeout(resolve, 200));
-      } catch (error) {
-        console.log('Error resetting audio mode (non-fatal):', error);
+        setRecording(null);
       }
     };
     cleanupOnMount();
@@ -419,25 +474,231 @@ export default function InterviewInterface({ navigation, route }: any) {
     return () => backHandler.remove();
   }, []);
 
+  // Fetch groups when AC is selected
+  useEffect(() => {
+    const fetchGroups = async () => {
+      if (!selectedAC) {
+        setAvailableGroups([]);
+        setAvailablePollingStations([]);
+        return;
+      }
+      
+      try {
+        setLoadingGroups(true);
+        // Use survey's acAssignmentState or default to 'West Bengal'
+        const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
+        console.log('Fetching groups for AC:', selectedAC, 'State:', state);
+        const response = await apiService.getGroupsByAC(state, selectedAC);
+        
+        if (response.success) {
+          // Backend returns { success: true, data: { groups: [...], ac_name: ..., etc } }
+          // API service returns response.data which is { success: true, data: {...} }
+          const responseData = response.data || {};
+          const groups = responseData.groups || [];
+          console.log('Groups fetched successfully:', groups.length, 'groups:', groups);
+          setAvailableGroups(groups);
+          setSelectedPollingStation((prev: any) => ({
+            ...prev,
+            state: state,
+            acName: selectedAC,
+            acNo: responseData.ac_no,
+            pcNo: responseData.pc_no,
+            pcName: responseData.pc_name,
+            district: responseData.district
+          }));
+          // Clear polling stations when AC changes
+          setAvailablePollingStations([]);
+        } else {
+          console.error('Failed to fetch groups:', response.message);
+          setAvailableGroups([]);
+        }
+      } catch (error) {
+        console.error('Error fetching groups:', error);
+        setAvailableGroups([]);
+        setAvailablePollingStations([]);
+      } finally {
+        setLoadingGroups(false);
+      }
+    };
+    
+    fetchGroups();
+  }, [selectedAC, survey?.acAssignmentState, sessionData?.acAssignmentState]);
+
+  // Fetch polling stations when group is selected
+  useEffect(() => {
+    const fetchPollingStations = async () => {
+      if (!selectedPollingStation.groupName || !selectedPollingStation.acName) {
+        setAvailablePollingStations([]);
+        return;
+      }
+      
+      try {
+        setLoadingStations(true);
+        // Use state from selectedPollingStation, survey, or default to 'West Bengal'
+        const state = selectedPollingStation.state || survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
+        console.log('Fetching polling stations for Group:', selectedPollingStation.groupName, 'AC:', selectedPollingStation.acName, 'State:', state);
+        const response = await apiService.getPollingStationsByGroup(
+          state,
+          selectedPollingStation.acName,
+          selectedPollingStation.groupName
+        );
+        
+        if (response.success) {
+          // Backend returns { success: true, data: { stations: [...] } }
+          // API service returns response.data which is { success: true, data: {...} }
+          const responseData = response.data || {};
+          const stations = responseData.stations || [];
+          console.log('Polling stations fetched successfully:', stations.length, 'stations:', stations);
+          setAvailablePollingStations(stations);
+        } else {
+          console.error('Failed to fetch polling stations:', response.message);
+          setAvailablePollingStations([]);
+        }
+      } catch (error) {
+        console.error('Error fetching polling stations:', error);
+        setAvailablePollingStations([]);
+      } finally {
+        setLoadingStations(false);
+      }
+    };
+    
+    fetchPollingStations();
+  }, [selectedPollingStation.groupName, selectedPollingStation.acName, selectedPollingStation.state, survey?.acAssignmentState, sessionData?.acAssignmentState]);
+
+  // Update polling station GPS and check geofencing when station is selected
+  useEffect(() => {
+    const updateStationGPS = async () => {
+      if (!selectedPollingStation.stationName || !selectedPollingStation.groupName || !selectedPollingStation.acName) {
+        return;
+      }
+      
+      try {
+        const state = selectedPollingStation.state || survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
+        const response = await apiService.getPollingStationGPS(
+          state,
+          selectedPollingStation.acName,
+          selectedPollingStation.groupName,
+          selectedPollingStation.stationName
+        );
+        
+        if (response.success) {
+          setSelectedPollingStation((prev: any) => ({
+            ...prev,
+            gpsLocation: response.data.gps_location,
+            latitude: response.data.latitude,
+            longitude: response.data.longitude
+          }));
+          
+          // Check geofencing if in CAPI mode and locationControlBooster is false
+          if ((survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && !locationControlBooster && locationData) {
+            await checkGeofencing(response.data.latitude, response.data.longitude);
+          } else {
+            // Clear geofencing error if booster is enabled OR if not in CAPI mode
+            setGeofencingError(null);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching polling station GPS:', error);
+      }
+    };
+    
+    updateStationGPS();
+  }, [selectedPollingStation.stationName, selectedPollingStation.groupName, selectedPollingStation.acName, locationData, locationControlBooster, survey.mode, survey.assignedMode]);
+
+  // Check locationControlBooster on mount
+  useEffect(() => {
+    const checkLocationControl = async () => {
+      try {
+        const userResult = await apiService.getCurrentUser();
+        if (userResult.success && userResult.user) {
+          const boosterEnabled = userResult.user.preferences?.locationControlBooster || false;
+          setLocationControlBooster(boosterEnabled);
+          // Clear geofencing error if booster is enabled
+          if (boosterEnabled) {
+            setGeofencingError(null);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking location control booster:', error);
+      }
+    };
+    
+    checkLocationControl();
+  }, []);
+  
+  // Clear geofencing error whenever booster is enabled
+  useEffect(() => {
+    if (locationControlBooster) {
+      setGeofencingError(null);
+    }
+  }, [locationControlBooster]);
+
+  // Geofencing check function (5KM radius)
+  const checkGeofencing = async (stationLat: number, stationLng: number) => {
+    if (!locationData || !locationData.latitude || !locationData.longitude) {
+      setGeofencingError('GPS location not available. Please enable location services.');
+      return false;
+    }
+    
+    // Calculate distance using Haversine formula
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (locationData.latitude - stationLat) * Math.PI / 180;
+    const dLng = (locationData.longitude - stationLng) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(stationLat * Math.PI / 180) * Math.cos(locationData.latitude * Math.PI / 180) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c; // Distance in kilometers
+    
+    if (distance > 5) {
+      setGeofencingError(`You are not within the 5KM radius of the Polling station's location. Distance: ${distance.toFixed(2)} KM`);
+      return false;
+    } else {
+      setGeofencingError(null);
+      return true;
+    }
+  };
+
   const showSnackbar = (message: string) => {
     setSnackbarMessage(message);
     setSnackbarVisible(true);
   };
 
-  // Simple cleanup function
+  // Simple cleanup function - MUST unload any prepared recording
   const cleanupRecording = async () => {
     try {
       if (globalRecording) {
         console.log('Cleaning up recording...');
         try {
           const status = await globalRecording.getStatusAsync();
-          if (status.isRecording || status.canRecord) {
-            await globalRecording.stopAndUnloadAsync();
-          }
+          console.log('Cleanup - recording status:', status);
+          // ALWAYS try to unload - even if just prepared (not started)
+          // This is critical to prevent "Only one Recording object can be prepared" error
+          await globalRecording.stopAndUnloadAsync();
         } catch (error) {
           console.log('Error during cleanup:', error);
+          // Try to stop anyway if status check failed
+          try {
+            await globalRecording.stopAndUnloadAsync();
+          } catch (stopError) {
+            console.log('Error stopping recording during cleanup:', stopError);
+          }
         }
         globalRecording = null;
+        // Wait longer for native resources to release
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      // Also reset audio mode to clear any prepared state
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: false,
+        });
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (modeError) {
+        console.log('Error resetting audio mode in cleanup:', modeError);
       }
     } catch (error) {
       console.log('Cleanup error:', error);
@@ -465,6 +726,66 @@ export default function InterviewInterface({ navigation, route }: any) {
     if (questionId === 'ac-selection') {
       setSelectedAC(response);
       console.log('AC selected:', response);
+      // Reset polling station selection when AC changes
+      const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
+      setSelectedPollingStation({
+        state: state,
+        acName: response,
+        acNo: null,
+        pcNo: null,
+        pcName: null,
+        district: null,
+        groupName: null,
+        stationName: null,
+        gpsLocation: null,
+        latitude: null,
+        longitude: null
+      });
+      // Clear groups and polling stations - they will be fetched by useEffect
+      setAvailableGroups([]);
+      setAvailablePollingStations([]);
+      setGeofencingError(null);
+    }
+    
+    // Handle polling station group selection
+    if (questionId === 'polling-station-group') {
+      setSelectedPollingStation((prev: any) => ({
+        ...prev,
+        groupName: response,
+        stationName: null,
+        gpsLocation: null,
+        latitude: null,
+        longitude: null
+      }));
+      setAvailablePollingStations([]);
+      // Clear geofencing error if booster is enabled
+      if (locationControlBooster) {
+        setGeofencingError(null);
+      } else {
+        setGeofencingError(null); // Clear when group changes
+      }
+      // Mark polling station question as answered (group selected)
+      setResponses(prev => ({
+        ...prev,
+        'polling-station-selection': response
+      }));
+    }
+    
+    // Handle polling station selection
+    if (questionId === 'polling-station-station') {
+      setSelectedPollingStation((prev: any) => ({
+        ...prev,
+        stationName: response
+      }));
+      // Clear geofencing error if booster is enabled
+      if (locationControlBooster) {
+        setGeofencingError(null);
+      }
+      // Mark polling station question as fully answered
+      setResponses(prev => ({
+        ...prev,
+        'polling-station-selection': response
+      }));
     }
 
     // Real-time target audience validation for fixed questions
@@ -499,6 +820,12 @@ export default function InterviewInterface({ navigation, route }: any) {
 
   const goToNextQuestion = () => {
     const currentQuestion = visibleQuestions[currentQuestionIndex];
+    
+    // Check geofencing error for polling station questions (only if booster is not enabled)
+    if (geofencingError && (currentQuestion as any)?.isPollingStationSelection && !locationControlBooster) {
+      showSnackbar(geofencingError);
+      return;
+    }
     
     // Check for target audience validation errors
     if (targetAudienceErrors.has(currentQuestion.id)) {
@@ -583,34 +910,44 @@ export default function InterviewInterface({ navigation, route }: any) {
   };
 
   const startAudioRecording = async () => {
-    if (isRecording) {
-      console.log('Already recording, skipping...');
+    // Synchronous check to prevent concurrent calls
+    if (isRecording || isStartingRecording) {
+      console.log('Already recording or starting, skipping...');
       return;
     }
+    
+    // Set lock immediately to prevent concurrent execution
+    isStartingRecording = true;
     
     try {
       console.log('=== EXPO-AV AUDIO RECORDING START ===');
       
-      // Clean up any existing recording - simple approach like before
+      // Step 1: Clean up any existing recording
       if (globalRecording) {
         try {
           console.log('Cleaning up existing recording...');
-          await globalRecording.stopAndUnloadAsync();
+          const status = await globalRecording.getStatusAsync();
+          if (status.isRecording || status.canRecord) {
+            await globalRecording.stopAndUnloadAsync();
+          }
         } catch (cleanupError) {
           console.log('Cleanup error (non-fatal):', cleanupError);
         }
         globalRecording = null;
-        // Wait a bit for native module to release
-        await new Promise(resolve => setTimeout(resolve, 300));
+        setRecording(null);
+        // Wait for native module to release (matching working version timing)
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
       
+      // Step 2: Request permissions first
       console.log('Requesting audio permissions...');
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
+      const { status: permStatus } = await Audio.requestPermissionsAsync();
+      if (permStatus !== 'granted') {
         throw new Error('Audio permission not granted');
       }
       
-      console.log('Setting audio mode...');
+      // Step 3: Set audio mode for recording (no reset first - like working version)
+      console.log('Setting audio mode for recording...');
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -618,59 +955,112 @@ export default function InterviewInterface({ navigation, route }: any) {
         playThroughEarpieceAndroid: false,
       });
       
+      // Wait for audio mode to take effect
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Step 4: Create recording object
       console.log('Creating new recording object...');
-      // Create a completely new recording object
       const recording = new Audio.Recording();
       
+      // Step 5: Prepare recording (matching working version settings: mono, 128000 bitrate)
       console.log('Preparing recording...');
-      // Only set globalRecording AFTER successful preparation
-      await recording.prepareToRecordAsync({
-        android: {
-          extension: '.m4a',
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
-          sampleRate: 44100,
-          numberOfChannels: 1,
-          bitRate: 128000,
-        },
-        ios: {
-          extension: '.m4a',
-          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-          audioQuality: Audio.IOSAudioQuality.HIGH,
-          sampleRate: 44100,
-          numberOfChannels: 1,
-          bitRate: 128000,
-        },
-        web: {
-          mimeType: 'audio/webm',
-          bitsPerSecond: 128000,
-        },
-      });
+      try {
+        await recording.prepareToRecordAsync({
+          android: {
+            extension: '.m4a',
+            outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+            audioEncoder: Audio.AndroidAudioEncoder.AAC,
+            sampleRate: 44100,
+            numberOfChannels: 1, // Mono like working version
+            bitRate: 128000, // Original bitrate like working version
+          },
+          ios: {
+            extension: '.m4a',
+            outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+            audioQuality: Audio.IOSAudioQuality.HIGH,
+            sampleRate: 44100,
+            numberOfChannels: 1,
+            bitRate: 128000,
+          },
+          web: {
+            mimeType: 'audio/webm',
+            bitsPerSecond: 128000,
+          },
+        });
+      } catch (prepareError: any) {
+        console.error('Prepare error:', prepareError);
+        isStartingRecording = false; // Release lock before throwing
+        throw new Error(`Failed to prepare recording: ${prepareError.message}`);
+      }
       
-      // Only set globalRecording after successful preparation
+      // Step 6: Set globalRecording after successful preparation
       globalRecording = recording;
+      setRecording(recording);
       
+      // Step 7: Wait before starting (Android MediaRecorder needs this)
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Step 8: Check status before starting
+      const statusBeforeStart = await recording.getStatusAsync();
+      console.log('Status before start:', statusBeforeStart);
+      
+      if (!statusBeforeStart.canRecord) {
+        globalRecording = null;
+        setRecording(null);
+        isStartingRecording = false; // Release lock before throwing
+        throw new Error('Recording not ready - cannot start');
+      }
+      
+      // Step 9: Start recording
       console.log('Starting recording...');
-      await recording.startAsync();
+      try {
+        await recording.startAsync();
+      } catch (startError: any) {
+        console.error('Start error:', startError);
+        globalRecording = null;
+        setRecording(null);
+        isStartingRecording = false; // Release lock before throwing
+        throw new Error(`Failed to start recording: ${startError.message}`);
+      }
       
-      // Don't set audioUri here - it will be set when we stop recording and get the actual URI
+      // Step 10: Verify it actually started
+      const statusAfterStart = await recording.getStatusAsync();
+      console.log('Status after start:', statusAfterStart);
+      
+      if (!statusAfterStart.isRecording) {
+        globalRecording = null;
+        setRecording(null);
+        isStartingRecording = false; // Release lock before throwing
+        throw new Error('Recording did not start - status verification failed');
+      }
+      
+      // Success!
       setIsRecording(true);
       setIsAudioPaused(false);
       setAudioPermission(true);
+      isStartingRecording = false; // Release lock on success
       
-      console.log('Recording started successfully');
+      console.log('✓ Recording started successfully');
       showSnackbar('Audio recording started');
+      
     } catch (error: any) {
-      console.error('Error starting recording:', error);
-      showSnackbar(`Failed to start recording: ${error.message}`);
+      console.error('❌ Error starting recording:', error);
+      showSnackbar(`Failed to start recording: ${error.message || 'Unknown error'}`);
       setAudioPermission(false);
       setIsRecording(false);
+      setIsAudioPaused(false);
+      setRecording(null);
+      isStartingRecording = false; // Always release lock on error
+      
       // Clean up on error
       if (globalRecording) {
         try {
-          await globalRecording.stopAndUnloadAsync();
+          const status = await globalRecording.getStatusAsync();
+          if (status.isRecording) {
+            await globalRecording.stopAndUnloadAsync();
+          }
         } catch (cleanupError) {
-          console.log('Error cleaning up on failure:', cleanupError);
+          console.log('Error during error cleanup:', cleanupError);
         }
         globalRecording = null;
       }
@@ -682,31 +1072,49 @@ export default function InterviewInterface({ navigation, route }: any) {
       console.log('Stopping audio recording...');
       
       if (!isRecording || !globalRecording) {
-        console.log('No recording to stop');
-        return audioUri; // Return existing URI if available
+        console.log('No active recording to stop');
+        return audioUri;
       }
       
-      console.log('Stopping and unloading recording...');
+      console.log('Attempting to stop and unload...');
       await globalRecording.stopAndUnloadAsync();
       
       const uri = globalRecording.getURI();
-      console.log('Recording URI:', uri);
+      console.log('Recording stopped. URI:', uri);
       
-      // Update audioUri state with the actual file URI
       if (uri) {
         setAudioUri(uri);
       }
       
       setIsRecording(false);
       setIsAudioPaused(false);
+      setRecording(null);
       globalRecording = null;
+      isStartingRecording = false; // Release lock when stopping
+      
+      // Reset audio mode after stopping
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: false,
+        });
+      } catch (modeError) {
+        console.log('Error resetting audio mode after stop:', modeError);
+      }
       
       showSnackbar('Audio recording completed');
       return uri;
     } catch (error) {
       console.error('Error stopping recording:', error);
       showSnackbar('Failed to stop recording');
-      return audioUri; // Return existing URI if available, even if stop failed
+      
+      // Force cleanup anyway
+      globalRecording = null;
+      setIsRecording(false);
+      setIsAudioPaused(false);
+      setRecording(null);
+      
+      return audioUri;
     }
   };
 
@@ -1033,7 +1441,20 @@ export default function InterviewInterface({ navigation, route }: any) {
               uploadedAt: audioUrl ? new Date().toISOString() : null
             },
           location: locationData,
-          selectedAC: selectedAC, // Include selected AC in response data
+          selectedAC: selectedAC,
+          selectedPollingStation: selectedPollingStation.stationName ? {
+            state: selectedPollingStation.state,
+            acNo: selectedPollingStation.acNo,
+            acName: selectedPollingStation.acName,
+            pcNo: selectedPollingStation.pcNo,
+            pcName: selectedPollingStation.pcName,
+            district: selectedPollingStation.district,
+            groupName: selectedPollingStation.groupName,
+            stationName: selectedPollingStation.stationName,
+            gpsLocation: selectedPollingStation.gpsLocation,
+            latitude: selectedPollingStation.latitude,
+            longitude: selectedPollingStation.longitude
+          } : null,
           totalQuestions: allQuestions.length,
           answeredQuestions: finalResponses.filter((r: any) => hasResponseContent(r.response)).length,
           skippedQuestions: finalResponses.filter((r: any) => !hasResponseContent(r.response)).length,
@@ -1269,8 +1690,14 @@ export default function InterviewInterface({ navigation, route }: any) {
   const currentQuestionDisplayOptions = useMemo(() => {
     if (!currentQuestion) return [];
     
+    // Skip for polling station selection questions (they don't have options)
+    if ((currentQuestion as any)?.isPollingStationSelection) {
+      return [];
+    }
+    
     const questionId = currentQuestion.id;
-    let displayOptions = currentQuestion.options || [];
+    const questionOptions = 'options' in currentQuestion ? (currentQuestion as any).options : [];
+    let displayOptions = questionOptions || [];
     
     if (currentQuestion.type === 'multiple_choice') {
       // Check if we have cached shuffled options
@@ -1278,13 +1705,13 @@ export default function InterviewInterface({ navigation, route }: any) {
         displayOptions = shuffledOptions[questionId];
       } else {
         // Compute shuffled options (will be cached in useEffect)
-        displayOptions = computeShuffledOptions(questionId, currentQuestion.options || [], currentQuestion);
+        displayOptions = computeShuffledOptions(questionId, questionOptions || [], currentQuestion);
       }
     } else if (currentQuestion.type === 'single_choice' || currentQuestion.type === 'single_select' || currentQuestion.type === 'dropdown') {
       // Move "Others" to the end for single_choice and dropdown
       const othersOptions: any[] = [];
       const regularOptions: any[] = [];
-      (currentQuestion.options || []).forEach((option: any) => {
+      (questionOptions || []).forEach((option: any) => {
         const optionText = typeof option === 'object' ? (option.text || option.value || '') : String(option);
         if (isOthersOption(optionText)) {
           othersOptions.push(option);
@@ -1302,10 +1729,14 @@ export default function InterviewInterface({ navigation, route }: any) {
   useEffect(() => {
     if (!currentQuestion || currentQuestion.type !== 'multiple_choice') return;
     
+    // Skip for polling station selection questions (they don't have options)
+    if ((currentQuestion as any)?.isPollingStationSelection) return;
+    
     const questionId = currentQuestion.id;
+    const questionOptions = 'options' in currentQuestion ? (currentQuestion as any).options : [];
     // Only compute and cache if not already cached
-    if (!shuffledOptions[questionId] && currentQuestion.options) {
-      const computed = computeShuffledOptions(questionId, currentQuestion.options, currentQuestion);
+    if (!shuffledOptions[questionId] && questionOptions) {
+      const computed = computeShuffledOptions(questionId, questionOptions, currentQuestion);
       setShuffledOptions(prev => {
         if (!prev[questionId]) {
           return { ...prev, [questionId]: computed };
@@ -1450,7 +1881,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                         const maxSelections = question.settings?.maxSelections;
                         
                         if (currentAnswers.includes(optionValue)) {
-                          // Deselecting
+                          // Deselecting - remove from array while preserving order of remaining items
                           currentAnswers = currentAnswers.filter((a: string) => a !== optionValue);
                           
                           // Clear "Others" text input if "Others" is deselected
@@ -1462,7 +1893,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                             });
                           }
                         } else {
-                          // Selecting
+                          // Selecting - add to end to preserve selection order
                           // Handle "None" option - mutual exclusivity
                           if (isNoneOption) {
                             // If "None" is selected, clear all other selections
@@ -1502,9 +1933,12 @@ export default function InterviewInterface({ navigation, route }: any) {
                               showSnackbar(`Maximum ${maxSelections} selection${maxSelections > 1 ? 's' : ''} allowed`);
                               return;
                             }
+                            // Add to end to preserve selection order (order in which options were first selected)
+                            // If option was previously selected and deselected, it goes to the end (newest selection)
                             currentAnswers.push(optionValue);
                           }
                         }
+                        // The array order now represents the order in which options were selected
                         handleResponseChange(question.id, currentAnswers);
                       } else {
                         // Single selection
@@ -1724,6 +2158,177 @@ export default function InterviewInterface({ navigation, route }: any) {
           />
         );
 
+      case 'polling_station':
+        return (
+          <View style={styles.pollingStationContainer}>
+            {/* Group Selection */}
+            <View style={[styles.pollingStationSection, showGroupDropdown && { zIndex: 1001 }]}>
+              <Text style={styles.pollingStationLabel}>Select Group *</Text>
+              {loadingGroups ? (
+                <ActivityIndicator size="small" color="#2563eb" />
+              ) : availableGroups.length === 0 ? (
+                <Text style={styles.pollingStationError}>No groups available. Please select an AC first.</Text>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={styles.dropdownButton}
+                    onPress={() => setShowGroupDropdown(true)}
+                  >
+                    <Text style={[
+                      styles.dropdownButtonText,
+                      !selectedPollingStation.groupName && styles.dropdownPlaceholder
+                    ]}>
+                      {selectedPollingStation.groupName || 'Select a group...'}
+                    </Text>
+                    <Text style={styles.dropdownArrow}>▼</Text>
+                  </TouchableOpacity>
+                  
+                  {/* Group Selection Modal - Bottom Sheet */}
+                  <Modal
+                    visible={showGroupDropdown}
+                    transparent={true}
+                    animationType="slide"
+                    onRequestClose={() => setShowGroupDropdown(false)}
+                  >
+                    <View style={styles.modalBackdrop}>
+                      <TouchableOpacity
+                        style={styles.modalBackdropTouchable}
+                        activeOpacity={1}
+                        onPress={() => setShowGroupDropdown(false)}
+                      />
+                      <View style={styles.bottomSheetContainer}>
+                        <View style={styles.bottomSheetHeader}>
+                          <Text style={styles.bottomSheetTitle}>Select Group</Text>
+                          <TouchableOpacity onPress={() => setShowGroupDropdown(false)}>
+                            <Text style={styles.bottomSheetClose}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <ScrollView 
+                          style={styles.bottomSheetContent}
+                          contentContainerStyle={styles.bottomSheetContentInner}
+                          showsVerticalScrollIndicator={true}
+                          keyboardShouldPersistTaps="handled"
+                        >
+                          {availableGroups.map((item, index) => (
+                            <TouchableOpacity
+                              key={`group-${index}`}
+                              activeOpacity={0.7}
+                              style={[
+                                styles.bottomSheetItem,
+                                selectedPollingStation.groupName === item.name && styles.bottomSheetItemSelected
+                              ]}
+                              onPress={() => {
+                                handleResponseChange('polling-station-group', item.name);
+                                setShowGroupDropdown(false);
+                              }}
+                            >
+                              <Text style={[
+                                styles.bottomSheetItemText,
+                                selectedPollingStation.groupName === item.name && styles.bottomSheetItemTextSelected
+                              ]}>
+                                {item.name} ({item.polling_station_count} stations)
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    </View>
+                  </Modal>
+                </>
+              )}
+            </View>
+
+            {/* Polling Station Selection - Only show if group is selected */}
+            {selectedPollingStation.groupName && (
+              <View style={[styles.pollingStationSection, showStationDropdown && { zIndex: 1001 }]}>
+                <Text style={styles.pollingStationLabel}>Select Polling Station *</Text>
+                {loadingStations ? (
+                  <ActivityIndicator size="small" color="#2563eb" />
+                ) : availablePollingStations.length === 0 ? (
+                  <Text style={styles.pollingStationError}>No polling stations available for this group.</Text>
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={styles.dropdownButton}
+                      onPress={() => setShowStationDropdown(true)}
+                    >
+                      <Text style={[
+                        styles.dropdownButtonText,
+                        !selectedPollingStation.stationName && styles.dropdownPlaceholder
+                      ]}>
+                        {selectedPollingStation.stationName || 'Select a polling station...'}
+                      </Text>
+                      <Text style={styles.dropdownArrow}>▼</Text>
+                    </TouchableOpacity>
+                    
+                    {/* Polling Station Selection Modal - Bottom Sheet */}
+                    <Modal
+                      visible={showStationDropdown}
+                      transparent={true}
+                      animationType="slide"
+                      onRequestClose={() => setShowStationDropdown(false)}
+                    >
+                      <View style={styles.modalBackdrop}>
+                        <TouchableOpacity
+                          style={styles.modalBackdropTouchable}
+                          activeOpacity={1}
+                          onPress={() => setShowStationDropdown(false)}
+                        />
+                        <View style={styles.bottomSheetContainer}>
+                          <View style={styles.bottomSheetHeader}>
+                            <Text style={styles.bottomSheetTitle}>Select Polling Station</Text>
+                            <TouchableOpacity onPress={() => setShowStationDropdown(false)}>
+                              <Text style={styles.bottomSheetClose}>✕</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <ScrollView 
+                            style={styles.bottomSheetContent}
+                            contentContainerStyle={styles.bottomSheetContentInner}
+                            showsVerticalScrollIndicator={true}
+                            keyboardShouldPersistTaps="handled"
+                          >
+                            {availablePollingStations.map((item, index) => (
+                              <TouchableOpacity
+                                key={`station-${index}`}
+                                activeOpacity={0.7}
+                                style={[
+                                  styles.bottomSheetItem,
+                                  selectedPollingStation.stationName === item.name && styles.bottomSheetItemSelected
+                                ]}
+                                onPress={() => {
+                                  handleResponseChange('polling-station-station', item.name);
+                                  setShowStationDropdown(false);
+                                }}
+                              >
+                                <Text style={[
+                                  styles.bottomSheetItemText,
+                                  selectedPollingStation.stationName === item.name && styles.bottomSheetItemTextSelected
+                                ]}>
+                                  {item.name}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      </View>
+                    </Modal>
+                  </>
+                )}
+              </View>
+            )}
+
+            {/* Geofencing Error Display - Only show if booster is not enabled */}
+            {geofencingError && !locationControlBooster && (
+              <View style={styles.geofencingErrorContainer}>
+                <Text style={styles.geofencingErrorText}>{geofencingError}</Text>
+                <Text style={styles.geofencingErrorHint}>
+                  Please abandon the interview or change the Group, AC, and Polling Station.
+                </Text>
+              </View>
+            )}
+          </View>
+        );
+
       default:
         return (
           <View style={styles.unsupportedContainer}>
@@ -1899,13 +2504,18 @@ export default function InterviewInterface({ navigation, route }: any) {
               styles.nextButton,
               ((targetAudienceErrors.has(visibleQuestions[currentQuestionIndex]?.id) || 
                (visibleQuestions[currentQuestionIndex]?.required && 
-                !responses[visibleQuestions[currentQuestionIndex]?.id])) ||
+                !responses[visibleQuestions[currentQuestionIndex]?.id]) ||
+               (geofencingError && (currentQuestion as any)?.isPollingStationSelection && !locationControlBooster)) ||
                (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
                 !isRecording && audioPermission !== false)) && styles.disabledButton
             ]}
             disabled={targetAudienceErrors.has(visibleQuestions[currentQuestionIndex]?.id) || 
                      (visibleQuestions[currentQuestionIndex]?.required && 
-                      !responses[visibleQuestions[currentQuestionIndex]?.id]) ||
+                      !responses[visibleQuestions[currentQuestionIndex]?.id] &&
+                      // For polling station question, check if both group and station are selected
+                      !((currentQuestion as any)?.isPollingStationSelection && 
+                        selectedPollingStation.groupName && selectedPollingStation.stationName)) ||
+                     (geofencingError && (currentQuestion as any)?.isPollingStationSelection && !locationControlBooster) ||
                      (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
                       !isRecording && audioPermission !== false)}
           >
@@ -2144,12 +2754,9 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   dropdownContainer: {
+    position: 'relative',
     marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    backgroundColor: '#ffffff',
-    padding: 12,
+    zIndex: 1,
   },
   dropdownText: {
     fontSize: 16,
@@ -2157,7 +2764,73 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   dropdownButton: {
-    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    minHeight: 48,
+  },
+  dropdownButtonText: {
+    flex: 1,
+    fontSize: 16,
+    color: '#111827',
+  },
+  dropdownPlaceholder: {
+    color: '#9ca3af',
+  },
+  dropdownArrow: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginLeft: 8,
+  },
+  dropdownList: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    height: 300,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    zIndex: 1000,
+    overflow: 'hidden',
+  },
+  dropdownListInner: {
+    height: '100%',
+    width: '100%',
+  },
+  dropdownListContent: {
+    flexGrow: 1,
+    paddingBottom: 8,
+  },
+  dropdownItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  dropdownItemSelected: {
+    backgroundColor: '#eff6ff',
+  },
+  dropdownItemText: {
+    fontSize: 15,
+    color: '#111827',
+  },
+  dropdownItemTextSelected: {
+    color: '#2563eb',
+    fontWeight: '600',
   },
   ratingContainer: {
     marginTop: 2,
@@ -2324,6 +2997,46 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
   },
+  pollingStationContainer: {
+    marginTop: 8,
+  },
+  pollingStationSection: {
+    marginBottom: 16,
+  },
+  pollingStationLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  pollingStationButton: {
+    marginTop: 4,
+  },
+  pollingStationError: {
+    fontSize: 14,
+    color: '#6b7280',
+    fontStyle: 'italic',
+    marginTop: 8,
+  },
+  geofencingErrorContainer: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: '#fef2f2',
+    borderColor: '#fca5a5',
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+  geofencingErrorText: {
+    fontSize: 14,
+    color: '#dc2626',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  geofencingErrorHint: {
+    fontSize: 12,
+    color: '#991b1b',
+    marginTop: 4,
+  },
   validationError: {
     marginTop: 12,
     padding: 12,
@@ -2340,5 +3053,105 @@ const styles = StyleSheet.create({
   disabledButton: {
     backgroundColor: '#9ca3af',
     opacity: 0.6,
+  },
+  // Modal styles for polling station selection
+  pollingStationModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  pollingStationModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: height * 0.8,
+    paddingBottom: 20,
+  },
+  pollingStationModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  pollingStationModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  pollingStationModalList: {
+    flex: 1,
+  },
+  pollingStationModalItem: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  pollingStationModalItemText: {
+    fontSize: 16,
+    color: '#111827',
+  },
+  // Bottom Sheet Modal Styles
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdropTouchable: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  bottomSheetContainer: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: height * 0.8,
+    height: 450, // Fixed height to show at least 6-7 items comfortably (each item ~56px + header ~70px)
+    width: '100%',
+  },
+  bottomSheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  bottomSheetTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  bottomSheetClose: {
+    fontSize: 24,
+    color: '#6b7280',
+    fontWeight: '300',
+  },
+  bottomSheetContent: {
+    flex: 1,
+  },
+  bottomSheetContentInner: {
+    paddingBottom: 20,
+  },
+  bottomSheetItem: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  bottomSheetItemSelected: {
+    backgroundColor: '#eff6ff',
+  },
+  bottomSheetItemText: {
+    fontSize: 16,
+    color: '#111827',
+  },
+  bottomSheetItemTextSelected: {
+    color: '#2563eb',
+    fontWeight: '600',
   },
 });
