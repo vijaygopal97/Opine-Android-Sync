@@ -106,20 +106,46 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return '#059669';
+    if (!status) return '#6b7280';
+    switch (status.toLowerCase()) {
+      case 'active':
+      case 'approved': return '#059669';
       case 'completed': return '#2563eb';
       case 'in_progress': return '#f59e0b';
+      case 'pending_approval': return '#f59e0b';
+      case 'rejected': return '#dc2626';
+      case 'abandoned': return '#6b7280';
+      case 'submitted': return '#2563eb';
       default: return '#6b7280';
     }
   };
 
   const getStatusText = (status: string) => {
-    switch (status) {
+    if (!status) return 'Unknown';
+    switch (status.toLowerCase()) {
       case 'active': return 'Active';
       case 'completed': return 'Completed';
       case 'in_progress': return 'In Progress';
-      default: return 'Unknown';
+      case 'pending_approval': return 'Pending';
+      case 'approved': return 'Approved';
+      case 'rejected': return 'Rejected';
+      case 'abandoned': return 'Abandoned';
+      case 'submitted': return 'Submitted';
+      default: return status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+    }
+  };
+
+  const formatDate = (dateString: string | Date | undefined) => {
+    if (!dateString) return 'N/A';
+    try {
+      const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
+      if (isNaN(date.getTime())) {
+        return 'N/A';
+      }
+      return date.toLocaleDateString();
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return 'N/A';
     }
   };
 
@@ -348,7 +374,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                     <View style={styles.metaItem}>
                       <Text style={styles.metaLabel}>Started</Text>
                       <Text style={styles.metaValue}>
-                        {interview.startedAt ? new Date(interview.startedAt).toLocaleDateString() : 'Unknown'}
+                        {formatDate(interview.startTime || interview.startedAt || interview.createdAt)}
                       </Text>
                     </View>
                     <View style={styles.metaItem}>
@@ -366,13 +392,13 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                     <View style={styles.metaItem}>
                       <Text style={styles.metaLabel}>Status</Text>
                       <Text style={styles.metaValue}>
-                        {interview.status?.replace('_', ' ') || 'Unknown'}
+                        {interview.status ? interview.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'N/A'}
                       </Text>
                     </View>
                   </View>
-                  {interview.completedAt && (
+                  {(interview.endTime || interview.completedAt) && (
                     <Text style={styles.interviewDate}>
-                      Completed: {new Date(interview.completedAt).toLocaleDateString()}
+                      Completed: {formatDate(interview.endTime || interview.completedAt)}
                     </Text>
                   )}
                 </Card.Content>
