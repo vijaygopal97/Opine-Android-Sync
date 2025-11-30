@@ -4,7 +4,7 @@ export interface User {
   lastName: string;
   email: string;
   phone?: string;
-  userType: 'interviewer' | 'admin' | 'user' | 'super_admin';
+  userType: 'interviewer' | 'admin' | 'user' | 'super_admin' | 'quality_agent';
   company?: any;
   companyCode?: string;
   status: 'active' | 'inactive' | 'suspended';

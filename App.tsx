@@ -9,6 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SplashScreen from './src/screens/SplashScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import InterviewerDashboard from './src/screens/InterviewerDashboard';
+import QualityAgentDashboard from './src/screens/QualityAgentDashboard';
 import AvailableSurveys from './src/screens/AvailableSurveys';
 import MyInterviews from './src/screens/MyInterviews';
 import InterviewInterface from './src/screens/InterviewInterface';
@@ -228,13 +229,25 @@ export default function App() {
           ) : (
             <>
               <Stack.Screen name="Dashboard">
-                {(props) => (
-                  <InterviewerDashboard
-                    {...props}
-                    user={user}
-                    onLogout={handleLogout}
-                  />
-                )}
+                {(props) => {
+                  // Route to appropriate dashboard based on user type
+                  if (user?.userType === 'quality_agent') {
+                    return (
+                      <QualityAgentDashboard
+                        {...props}
+                        user={user}
+                        onLogout={handleLogout}
+                      />
+                    );
+                  }
+                  return (
+                    <InterviewerDashboard
+                      {...props}
+                      user={user}
+                      onLogout={handleLogout}
+                    />
+                  );
+                }}
               </Stack.Screen>
               <Stack.Screen 
                 name="AvailableSurveys" 

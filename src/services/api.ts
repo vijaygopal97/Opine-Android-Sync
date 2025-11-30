@@ -704,6 +704,137 @@ class ApiService {
       };
     }
   }
+
+  // Quality Agent API methods
+  async getNextReviewAssignment(params?: any) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(`${this.baseURL}/api/survey-responses/next-review`, {
+        params,
+        headers
+      });
+      return {
+        success: true,
+        data: response.data.data
+      };
+    } catch (error: any) {
+      console.error('Get next review assignment error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to get next assignment',
+        error: error.response?.data
+      };
+    }
+  }
+
+  async releaseReviewAssignment(responseId: string) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.post(
+        `${this.baseURL}/api/survey-responses/release-review/${responseId}`,
+        {},
+        { headers }
+      );
+      return {
+        success: true,
+        data: response.data.data
+      };
+    } catch (error: any) {
+      console.error('Release review assignment error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to release assignment',
+        error: error.response?.data
+      };
+    }
+  }
+
+  async submitVerification(verificationData: any) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.post(
+        `${this.baseURL}/api/survey-responses/verify`,
+        verificationData,
+        { headers }
+      );
+      return {
+        success: true,
+        data: response.data.data
+      };
+    } catch (error: any) {
+      console.error('Submit verification error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to submit verification',
+        error: error.response?.data
+      };
+    }
+  }
+
+  async getQualityAgentAnalytics(params?: any) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(`${this.baseURL}/api/performance/quality-agent/analytics`, {
+        params,
+        headers
+      });
+      return {
+        success: true,
+        data: response.data.data
+      };
+    } catch (error: any) {
+      console.error('Get quality agent analytics error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to get analytics',
+        error: error.response?.data
+      };
+    }
+  }
+
+  // Get CATI call details
+  async getCatiCallById(callId: string) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(`${this.baseURL}/api/cati/calls/${callId}`, { headers });
+      return {
+        success: true,
+        data: response.data.data
+      };
+    } catch (error: any) {
+      console.error('Get CATI call error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to get call details',
+        error: error.response?.data
+      };
+    }
+  }
+
+  // Get CATI call recording
+  async getCatiRecording(callId: string) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(
+        `${this.baseURL}/api/cati/recording/${callId}`,
+        {
+          headers,
+          responseType: 'blob'
+        }
+      );
+      return {
+        success: true,
+        blob: response.data
+      };
+    } catch (error: any) {
+      console.error('Get CATI recording error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to get recording',
+        error: error.response?.data
+      };
+    }
+  }
 }
 
 export const apiService = new ApiService();
