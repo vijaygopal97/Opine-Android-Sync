@@ -2,7 +2,7 @@
   "expo": {
     "name": "Opine Interviewer",
     "slug": "opine-interviewer",
-    "version": "4",
+    "version": "5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -23,7 +23,7 @@
       }
     },
     "android": {
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
