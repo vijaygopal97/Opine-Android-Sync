@@ -33,6 +33,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { apiService } from '../services/api';
 import { LocationService } from '../utils/location';
 import { Survey, SurveyResponse } from '../types';
+import { parseTranslation, getMainText } from '../utils/translations';
 
 const { width, height } = Dimensions.get('window');
 
@@ -53,7 +54,9 @@ export default function InterviewInterface({ navigation, route }: any) {
   // Helper function to check if an option is "Other", "Others", or "Others (Specify)"
   const isOthersOption = (optText: string | null | undefined): boolean => {
     if (!optText) return false;
-    const normalized = optText.toLowerCase().trim();
+    // Strip translations before checking
+    const mainText = getMainText(String(optText));
+    const normalized = mainText.toLowerCase().trim();
     return normalized === 'other' || 
            normalized === 'others' || 
            normalized === 'others (specify)';
@@ -268,24 +271,76 @@ export default function InterviewInterface({ navigation, route }: any) {
 
       let met = false;
 
+      // Find the target question to get its options for proper comparison
+      const targetQuestion = allQuestions.find((q: any) => q.id === condition.questionId);
+      
+      // Helper function to get main text (without translation) for comparison
+      const getComparisonValue = (val: any): string => {
+        if (val === null || val === undefined) return String(val || '').toLowerCase().trim();
+        const strVal = String(val);
+        
+        // If we have the target question and it has options, try to match the value to an option
+        if (targetQuestion && targetQuestion.options && Array.isArray(targetQuestion.options)) {
+          // Check if val matches any option.value or option.text (after stripping translations)
+          for (const option of targetQuestion.options) {
+            const optionValue = typeof option === 'object' ? (option.value || option.text) : option;
+            const optionText = typeof option === 'object' ? option.text : option;
+            
+            // Check if val matches option.value or option.text (with or without translations)
+            if (strVal === String(optionValue) || strVal === String(optionText)) {
+              // Return the main text of the option (without translation)
+              return getMainText(String(optionText)).toLowerCase().trim();
+            }
+            
+            // Also check if main texts match (in case translations differ)
+            if (getMainText(strVal).toLowerCase().trim() === getMainText(String(optionText)).toLowerCase().trim()) {
+              return getMainText(String(optionText)).toLowerCase().trim();
+            }
+          }
+        }
+        
+        // Fallback: just strip translations from the value itself
+        return getMainText(strVal).toLowerCase().trim();
+      };
+
+      // Get comparison values for both response and condition value
+      const responseComparison = Array.isArray(response) 
+        ? response.map((r: any) => getComparisonValue(r))
+        : getComparisonValue(response);
+      const conditionComparison = getComparisonValue(condition.value);
+
       switch (condition.operator) {
         case 'equals':
-          met = String(response).toLowerCase() === String(condition.value).toLowerCase();
+          if (Array.isArray(responseComparison)) {
+            met = responseComparison.some((r: string) => r === conditionComparison);
+          } else {
+            met = responseComparison === conditionComparison;
+          }
           break;
         case 'not_equals':
-          met = String(response).toLowerCase() !== String(condition.value).toLowerCase();
+          if (Array.isArray(responseComparison)) {
+            met = !responseComparison.some((r: string) => r === conditionComparison);
+          } else {
+            met = responseComparison !== conditionComparison;
+          }
           break;
         case 'contains':
-          met = String(response).toLowerCase().includes(condition.value.toLowerCase());
+          const responseStr = Array.isArray(responseComparison) 
+            ? responseComparison.join(' ') 
+            : String(responseComparison);
+          met = responseStr.includes(conditionComparison);
           break;
         case 'not_contains':
-          met = !String(response).toLowerCase().includes(condition.value.toLowerCase());
+          const responseStr2 = Array.isArray(responseComparison) 
+            ? responseComparison.join(' ') 
+            : String(responseComparison);
+          met = !responseStr2.includes(conditionComparison);
           break;
         case 'greater_than':
-          met = parseFloat(response) > parseFloat(condition.value);
+          met = parseFloat(String(response)) > parseFloat(String(condition.value));
           break;
         case 'less_than':
-          met = parseFloat(response) < parseFloat(condition.value);
+          met = parseFloat(String(response)) < parseFloat(String(condition.value));
           break;
         case 'is_empty':
           met = !hasResponseContent(response);
@@ -294,17 +349,17 @@ export default function InterviewInterface({ navigation, route }: any) {
           met = hasResponseContent(response);
           break;
         case 'is_selected':
-          if (Array.isArray(response)) {
-            met = response.some(r => String(r).toLowerCase() === String(condition.value).toLowerCase());
+          if (Array.isArray(responseComparison)) {
+            met = responseComparison.some((r: string) => r === conditionComparison);
           } else {
-            met = String(response).toLowerCase() === String(condition.value).toLowerCase();
+            met = responseComparison === conditionComparison;
           }
           break;
         case 'is_not_selected':
-          if (Array.isArray(response)) {
-            met = !response.some(r => String(r).toLowerCase() === String(condition.value).toLowerCase());
+          if (Array.isArray(responseComparison)) {
+            met = !responseComparison.some((r: string) => r === conditionComparison);
           } else {
-            met = String(response).toLowerCase() !== String(condition.value).toLowerCase();
+            met = responseComparison !== conditionComparison;
           }
           break;
         default:
@@ -1815,8 +1870,13 @@ export default function InterviewInterface({ navigation, route }: any) {
 
   // Helper function to check if an option should not be shuffled
   const isNonShufflableOption = (option: any): boolean => {
-    const optionText = typeof option === 'object' ? (option.text || option.value || '').toLowerCase().trim() : String(option).toLowerCase().trim();
-    const optionValue = typeof option === 'object' ? (option.value || option.text || '').toLowerCase().trim() : String(option).toLowerCase().trim();
+    // Get option text and value, then strip translations
+    const rawOptionText = typeof option === 'object' ? (option.text || option.value || '') : String(option);
+    const rawOptionValue = typeof option === 'object' ? (option.value || option.text || '') : String(option);
+    
+    // Strip translations before checking
+    const optionText = getMainText(rawOptionText).toLowerCase().trim();
+    const optionValue = getMainText(rawOptionValue).toLowerCase().trim();
     
     // Check for special options that should not be shuffled
     // 1. None
@@ -2091,10 +2151,11 @@ export default function InterviewInterface({ navigation, route }: any) {
         // Use shuffled options for display
         const shuffledMultipleChoiceOptions = displayOptions || question.options || [];
         
-        // Check if "None" option exists
+        // Check if "None" option exists (strip translations before checking)
         const noneOption = shuffledMultipleChoiceOptions.find((opt: any) => {
           const optText = opt.text || '';
-          return optText.toLowerCase().trim() === 'none';
+          const mainText = getMainText(optText);
+          return mainText.toLowerCase().trim() === 'none';
         });
         const noneOptionValue = noneOption ? (noneOption.value || noneOption.text) : null;
         
@@ -2105,10 +2166,17 @@ export default function InterviewInterface({ navigation, route }: any) {
         });
         const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
         
-        // Check if "Others" is selected
+        // Helper to normalize option values for comparison (strip translations)
+        const normalizeForComparison = (val: any): string => {
+          if (!val) return String(val || '');
+          return getMainText(String(val)).toLowerCase().trim();
+        };
+        
+        // Check if "Others" is selected (normalize both values before comparing)
+        const normalizedOthersValue = othersOptionValue ? normalizeForComparison(othersOptionValue) : null;
         const isOthersSelected = allowMultiple 
-          ? (Array.isArray(currentResponse) && currentResponse.includes(othersOptionValue))
-          : (currentResponse === othersOptionValue);
+          ? (Array.isArray(currentResponse) && currentResponse.some((r: any) => normalizeForComparison(r) === normalizedOthersValue))
+          : (normalizeForComparison(currentResponse) === normalizedOthersValue);
         
         return (
           <View style={styles.optionsContainer}>
@@ -2122,7 +2190,9 @@ export default function InterviewInterface({ navigation, route }: any) {
             {shuffledMultipleChoiceOptions.map((option: any, index: number) => {
               const optionValue = option.value || option.text;
               const optionText = option.text || '';
-              const isNoneOption = optionText.toLowerCase().trim() === 'none';
+              // Strip translations before checking for "None"
+              const mainText = getMainText(String(optionText));
+              const isNoneOption = mainText.toLowerCase().trim() === 'none';
               const isOthers = isOthersOption(optionText);
               const isSelected = allowMultiple 
                 ? (Array.isArray(currentResponse) && currentResponse.includes(optionValue))
@@ -2232,7 +2302,15 @@ export default function InterviewInterface({ navigation, route }: any) {
                       }
                     }}
                   />
-                  <Text style={styles.optionText}>{optionText}</Text>
+                  <Text style={styles.optionText}>{getMainText(optionText)}</Text>
+                  {(() => {
+                    const parsed = parseTranslation(optionText);
+                    return parsed.translation ? (
+                      <Text style={[styles.optionText, { fontSize: 14, fontStyle: 'italic', color: '#666' }]}>
+                        {parsed.translation}
+                      </Text>
+                    ) : null;
+                  })()}
                 </View>
               );
             })}
@@ -2289,7 +2367,15 @@ export default function InterviewInterface({ navigation, route }: any) {
                     onPress={() => handleResponseChange(question.id, option.value)}
                   />
                   <View style={styles.optionContent}>
-                    <Text style={styles.optionText}>{option.text}</Text>
+                    <Text style={styles.optionText}>{getMainText(option.text)}</Text>
+                    {(() => {
+                      const parsed = parseTranslation(option.text);
+                      return parsed.translation ? (
+                        <Text style={[styles.optionText, { fontSize: 14, fontStyle: 'italic', color: '#666' }]}>
+                          {parsed.translation}
+                        </Text>
+                      ) : null;
+                    })()}
                     {quotaInfo && (
                       <View style={styles.quotaInfo}>
                         <Text style={styles.quotaText}>
@@ -2323,10 +2409,13 @@ export default function InterviewInterface({ navigation, route }: any) {
                 Alert.alert(
                   'Select Option',
                   'Choose an option:',
-                  shuffledDropdownOptions.map((option: any) => ({
-                    text: option.text,
-                    onPress: () => handleResponseChange(question.id, option.value)
-                  }))
+                  shuffledDropdownOptions.map((option: any) => {
+                    const parsed = parseTranslation(option.text);
+                    return {
+                      text: parsed.translation ? `${parsed.mainText} / ${parsed.translation}` : parsed.mainText,
+                      onPress: () => handleResponseChange(question.id, option.value)
+                    };
+                  })
                 );
               }}
               style={styles.dropdownButton}
@@ -2367,7 +2456,17 @@ export default function InterviewInterface({ navigation, route }: any) {
                       {rating}
                     </Button>
                     {label ? (
-                      <Text style={styles.ratingLabel}>{label}</Text>
+                      <View>
+                        <Text style={styles.ratingLabel}>{getMainText(label)}</Text>
+                        {(() => {
+                          const parsed = parseTranslation(label);
+                          return parsed.translation ? (
+                            <Text style={[styles.ratingLabel, { fontSize: 10, fontStyle: 'italic', color: '#888' }]}>
+                              {parsed.translation}
+                            </Text>
+                          ) : null;
+                        })()}
+                      </View>
                     ) : null}
                   </View>
                 );
@@ -2375,8 +2474,28 @@ export default function InterviewInterface({ navigation, route }: any) {
             </View>
             {(minLabel || maxLabel) && (
               <View style={styles.ratingLabelsRow}>
-                <Text style={styles.ratingScaleLabel}>{minLabel}</Text>
-                <Text style={styles.ratingScaleLabel}>{maxLabel}</Text>
+                <View>
+                  <Text style={styles.ratingScaleLabel}>{getMainText(minLabel)}</Text>
+                    {(() => {
+                      const parsed = parseTranslation(minLabel);
+                      return parsed.translation ? (
+                        <Text style={[styles.ratingScaleLabel, { fontSize: 10, fontStyle: 'italic', color: '#888' }]}>
+                          {parsed.translation}
+                        </Text>
+                      ) : null;
+                    })()}
+                </View>
+                <View>
+                  <Text style={styles.ratingScaleLabel}>{getMainText(maxLabel)}</Text>
+                    {(() => {
+                      const parsed = parseTranslation(maxLabel);
+                      return parsed.translation ? (
+                        <Text style={[styles.ratingScaleLabel, { fontSize: 10, fontStyle: 'italic', color: '#888' }]}>
+                          {parsed.translation}
+                        </Text>
+                      ) : null;
+                    })()}
+                </View>
               </View>
             )}
           </View>
@@ -2730,7 +2849,15 @@ export default function InterviewInterface({ navigation, route }: any) {
             
             <View style={styles.questionHeader}>
               <Text style={styles.questionText}>
-                {currentQuestion.text}
+                {getMainText(currentQuestion.text)}
+                {(() => {
+                  const parsed = parseTranslation(currentQuestion.text);
+                  return parsed.translation ? (
+                    <Text style={{ fontSize: 18, fontStyle: 'italic', color: '#666', marginTop: 4 }}>
+                      {parsed.translation}
+                    </Text>
+                  ) : null;
+                })()}
                 {currentQuestion.required && <Text style={styles.requiredAsterisk}> *</Text>}
               </Text>
             </View>
