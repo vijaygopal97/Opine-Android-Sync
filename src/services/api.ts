@@ -33,7 +33,7 @@ class ApiService {
   async login(identifier: string, password: string) {
     try {
       const response = await axios.post(`${this.baseURL}/api/auth/login`, {
-        identifier, // Can be email or memberId
+        email: identifier, // Backend expects 'email' but accepts email or memberId
         password,
       });
 
