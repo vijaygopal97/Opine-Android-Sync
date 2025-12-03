@@ -53,13 +53,10 @@ export default function AvailableSurveys({ navigation }: any) {
       const result = await apiService.getAvailableSurveys();
       
       if (result.success) {
-        console.log('AvailableSurveys - Loaded surveys:', result.surveys?.length || 0);
-        console.log('AvailableSurveys - Survey data:', result.surveys);
         setSurveys(result.surveys || []);
         // Apply client-side filtering
         applyFilters(result.surveys || []);
       } else {
-        console.log('AvailableSurveys - Error:', result.message);
         showSnackbar(result.message || 'Failed to load surveys');
       }
     } catch (error) {
@@ -93,7 +90,6 @@ export default function AvailableSurveys({ navigation }: any) {
       });
     }
 
-    console.log('Filtered surveys:', filtered.length, 'Mode:', selectedMode);
     setFilteredSurveys(filtered);
   };
 

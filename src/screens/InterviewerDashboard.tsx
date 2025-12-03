@@ -57,17 +57,13 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       ]);
 
       if (surveysResult.success) {
-        console.log('Available surveys loaded:', surveysResult.surveys?.length || 0);
         setAvailableSurveys(surveysResult.surveys || []);
       } else {
-        console.log('Available surveys error:', surveysResult.message);
       }
 
       if (interviewsResult.success) {
-        console.log('My interviews loaded:', interviewsResult.interviews?.length || 0);
         setMyInterviews(interviewsResult.interviews || []);
       } else {
-        console.log('My interviews error:', interviewsResult.message);
       }
     } catch (error) {
       console.error('Error loading dashboard data:', error);

@@ -11,6 +11,7 @@ import {
   Modal,
   TouchableOpacity,
   FlatList,
+  Image,
 } from 'react-native';
 import {
   Text,
@@ -37,6 +38,57 @@ import { Survey, SurveyResponse } from '../types';
 import { parseTranslation, getMainText } from '../utils/translations';
 
 const { width, height } = Dimensions.get('window');
+
+// Helper function to get party logo path based on option text
+// Also checks if logos should be shown for the current question
+const getPartyLogo = (optionText: string | null | undefined, questionText?: string | null): string | null => {
+  if (!optionText) return null;
+  
+  // Check if this is Question 12 - "In your opinion what could be the reasons for voting for BJP"
+  // Don't show logos for this question
+  if (questionText) {
+    const qText = String(questionText).toLowerCase();
+    if (qText.includes('in your opinion what could be the reason') && qText.includes('voting') && qText.includes('bjp') ||
+        qText.includes('in your opinion what could be the reasons') && qText.includes('voting') && qText.includes('bjp') ||
+        qText.includes('reason for voting bjp') ||
+        qText.includes('reasons for voting bjp') ||
+        qText.includes('reason for voting for bjp') ||
+        qText.includes('reasons for voting for bjp') ||
+        (qText.includes('reason for voting') && qText.includes('bjp')) ||
+        (qText.includes('reasons for voting') && qText.includes('bjp')) ||
+        (qText.includes('বিজেপিকে ভোট') && qText.includes('কারণ'))) {
+      return null;
+    }
+  }
+  
+  const API_BASE_URL = 'https://opine.exypnossolutions.com';
+  const text = String(optionText).toLowerCase();
+  const mainText = getMainText(optionText).toLowerCase();
+  
+  // Check for AITC (Trinamool Congress) - check for "aitc", "trinamool", or "tmc"
+  if (text.includes('aitc') || text.includes('trinamool') || text.includes('tmc') ||
+      mainText.includes('aitc') || mainText.includes('trinamool') || mainText.includes('tmc')) {
+    return `${API_BASE_URL}/api/party-logos/AITC_New_Logo.png`;
+  }
+  
+  // Check for BJP
+  if (text.includes('bjp') || mainText.includes('bjp')) {
+    return `${API_BASE_URL}/api/party-logos/Logo_of_the_Bharatiya_Janata_Party.svg.webp`;
+  }
+  
+  // Check for INC/Congress - check for "inc" or "congress" but not "princ" or other words containing "inc"
+  if ((text.includes('inc') && !text.includes('princ') && !text.includes('since')) || text.includes('congress') || 
+      (mainText.includes('inc') && !mainText.includes('princ') && !mainText.includes('since')) || mainText.includes('congress')) {
+    return `${API_BASE_URL}/api/party-logos/INC_Logo.png`;
+  }
+  
+  // Check for Left Front
+  if (text.includes('left front') || text.includes('left_front') || mainText.includes('left front') || mainText.includes('left_front')) {
+    return `${API_BASE_URL}/api/party-logos/CPIMAX_1024x1024.webp`;
+  }
+  
+  return null;
+};
 
 // Simple audio recorder
 // Global recording instance
@@ -87,6 +139,12 @@ export default function InterviewInterface({ navigation, route }: any) {
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [response, setResponse] = useState<SurveyResponse | null>(null);
   const [showTranslationOnly, setShowTranslationOnly] = useState(false);
+  const [interviewerFirstName, setInterviewerFirstName] = useState<string>('');
+  
+  // MP/MLA names for survey "692fe24faf8e2f42139f5a49"
+  const [mpName, setMpName] = useState<string | null>(null);
+  const [mlaName, setMlaName] = useState<string | null>(null);
+  const [isLoadingMPMLA, setIsLoadingMPMLA] = useState(false);
   
   // Interview session state
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -105,6 +163,7 @@ export default function InterviewInterface({ navigation, route }: any) {
   
   // AC selection state
   const [selectedAC, setSelectedAC] = useState<string | null>(null);
+  const [hasByeElection, setHasByeElection] = useState<boolean>(false); // Track if selected AC has bye-election
   const [assignedACs, setAssignedACs] = useState<string[]>([]);
   const [requiresACSelection, setRequiresACSelection] = useState(false);
   
@@ -139,6 +198,7 @@ export default function InterviewInterface({ navigation, route }: any) {
   const [othersTextInputs, setOthersTextInputs] = useState<Record<string, string>>({}); // Store "Others" text input values by questionId_optionValue
   const [shuffledOptions, setShuffledOptions] = useState<Record<string, any[]>>({}); // Store shuffled options per questionId to maintain consistent order
   const scrollViewRef = React.useRef<ScrollView>(null); // Ref for ScrollView to scroll to top
+  const lastFetchedACRef = useRef<string | null>(null); // Track last AC we fetched MP/MLA for
   
   // CATI interview state
   const [catiQueueId, setCatiQueueId] = useState<string | null>(null);
@@ -175,19 +235,47 @@ export default function InterviewInterface({ navigation, route }: any) {
       return questions;
     }
     
-    // Debug survey data
-    console.log('🔍 Survey data received:', {
-      surveyName: survey?.surveyName,
-      sectionsCount: survey?.sections ? survey.sections.length : 0,
-      questionsCount: survey?.questions ? survey.questions.length : 0,
-      sections: survey?.sections,
-      questions: survey?.questions
-    });
+    // Removed excessive logging - survey data debug
+    
+    // Add Consent Form question as the very first question (before AC/Polling Station)
+    const consentFormMessage = isCatiMode 
+      ? `Namaste, my name is ${interviewerFirstName || 'Interviewer'}. We are calling from Convergent, an independent research organization. We are conducting a survey on social and political issues in West Bengal, interviewing thousands of people. I will ask you a few questions about government performance and your preferences. Your responses will remain strictly confidential and will only be analysed in combination with others. No personal details will ever be shared. The survey will take about 5–10 minutes, and your honest opinions will greatly help us.\n\nShould I Continue?`
+      : `Namaste, my name is ${interviewerFirstName || 'Interviewer'}. We are from Convergent, an independent research organization. We are conducting a survey on social and political issues in West Bengal, interviewing thousands of people. I will ask you a few questions about government performance and your preferences.\n\nYour responses will remain strictly confidential and will only be analysed in combination with others. No personal details will ever be shared. The survey will take about 5–10 minutes, and your honest opinions will greatly help us.\n\nShould I Continue?`;
+    
+    const consentFormQuestion = {
+      id: 'consent-form',
+      type: 'single_choice',
+      text: 'Consent Form',
+      description: consentFormMessage,
+      required: true,
+      order: -2, // Make it appear first (before AC selection)
+      options: [
+        {
+          id: 'consent-agree',
+          text: 'Yes',
+          value: '1',
+          code: '1'
+        },
+        {
+          id: 'consent-disagree',
+          text: 'No',
+          value: '2',
+          code: '2'
+        }
+      ],
+      sectionIndex: -2, // Special section for consent form
+      questionIndex: -2,
+      sectionId: 'consent-form',
+      sectionTitle: 'Consent Form',
+      isConsentForm: true // Flag to identify this special question
+    };
+    questions.push(consentFormQuestion);
     
     // Check if AC selection is required
-    const needsACSelection = requiresACSelection && assignedACs && assignedACs.length > 0;
+    // For CATI interviews, AC is auto-populated from respondent info, so we skip AC selection
+    const needsACSelection = !isCatiMode && requiresACSelection && assignedACs && assignedACs.length > 0;
     
-    // Add AC selection question as first question if required
+    // Add AC selection question as first question if required (NOT for CATI)
     if (needsACSelection) {
       const acQuestion = {
         id: 'ac-selection',
@@ -265,8 +353,15 @@ export default function InterviewInterface({ navigation, route }: any) {
         return false;
       }
       
-      // Check "Sets for this Question" logic
-      if (question.setsForThisQuestion) {
+      // Sets logic ONLY applies to CATI interviews, NOT CAPI
+      // For CAPI, show all questions regardless of sets
+      if (interviewMode === 'capi') {
+        // For CAPI, always show questions (sets don't apply)
+        return true;
+      }
+      
+      // For CATI, apply sets logic
+      if (interviewMode === 'cati' && question.setsForThisQuestion) {
         // If question has a set number, only show if it matches the selected set
         if (question.setNumber !== null && question.setNumber !== undefined) {
           // If no set is selected yet, we'll determine it
@@ -288,13 +383,13 @@ export default function InterviewInterface({ navigation, route }: any) {
     const interviewMode = isCatiMode ? 'cati' : 'capi';
     
     // Determine which Set to show for this interview (if sets are used)
+    // Note: Sets only apply to CATI, not CAPI
     let currentSetNumber = selectedSetNumber;
-    if (currentSetNumber === null && sessionId) {
-      currentSetNumber = determineSetNumber(sessionId, survey);
-      if (currentSetNumber !== null) {
-        setSelectedSetNumber(currentSetNumber);
-      }
+    // For CAPI, always set to null (no sets - show all questions from both sets)
+    if (interviewMode === 'capi') {
+      currentSetNumber = null;
     }
+    // For CATI, use the selectedSetNumber (fetched via useEffect)
     
     // Add regular survey questions from sections (filtered by CAPI/CATI and sets logic)
     if (survey?.sections && Array.isArray(survey.sections) && survey.sections.length > 0) {
@@ -331,11 +426,16 @@ export default function InterviewInterface({ navigation, route }: any) {
       });
     }
     
-    console.log('🔍 Total questions processed:', questions.length);
-    console.log('🔍 Questions array:', questions.map(q => ({ id: q.id, text: q.text, type: q.type })));
+    // Removed excessive logging
+    // console.log('🔍 Total questions processed:', questions.length);
+    // console.log('🔍 Questions array:', questions.map(q => ({ id: q.id, text: q.text, type: q.type })));
     
     return questions;
-  }, [survey.sections, survey.questions, requiresACSelection, assignedACs, selectedAC, availableGroups, availablePollingStations, selectedPollingStation.groupName, selectedPollingStation.stationName]);
+  }, [survey.sections, survey.questions, requiresACSelection, assignedACs, selectedAC, availableGroups, availablePollingStations, selectedPollingStation.groupName, selectedPollingStation.stationName, interviewerFirstName, isCatiMode, selectedSetNumber]);
+  
+  // Check if consent form is disagreed - if so, show Submit button directly
+  const consentResponse = responses['consent-form'];
+  const isConsentDisagreed = consentResponse === '2' || consentResponse === 2;
 
   // Helper function to check if response has content
   const hasResponseContent = (response: any): boolean => {
@@ -484,8 +584,36 @@ export default function InterviewInterface({ navigation, route }: any) {
     if (!allQuestions || allQuestions.length === 0) {
       return [];
     }
-    return allQuestions.filter((question: any) => question && evaluateConditions(question));
-  }, [allQuestions, evaluateConditions]);
+    return allQuestions.filter((question: any) => {
+      if (!question) return false;
+      
+      // Check conditional logic first
+      if (!evaluateConditions(question)) {
+        return false;
+      }
+      
+      // For survey "68fd1915d41841da463f0d46": Hide Question 7 (Bye-Election Party Choice) 
+      // if selected AC does not have bye-election
+      const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+      if (isTargetSurvey) {
+        const questionText = getMainText(question.text || '').toLowerCase();
+        const isByeElectionQuestion = questionText.includes('bye-election') || 
+                                      questionText.includes('bye election') ||
+                                      questionText.includes('উপ-নির্বাচন');
+        
+        if (isByeElectionQuestion) {
+          // Only show if selected AC has bye-election
+          // For CATI, check if AC is available from session data
+          const acToCheck = selectedAC || acFromSessionData;
+          if (!acToCheck || !hasByeElection) {
+            return false;
+          }
+        }
+      }
+      
+      return true;
+    });
+  }, [allQuestions, evaluateConditions, selectedAC, hasByeElection, survey, acFromSessionData]);
 
   const currentQuestion = visibleQuestions && visibleQuestions.length > 0 && currentQuestionIndex < visibleQuestions.length 
     ? visibleQuestions[currentQuestionIndex] 
@@ -493,6 +621,31 @@ export default function InterviewInterface({ navigation, route }: any) {
   const progress = visibleQuestions && visibleQuestions.length > 0 
     ? (currentQuestionIndex + 1) / visibleQuestions.length 
     : 0;
+
+  // Fetch interviewer's first name for consent form
+  useEffect(() => {
+    const fetchInterviewerName = async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const userDataStr = await AsyncStorage.getItem('userData');
+        if (userDataStr) {
+          const userData = JSON.parse(userDataStr);
+          if (userData && userData.firstName) {
+            setInterviewerFirstName(userData.firstName);
+          } else {
+            setInterviewerFirstName('Interviewer');
+          }
+        } else {
+          setInterviewerFirstName('Interviewer');
+        }
+      } catch (error) {
+        console.error('Error fetching interviewer name:', error);
+        setInterviewerFirstName('Interviewer');
+      }
+    };
+    
+    fetchInterviewerName();
+  }, []);
 
   // Check audio permissions
   useEffect(() => {
@@ -511,6 +664,224 @@ export default function InterviewInterface({ navigation, route }: any) {
     checkAudioPermission();
   }, []);
 
+  // Fetch set number for CATI interviews (to alternate sets)
+  useEffect(() => {
+    const fetchSetNumber = async () => {
+      // Only fetch for CATI interviews
+      if (!isCatiMode || !survey?._id || selectedSetNumber !== null) {
+        return;
+      }
+
+      try {
+        if (!survey?._id) {
+          console.warn('No survey ID available, skipping set number fetch');
+          return;
+        }
+        
+        // Helper function to get default set (Set 1)
+        const getDefaultSet = (): number | null => {
+          const setNumbers = new Set<number>();
+          survey?.sections?.forEach((section: any) => {
+            section.questions?.forEach((question: any) => {
+              if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
+                setNumbers.add(question.setNumber);
+              }
+            });
+          });
+          const setArray = Array.from(setNumbers).sort((a, b) => a - b);
+          return setArray.length > 0 ? setArray[0] : null; // First set (usually Set 1)
+        };
+        
+        const response = await apiService.getLastCatiSetNumber(survey._id);
+        
+        // Handle response - if API fails or returns no data, default to Set 1
+        if (response && response.success && response.data) {
+          const nextSetNumber = response.data.nextSetNumber;
+          if (nextSetNumber !== null && nextSetNumber !== undefined) {
+            setSelectedSetNumber(nextSetNumber);
+            return; // Success, exit early
+          }
+        }
+        
+        // Fallback: default to Set 1 (first available set)
+        const defaultSet = getDefaultSet();
+        if (defaultSet !== null) {
+          setSelectedSetNumber(defaultSet);
+        }
+      } catch (error: any) {
+        // Silently handle 404 or other errors - just use default Set 1
+        // Helper function to get default set (Set 1)
+        const getDefaultSet = (): number | null => {
+          const setNumbers = new Set<number>();
+          survey?.sections?.forEach((section: any) => {
+            section.questions?.forEach((question: any) => {
+              if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
+                setNumbers.add(question.setNumber);
+              }
+            });
+          });
+          const setArray = Array.from(setNumbers).sort((a, b) => a - b);
+          return setArray.length > 0 ? setArray[0] : null; // First set (usually Set 1)
+        };
+        const defaultSet = getDefaultSet();
+        if (defaultSet !== null) {
+          setSelectedSetNumber(defaultSet);
+        }
+      }
+    };
+
+    fetchSetNumber();
+  }, [isCatiMode, survey?._id, selectedSetNumber, survey?.sections]);
+
+  // Memoize AC from sessionData to avoid unnecessary re-renders
+  const acFromSessionData = useMemo(() => {
+    if (!isCatiMode || !sessionData) return null;
+    // Check respondentContact first (if it exists)
+    if ((sessionData as any).respondentContact) {
+      const contact = (sessionData as any).respondentContact;
+      return contact.assemblyConstituency || contact.ac || contact.assemblyConstituencyName || contact.acName;
+    }
+    // Fallback to respondent.ac (which is how CATI response is structured)
+    if ((sessionData as any).respondent && (sessionData as any).respondent.ac) {
+      return (sessionData as any).respondent.ac;
+    }
+    return null;
+  }, [isCatiMode, (sessionData as any)?.respondentContact?.assemblyConstituency, (sessionData as any)?.respondentContact?.ac, (sessionData as any)?.respondentContact?.assemblyConstituencyName, (sessionData as any)?.respondentContact?.acName, (sessionData as any)?.respondent?.ac]);
+
+  // Fetch MP/MLA names when AC is selected (for any survey with questions 16.a and 16.b)
+  useEffect(() => {
+    const fetchMPMLANames = async () => {
+      // Get selected AC from state or memoized session data AC
+      let acToUse = selectedAC || acFromSessionData;
+      
+      if (!acToUse) {
+        // Clear data if AC is removed
+        if (lastFetchedACRef.current !== null) {
+          setMpName(null);
+          setMlaName(null);
+          lastFetchedACRef.current = null;
+        }
+        return;
+      }
+      
+      // Prevent duplicate fetches for the same AC
+      if (lastFetchedACRef.current === acToUse) {
+        return;
+      }
+      
+      // Prevent fetching if already loading
+      if (isLoadingMPMLA) {
+        return;
+      }
+      
+      lastFetchedACRef.current = acToUse; // Mark as fetching/fetched
+      
+      try {
+        setIsLoadingMPMLA(true);
+        const result = await apiService.getACData(acToUse);
+        if (result.success && result.data) {
+          setMpName(result.data.mpName);
+          setMlaName(result.data.mlaName);
+        } else {
+          setMpName(null);
+          setMlaName(null);
+        }
+      } catch (error) {
+        console.error('Error fetching MP/MLA names:', error);
+        setMpName(null);
+        setMlaName(null);
+      } finally {
+        setIsLoadingMPMLA(false);
+      }
+    };
+    
+    fetchMPMLANames();
+  }, [selectedAC, acFromSessionData]); // Only fetch when AC actually changes
+
+  // Fetch bye-election status when AC is available (for both CAPI and CATI)
+  useEffect(() => {
+    const fetchByeElectionStatus = async () => {
+      const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+      if (!isTargetSurvey) {
+        setHasByeElection(false);
+        return;
+      }
+      
+      // Get AC from selectedAC or sessionData (for CATI)
+      const acToCheck = selectedAC || acFromSessionData;
+      if (!acToCheck) {
+        setHasByeElection(false);
+        return;
+      }
+      
+      try {
+        const result = await apiService.getACData(acToCheck);
+        if (result.success && result.data) {
+          setHasByeElection(result.data.hasByeElection || false);
+        } else {
+          setHasByeElection(false);
+        }
+      } catch (error) {
+        console.error('Error fetching AC bye-election status:', error);
+        setHasByeElection(false);
+      }
+    };
+    
+    fetchByeElectionStatus();
+  }, [selectedAC, acFromSessionData, survey]);
+
+  // Also fetch MP/MLA names when reaching questions 16.a or 16.b if not already available
+  useEffect(() => {
+    const fetchIfNeeded = async () => {
+      // Get current question from visibleQuestions
+      const currentQ = visibleQuestions && visibleQuestions.length > 0 && currentQuestionIndex < visibleQuestions.length
+        ? visibleQuestions[currentQuestionIndex]
+        : null;
+      
+      if (!currentQ || (mpName && mlaName)) return;
+      
+      const questionText = (currentQ.text || '').toLowerCase();
+      const questionNumber = 'questionNumber' in currentQ ? (currentQ as any).questionNumber : '';
+      const isQuestion16a = questionNumber.includes('16.a') || 
+                           questionNumber.includes('16a') ||
+                           questionText.includes('satisfaction with mp') ||
+                           (questionText.includes('mp') && questionText.includes('satisfaction'));
+      const isQuestion16b = questionNumber.includes('16.b') || 
+                           questionNumber.includes('16b') ||
+                           questionText.includes('satisfaction with mla') ||
+                           (questionText.includes('mla') && questionText.includes('satisfaction'));
+      
+      if (isQuestion16a || isQuestion16b) {
+        // Get selected AC from state or memoized session data AC
+        let acToUse = selectedAC || acFromSessionData;
+        
+        // Only fetch if:
+        // 1. We have an AC
+        // 2. We don't already have MP/MLA names
+        // 3. We're not already loading
+        // 4. We haven't already fetched for this AC
+        if (acToUse && !mpName && !mlaName && !isLoadingMPMLA && lastFetchedACRef.current !== acToUse) {
+          lastFetchedACRef.current = acToUse; // Mark as fetching
+          try {
+            setIsLoadingMPMLA(true);
+            const result = await apiService.getACData(acToUse);
+            if (result.success && result.data) {
+              setMpName(result.data.mpName);
+              setMlaName(result.data.mlaName);
+            }
+          } catch (error) {
+            console.error('Error fetching MP/MLA on question display:', error);
+          } finally {
+            setIsLoadingMPMLA(false);
+          }
+        }
+      }
+    };
+    
+    fetchIfNeeded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentQuestionIndex, visibleQuestions, selectedAC, acFromSessionData]); // Only re-run when question changes or AC changes
+
   // Initialize interview
   useEffect(() => {
     const initializeInterview = async () => {
@@ -521,7 +892,6 @@ export default function InterviewInterface({ navigation, route }: any) {
 
         if (isCatiMode) {
           // CATI mode - use CATI-specific endpoint
-          console.log('Starting CATI interview...');
           const result = await apiService.startCatiInterview(survey._id);
           
           // First check if the API call was successful
@@ -566,8 +936,9 @@ export default function InterviewInterface({ navigation, route }: any) {
           }
           
           const data = result.data;
-          console.log('📋 Received data from API:', JSON.stringify(data, null, 2));
-          console.log('📋 Respondent data:', data.respondent);
+          // Removed excessive logging
+          // console.log('📋 Received data from API:', JSON.stringify(data, null, 2));
+          // console.log('📋 Respondent data:', data.respondent);
           
           // Check if respondent is available (this is the critical check)
           if (!data.respondent) {
@@ -609,27 +980,33 @@ export default function InterviewInterface({ navigation, route }: any) {
           }
           
           // All checks passed - proceed with starting the interview
-          console.log('✅ CATI Interview starting with respondent:', data.respondent);
-          console.log('✅ Queue ID:', data.respondent.id);
           
           setSessionId(data.sessionId);
           setSessionData(data);
           setCatiQueueId(data.respondent.id); // This is the queue entry ID
           setCatiRespondent(data.respondent);
+          
+          // Auto-populate AC and PC from respondent info for CATI interviews
+          if (data.respondent && data.respondent.ac) {
+            setSelectedAC(data.respondent.ac);
+            // Also set it in responses for consistency
+            setResponses(prev => ({
+              ...prev,
+              'ac-selection': data.respondent.ac
+            }));
+          }
+          
           setIsInterviewActive(true);
           
-          // Check for AC assignment
-          const needsACSelection = data.requiresACSelection && 
-                                   data.assignedACs && 
-                                   data.assignedACs.length > 0;
+          // Check for AC assignment - For CATI, we don't require AC selection as it's auto-populated
+          const needsACSelection = false; // Always false for CATI - AC is auto-populated from respondent
           
           setRequiresACSelection(needsACSelection);
-          setAssignedACs(data.assignedACs || []);
+          setAssignedACs([]);
           
           // Auto-make call after a short delay
           // Use the respondent ID directly from data, not from state (to avoid timing issues)
           setTimeout(() => {
-            console.log('📞 Attempting to make call with queue ID:', data.respondent.id);
             if (data.respondent && data.respondent.id) {
               // Call the API directly with the queue ID from data
               apiService.makeCallToRespondent(data.respondent.id)
@@ -672,13 +1049,10 @@ export default function InterviewInterface({ navigation, route }: any) {
             setIsInterviewActive(true);
             
             // Check for AC assignment
-            console.log('Session data loaded:', result.response);
             const needsACSelection = result.response.requiresACSelection && 
                                      result.response.assignedACs && 
                                      result.response.assignedACs.length > 0;
             
-            console.log('AC Selection required:', needsACSelection);
-            console.log('Assigned ACs:', result.response.assignedACs);
             
             setRequiresACSelection(needsACSelection);
             setAssignedACs(result.response.assignedACs || []);
@@ -793,7 +1167,6 @@ export default function InterviewInterface({ navigation, route }: any) {
         setLoadingGroups(true);
         // Use survey's acAssignmentState or default to 'West Bengal'
         const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
-        console.log('Fetching groups for AC:', selectedAC, 'State:', state);
         const response = await apiService.getGroupsByAC(state, selectedAC);
         
         if (response.success) {
@@ -801,7 +1174,6 @@ export default function InterviewInterface({ navigation, route }: any) {
           // API service returns response.data which is { success: true, data: {...} }
           const responseData = response.data || {};
           const groups = responseData.groups || [];
-          console.log('Groups fetched successfully:', groups.length, 'groups:', groups);
           setAvailableGroups(groups);
           setSelectedPollingStation((prev: any) => ({
             ...prev,
@@ -842,7 +1214,6 @@ export default function InterviewInterface({ navigation, route }: any) {
         setLoadingStations(true);
         // Use state from selectedPollingStation, survey, or default to 'West Bengal'
         const state = selectedPollingStation.state || survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
-        console.log('Fetching polling stations for Group:', selectedPollingStation.groupName, 'AC:', selectedPollingStation.acName, 'State:', state);
         const response = await apiService.getPollingStationsByGroup(
           state,
           selectedPollingStation.acName,
@@ -854,7 +1225,6 @@ export default function InterviewInterface({ navigation, route }: any) {
           // API service returns response.data which is { success: true, data: {...} }
           const responseData = response.data || {};
           const stations = responseData.stations || [];
-          console.log('Polling stations fetched successfully:', stations.length, 'stations:', stations);
           setAvailablePollingStations(stations);
         } else {
           console.error('Failed to fetch polling stations:', response.message);
@@ -1030,10 +1400,43 @@ export default function InterviewInterface({ navigation, route }: any) {
       [questionId]: response
     }));
     
+    // For survey "68fd1915d41841da463f0d46": When Q8 ("2025 Preference") changes, 
+    // we don't clear Q9 cache - we'll filter the cached options when displaying
+    // This maintains the shuffled order while removing the excluded option
+    
     // Handle AC selection specially
     if (questionId === 'ac-selection') {
       setSelectedAC(response);
-      console.log('AC selected:', response);
+      
+      // Fetch AC data to check for bye-election status (for survey "68fd1915d41841da463f0d46")
+      const isByeElectionSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+      if (isByeElectionSurvey && response) {
+        apiService.getACData(response).then(result => {
+          if (result.success && result.data) {
+            setHasByeElection(result.data.hasByeElection || false);
+          } else {
+            setHasByeElection(false);
+          }
+        }).catch(err => {
+          console.error('Error fetching AC bye-election status:', err);
+          setHasByeElection(false);
+        });
+      } else {
+        setHasByeElection(false);
+      }
+      
+      // Fetch MP/MLA names immediately when AC is selected (for survey "692fe24faf8e2f42139f5a49")
+      const isTargetSurvey = survey && (survey._id === '692fe24faf8e2f42139f5a49' || survey.id === '692fe24faf8e2f42139f5a49');
+      if (isTargetSurvey && response) {
+        apiService.getACData(response).then(result => {
+          if (result.success && result.data) {
+            setMpName(result.data.mpName);
+            setMlaName(result.data.mlaName);
+          }
+        }).catch(err => {
+          console.error('Error fetching MP/MLA on AC selection:', err);
+        });
+      }
       // Reset polling station selection when AC changes
       const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
       setSelectedPollingStation({
@@ -1126,6 +1529,72 @@ export default function InterviewInterface({ navigation, route }: any) {
     }
   };
 
+  // Phone number validation function
+  const validatePhoneNumber = (phoneNumber: string | null | undefined): { valid: boolean; message: string | null } => {
+    // Convert to string if it's not already, handle null/undefined
+    const phoneStr = phoneNumber != null ? String(phoneNumber) : '';
+    
+    if (!phoneStr || phoneStr.trim() === '') {
+      return { valid: true, message: null }; // Empty is allowed (optional field)
+    }
+    
+    // Remove any non-digit characters
+    const digitsOnly = phoneStr.replace(/\D/g, '');
+    
+    // Check if exactly 10 digits (required)
+    if (digitsOnly.length !== 10) {
+      return { valid: false, message: 'Phone number must be exactly 10 digits.' };
+    }
+    
+    // Check for invalid patterns (repeating digits like 1111111111, 22222222, 987654321, etc.)
+    // Check for all same digits
+    if (/^(\d)\1{4,}$/.test(digitsOnly)) {
+      return { valid: false, message: 'Please enter a valid phone number.' };
+    }
+    
+    // Check for sequential patterns like 987654321, 123456789
+    const isSequential = (str: string): boolean => {
+      const nums = str.split('').map(Number);
+      let ascending = true;
+      let descending = true;
+      for (let i = 1; i < nums.length; i++) {
+        if (nums[i] !== nums[i-1] + 1) ascending = false;
+        if (nums[i] !== nums[i-1] - 1) descending = false;
+      }
+      return ascending || descending;
+    };
+    
+    if (digitsOnly.length >= 7 && isSequential(digitsOnly)) {
+      return { valid: false, message: 'Please enter a valid phone number.' };
+    }
+    
+    // Check for common invalid patterns
+    const invalidPatterns = [
+      /^1111111111$/,
+      /^2222222222$/,
+      /^3333333333$/,
+      /^4444444444$/,
+      /^5555555555$/,
+      /^6666666666$/,
+      /^7777777777$/,
+      /^8888888888$/,
+      /^9999999999$/,
+      /^0000000000$/,
+      /^9876543210$/,
+      /^1234567890$/,
+      /^987654321$/,
+      /^123456789$/
+    ];
+    
+    for (const pattern of invalidPatterns) {
+      if (pattern.test(digitsOnly)) {
+        return { valid: false, message: 'Please enter a valid phone number.' };
+      }
+    }
+    
+    return { valid: true, message: null };
+  };
+
   const goToNextQuestion = () => {
     const currentQuestion = visibleQuestions[currentQuestionIndex];
     
@@ -1152,6 +1621,37 @@ export default function InterviewInterface({ navigation, route }: any) {
       if (!hasValidResponse) {
         showSnackbar('This is a required question. Please provide an answer before proceeding.');
         return;
+      }
+    }
+    
+    // For CAPI interviews, check if polling station is selected before allowing navigation
+    if (!isCatiMode && currentQuestion) {
+      // Check if current question is polling station selection - check by ID, type, or flag
+      const isPollingStationQuestion = currentQuestion.id === 'polling-station-selection' ||
+                                      currentQuestion.type === 'polling_station' ||
+                                      (currentQuestion as any)?.isPollingStationSelection ||
+                                      (currentQuestion.text && currentQuestion.text.toLowerCase().includes('select polling station'));
+      
+      if (isPollingStationQuestion) {
+        if (!selectedPollingStation.groupName || !selectedPollingStation.stationName) {
+          showSnackbar('Please select both Group and Polling Station before proceeding.');
+          return;
+        }
+      }
+      
+      // Check for phone number validation (only in CAPI mode)
+      const questionText = currentQuestion.text || '';
+      const isPhoneQuestion = questionText.toLowerCase().includes('share your mobile') || 
+                              questionText.toLowerCase().includes('mobile number') ||
+                              questionText.toLowerCase().includes('phone number');
+      
+      if (isPhoneQuestion) {
+        const phoneResponse = responses[currentQuestion.id];
+        const validation = validatePhoneNumber(phoneResponse as string);
+        if (!validation.valid) {
+          showSnackbar(validation.message || 'Please enter a valid phone number.');
+          return;
+        }
       }
     }
     
@@ -1240,19 +1740,9 @@ export default function InterviewInterface({ navigation, route }: any) {
     try {
       if (isCatiMode && catiQueueId) {
         // CATI mode - use CATI abandon endpoint
-        // Map React Native reason values to backend expected values
-        const reasonMap: Record<string, string> = {
-          'not_available': 'no_answer',
-          'refused': 'rejected',
-          'wrong_number': 'does_not_exist',
-          'call_later': 'call_later',
-          'other': 'other'
-        };
-        
-        const mappedReason = abandonReason ? (reasonMap[abandonReason] || 'other') : undefined;
-        
-        // Only send non-empty values
-        const reasonToSend = mappedReason && mappedReason.trim() ? mappedReason : undefined;
+        // No mapping needed - React Native now uses the same values as web/backend
+        // If call failed, reason is optional
+        const reasonToSend = callStatus === 'failed' ? (abandonReason || null) : abandonReason;
         const notesToSend = abandonNotes && abandonNotes.trim() ? abandonNotes : undefined;
         const dateToSend = (abandonReason === 'call_later' && callLaterDate && callLaterDate.trim()) ? callLaterDate : undefined;
         
@@ -1271,10 +1761,120 @@ export default function InterviewInterface({ navigation, route }: any) {
           showSnackbar(errorMsg);
         }
       } else if (sessionId) {
-        // CAPI mode - use standard abandon endpoint
-        await apiService.abandonInterview(sessionId);
-        showSnackbar('Interview abandoned');
-        navigation.navigate('Dashboard');
+        // CAPI mode - use standard abandon endpoint with responses
+        try {
+          console.log('📋 Current responses state:', Object.keys(responses).length, 'responses');
+          console.log('📋 Response keys:', Object.keys(responses));
+          
+          // Build final responses array (similar to completeInterview)
+          // Filter out AC selection and Polling Station questions (backend will also filter, but we do it here too for clarity)
+          const finalResponses: any[] = [];
+          
+          allQuestions.forEach((question: any) => {
+            // Skip AC selection and Polling Station questions (they're excluded from terminated responses)
+            const questionId = question.id || '';
+            const questionText = (question.text || '').toLowerCase();
+            const isACSelection = questionId === 'ac-selection' || 
+                                 questionText.includes('assembly constituency') ||
+                                 questionText.includes('select assembly constituency');
+            const isPollingStation = questionId === 'polling-station-selection' ||
+                                    question.type === 'polling_station' ||
+                                    question.isPollingStationSelection ||
+                                    questionText.includes('polling station') ||
+                                    questionText.includes('select polling station');
+            
+            if (isACSelection || isPollingStation) {
+              return; // Skip these questions
+            }
+            
+            let processedResponse = responses[question.id];
+            
+            // Handle "Others" option text input
+            if ((question.type === 'multiple_choice' || question.type === 'single_choice') && question.options) {
+              const othersOption = question.options.find((opt: any) => {
+                const optText = opt.text || '';
+                return isOthersOption(optText);
+              });
+              const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
+              
+              if (othersOptionValue) {
+                if (question.type === 'multiple_choice' && Array.isArray(processedResponse)) {
+                  const hasOthers = processedResponse.includes(othersOptionValue);
+                  if (hasOthers) {
+                    const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
+                    if (othersText) {
+                      processedResponse = processedResponse.map((val: string) => {
+                        if (val === othersOptionValue) {
+                          return `Others: ${othersText}`;
+                        }
+                        return val;
+                      });
+                    }
+                  }
+                } else if (processedResponse === othersOptionValue) {
+                  const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
+                  if (othersText) {
+                    processedResponse = `Others: ${othersText}`;
+                  }
+                }
+              }
+            }
+            
+            const questionOptions = question.options ? 
+              question.options.map((option: any) => {
+                if (typeof option === 'object') {
+                  return option.text || option.value || option;
+                }
+                return option;
+              }) : [];
+            
+            finalResponses.push({
+              sectionIndex: question.sectionIndex,
+              questionIndex: question.questionIndex,
+              questionId: question.id,
+              questionType: question.type,
+              questionText: question.text,
+              questionDescription: question.description,
+              questionOptions: questionOptions,
+              response: processedResponse || (question.type === 'multiple_choice' ? [] : ''),
+              responseTime: 0,
+              isRequired: question.required || false,
+              isSkipped: !hasResponseContent(processedResponse)
+            });
+          });
+          
+          // Prepare metadata
+          const metadata = {
+            selectedAC: selectedAC || null,
+            selectedPollingStation: selectedPollingStation || null,
+            location: locationData || null,
+            qualityMetrics: {
+              averageResponseTime: 0,
+              backNavigationCount: 0,
+              dataQualityScore: 0,
+              totalPauseTime: 0,
+              totalPauses: 0
+            },
+            setNumber: selectedSetNumber || null
+          };
+          
+          
+          const result = await apiService.abandonInterview(sessionId, finalResponses, metadata);
+          
+          if (result.success) {
+            if (result.response?.data?.responseId) {
+              showSnackbar(`Interview abandoned. Response saved (ID: ${result.response.data.responseId})`);
+            } else {
+              showSnackbar('Interview abandoned');
+            }
+          } else {
+            showSnackbar(result.message || 'Interview abandoned (no valid responses to save)');
+          }
+          navigation.navigate('Dashboard');
+        } catch (error: any) {
+          console.error('Error abandoning interview:', error);
+          showSnackbar('Failed to abandon interview');
+        }
       } else {
         showSnackbar('No active interview to abandon');
         navigation.navigate('Dashboard');
@@ -1449,11 +2049,9 @@ export default function InterviewInterface({ navigation, route }: any) {
       console.log('Stopping audio recording...');
       
       if (!isRecording || !globalRecording) {
-        console.log('No active recording to stop');
         return audioUri;
       }
       
-      console.log('Attempting to stop and unload...');
       await globalRecording.stopAndUnloadAsync();
       
       const uri = globalRecording.getURI();
@@ -1550,6 +2148,72 @@ export default function InterviewInterface({ navigation, route }: any) {
 
   const completeInterview = async () => {
     if (!sessionId) return;
+
+    // If consent form is disagreed, only save consent response
+    if (isConsentDisagreed) {
+      const consentQuestion = allQuestions.find((q: any) => q.id === 'consent-form');
+      if (consentQuestion) {
+        try {
+          setIsLoading(true);
+          const finalResponses = [{
+            sectionIndex: consentQuestion.sectionIndex,
+            questionIndex: consentQuestion.questionIndex,
+            questionId: consentQuestion.id,
+            questionType: consentQuestion.type,
+            questionText: consentQuestion.text,
+            questionDescription: consentQuestion.description,
+            questionOptions: consentQuestion.options.map((opt: any) => typeof opt === 'object' ? opt.text : opt),
+            response: responses['consent-form'] || '2',
+            responseTime: 0,
+            isRequired: true,
+            isSkipped: false
+          }];
+          
+          const result = await apiService.completeInterview(sessionId, {
+            responses: finalResponses,
+            qualityMetrics: {
+              averageResponseTime: 0,
+              backNavigationCount: 0,
+              dataQualityScore: 0,
+              totalPauseTime: 0,
+              totalPauses: 0
+            },
+            metadata: {
+              selectedAC: selectedAC || null,
+              selectedPollingStation: selectedPollingStation || null,
+              location: locationData || null,
+              setNumber: selectedSetNumber || null
+            }
+          });
+          
+          if (result.success) {
+            Alert.alert(
+              'Interview Completed',
+              'Interview completed and submitted for Quality Review.',
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    navigation.reset({
+                      index: 0,
+                      routes: [{ name: 'Dashboard' }],
+                    });
+                  }
+                }
+              ]
+            );
+          } else {
+            showSnackbar('Failed to complete interview');
+          }
+        } catch (error) {
+          console.error('Error completing interview:', error);
+          showSnackbar('Failed to complete interview');
+        } finally {
+          setIsLoading(false);
+        }
+        return;
+      }
+    }
 
     // Check for any target audience validation errors
     if (targetAudienceErrors.size > 0) {
@@ -1794,6 +2458,30 @@ export default function InterviewInterface({ navigation, route }: any) {
         const answeredCount = finalResponses.filter((r: any) => hasResponseContent(r.response)).length;
         const totalCount = allQuestions.length;
         
+        // CRITICAL: Ensure setNumber is set before sending to backend
+        // If selectedSetNumber is still null, try to determine it from the questions shown
+        let finalSetNumber = selectedSetNumber;
+        if (finalSetNumber === null && isCatiMode && survey) {
+          // Try to determine set number from questions that were shown
+          const setNumbers = new Set<number>();
+          survey.sections?.forEach((section: any) => {
+            section.questions?.forEach((question: any) => {
+              if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
+                // Check if this question was answered
+                const wasAnswered = finalResponses.some((r: any) => r.questionId === question.id);
+                if (wasAnswered) {
+                  setNumbers.add(question.setNumber);
+                }
+              }
+            });
+          });
+          const setArray = Array.from(setNumbers).sort((a, b) => a - b);
+          if (setArray.length > 0) {
+            finalSetNumber = setArray[0]; // Use the first set that was answered
+          }
+        }
+        
+        
         result = await apiService.completeCatiInterview(catiQueueId, {
           sessionId: sessionId,
           responses: finalResponses,
@@ -1816,7 +2504,8 @@ export default function InterviewInterface({ navigation, route }: any) {
           endTime: new Date(),
           totalQuestions: totalCount,
           answeredQuestions: answeredCount,
-          completionPercentage: totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0
+          completionPercentage: totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0,
+          setNumber: finalSetNumber // Save which Set was shown in this CATI interview
         });
       } else {
         // CAPI mode - use standard complete endpoint
@@ -1873,7 +2562,8 @@ export default function InterviewInterface({ navigation, route }: any) {
             totalQuestions: allQuestions.length,
             answeredQuestions: finalResponses.filter((r: any) => hasResponseContent(r.response)).length,
             skippedQuestions: finalResponses.filter((r: any) => !hasResponseContent(r.response)).length,
-            completionPercentage: Math.round((finalResponses.filter((r: any) => hasResponseContent(r.response)).length / allQuestions.length) * 100)
+            completionPercentage: Math.round((finalResponses.filter((r: any) => hasResponseContent(r.response)).length / allQuestions.length) * 100),
+            setNumber: null // Sets don't apply to CAPI - always null
           }
         });
       }
@@ -2142,6 +2832,18 @@ export default function InterviewInterface({ navigation, route }: any) {
       return [];
     }
     
+    // Skip for "Second Choice" questions - they need dynamic filtering based on "2025 Preference" response
+    // Filtering will be done in renderQuestion, so we return empty array to force use of filteredOptions
+    // ONLY for survey "68fd1915d41841da463f0d46"
+    const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+    const questionText = currentQuestion.text || '';
+    const isSecondChoiceQuestion = questionText.includes('Second Choice') || 
+                                   questionText.includes('দ্বিতীয় পছন্দ') ||
+                                   questionText.toLowerCase().includes('second choice');
+    if (isTargetSurvey && isSecondChoiceQuestion) {
+      return []; // Return empty to force use of filteredOptions in renderQuestion
+    }
+    
     const questionId = currentQuestion.id;
     const questionOptions = 'options' in currentQuestion ? (currentQuestion as any).options : [];
     let displayOptions = questionOptions || [];
@@ -2170,7 +2872,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     }
     
     return displayOptions;
-  }, [currentQuestion, shuffledOptions, computeShuffledOptions]);
+  }, [currentQuestion, shuffledOptions, computeShuffledOptions, responses]); // Add responses to dependencies
 
   // Update shuffledOptions state when current question changes (useEffect to avoid render loop)
   useEffect(() => {
@@ -2182,6 +2884,8 @@ export default function InterviewInterface({ navigation, route }: any) {
     const questionId = currentQuestion.id;
     const questionOptions = 'options' in currentQuestion ? (currentQuestion as any).options : [];
     // Only compute and cache if not already cached
+    // Note: For "Second Choice" questions, we still cache the shuffled options,
+    // but we'll filter out the excluded option when displaying them
     if (!shuffledOptions[questionId] && questionOptions) {
       const computed = computeShuffledOptions(questionId, questionOptions, currentQuestion);
       setShuffledOptions(prev => {
@@ -2208,22 +2912,249 @@ export default function InterviewInterface({ navigation, route }: any) {
     const currentResponse = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
     const questionId = question.id;
     
+    // Filter options for "Second Choice" question based on "2025 Preference" selection
+    // ONLY for survey "68fd1915d41841da463f0d46"
+    let filteredOptions = question.options;
+    const questionText = question.text || '';
+    const isSecondChoiceQuestion = questionText.includes('Second Choice') || 
+                                   questionText.includes('দ্বিতীয় পছন্দ') ||
+                                   questionText.toLowerCase().includes('second choice');
+    
+    // Only apply this filtering logic for the specific survey
+    const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+    
+    // Find "2025 Preference" question - declare it at the top of function scope so it's accessible everywhere
+    // Initialize as null to avoid ReferenceError
+    let preference2025Question: any = null;
+    if (isTargetSurvey && isSecondChoiceQuestion) {
+      preference2025Question = allQuestions.find((q: any) => {
+        const qText = q.text || '';
+        return qText.includes('2025 Preference') || 
+               qText.includes('২০২৫ পছন্দ') ||
+               qText.toLowerCase().includes('2025 preference');
+      }) || null;
+    }
+    
+    if (isTargetSurvey && isSecondChoiceQuestion && question.options) {
+      if (preference2025Question) {
+        const preferenceResponse = responses[preference2025Question.id];
+        if (preferenceResponse) {
+          // Get the selected option value (handle both string and array responses)
+          let selectedOptionValue: any = null;
+          if (Array.isArray(preferenceResponse)) {
+            selectedOptionValue = preferenceResponse[0]; // Take first selection
+          } else {
+            selectedOptionValue = preferenceResponse;
+          }
+          
+          // Find the matched option from "2025 Preference" question
+          let matchedOptionFromPreference: any = null;
+          if (preference2025Question.options && preference2025Question.options.length > 0) {
+            // Find the option that matches the response
+            matchedOptionFromPreference = preference2025Question.options.find((opt: any) => {
+              const optValue = typeof opt === 'object' ? (opt.value || opt.text) : opt;
+              const optText = typeof opt === 'object' ? opt.text : opt;
+              // Try exact matches first
+              return optValue === selectedOptionValue || 
+                     optText === selectedOptionValue ||
+                     String(optValue) === String(selectedOptionValue) ||
+                     String(optText) === String(selectedOptionValue);
+            });
+          }
+          
+          // Get the main text (without translation) of the selected option for comparison
+          let selectedOptionMainText: string | null = null;
+          if (matchedOptionFromPreference) {
+            const matchedOptionText = typeof matchedOptionFromPreference === 'object' 
+              ? (matchedOptionFromPreference.text || matchedOptionFromPreference.value || '') 
+              : String(matchedOptionFromPreference);
+            selectedOptionMainText = getMainText(matchedOptionText);
+          } else {
+            // Fallback: use the response value and extract main text
+            selectedOptionMainText = getMainText(String(selectedOptionValue));
+          }
+          
+          // Filter out the selected option from "Second Choice" options using main text comparison (ignoring translations)
+          if (selectedOptionMainText) {
+            filteredOptions = question.options.filter((option: any) => {
+              const optionText = typeof option === 'object' ? (option.text || option.value || '') : String(option);
+              const optionValue = typeof option === 'object' ? (option.value || option.text) : option;
+              
+              // Get main text (without translation) for comparison
+              const optionMainText = getMainText(optionText);
+              const optionValueMainText = getMainText(String(optionValue));
+              
+              // Compare main texts (ignoring translations)
+              if (optionMainText === selectedOptionMainText || optionValueMainText === selectedOptionMainText) {
+                return false; // Exclude this option
+              }
+              
+              // Also check if the option value matches the selected value (exact match)
+              if (optionValue === selectedOptionValue || String(optionValue) === String(selectedOptionValue)) {
+                return false; // Exclude this option
+              }
+              
+              return true; // Keep this option
+            });
+          }
+        }
+      }
+    }
+
     // Use memoized display options for current question, or compute for other questions
-    let displayOptions = question.options;
-    if (question.id === currentQuestion?.id && currentQuestionDisplayOptions.length > 0) {
+    // BUT: For "Second Choice" questions, use cached shuffled options but filter out the excluded option
+    // This maintains the shuffled order while removing the excluded option
+    let displayOptions = filteredOptions;
+    
+    // Only use cached displayOptions if it's NOT a "Second Choice" question
+    // For "Second Choice", we use cached shuffled options but filter out excluded option
+    // (isSecondChoiceQuestion is already declared above at line 2460)
+    if (question.id === currentQuestion?.id && currentQuestionDisplayOptions.length > 0 && !isSecondChoiceQuestion) {
       displayOptions = currentQuestionDisplayOptions;
     } else if (question.type === 'multiple_choice') {
-      if (shuffledOptions[questionId]) {
-        displayOptions = shuffledOptions[questionId];
+      // For "Second Choice" questions, use cached shuffled options but remove excluded option
+      if (isTargetSurvey && isSecondChoiceQuestion) {
+        // Check if we have cached shuffled options
+        if (shuffledOptions[questionId] && shuffledOptions[questionId].length > 0) {
+          // Use cached shuffled options, but filter out the excluded option
+          const cachedShuffled = shuffledOptions[questionId];
+          
+          // Get the excluded option main text for comparison
+          if (preference2025Question) {
+            const preferenceResponse = responses[preference2025Question.id];
+            if (preferenceResponse) {
+              let selectedOptionValue: any = null;
+              if (Array.isArray(preferenceResponse)) {
+                selectedOptionValue = preferenceResponse[0];
+              } else {
+                selectedOptionValue = preferenceResponse;
+              }
+              
+              // Find the matched option and get its main text
+              let selectedOptionMainText: string | null = null;
+              if (preference2025Question.options && preference2025Question.options.length > 0) {
+                const matchedOption = preference2025Question.options.find((opt: any) => {
+                  const optValue = typeof opt === 'object' ? (opt.value || opt.text) : opt;
+                  const optText = typeof opt === 'object' ? opt.text : opt;
+                  return optValue === selectedOptionValue || 
+                         optText === selectedOptionValue ||
+                         String(optValue) === String(selectedOptionValue) ||
+                         String(optText) === String(selectedOptionValue);
+                });
+                
+                if (matchedOption) {
+                  const matchedOptionText = typeof matchedOption === 'object' 
+                    ? (matchedOption.text || matchedOption.value || '') 
+                    : String(matchedOption);
+                  selectedOptionMainText = getMainText(matchedOptionText);
+                } else {
+                  selectedOptionMainText = getMainText(String(selectedOptionValue));
+                }
+              } else {
+                selectedOptionMainText = getMainText(String(selectedOptionValue));
+              }
+              
+              // Filter out the excluded option from cached shuffled options
+              if (selectedOptionMainText) {
+                displayOptions = cachedShuffled.filter((option: any) => {
+                  const optionText = typeof option === 'object' ? (option.text || option.value || '') : String(option);
+                  const optionValue = typeof option === 'object' ? (option.value || option.text) : option;
+                  const optionMainText = getMainText(optionText);
+                  const optionValueMainText = getMainText(String(optionValue));
+                  
+                  // Exclude if main text matches
+                  if (optionMainText === selectedOptionMainText || optionValueMainText === selectedOptionMainText) {
+                    return false;
+                  }
+                  // Exclude if value matches
+                  if (optionValue === selectedOptionValue || String(optionValue) === String(selectedOptionValue)) {
+                    return false;
+                  }
+                  return true;
+                });
+              } else {
+                displayOptions = cachedShuffled;
+              }
+            } else {
+              // No Q8 response yet, use cached shuffled options as is
+              displayOptions = cachedShuffled;
+            }
+          } else {
+            // Couldn't find Q8, use cached shuffled options as is
+            displayOptions = cachedShuffled;
+          }
+        } else {
+          // No cache yet, compute shuffled options from ORIGINAL options (not filtered) and cache them
+          // We'll filter out the excluded option when displaying
+          const originalOptions = question.options || [];
+          displayOptions = computeShuffledOptions(questionId, originalOptions, question);
+          // After caching, filter out the excluded option for display
+          if (preference2025Question) {
+            const preferenceResponse = responses[preference2025Question.id];
+            if (preferenceResponse) {
+              let selectedOptionValue: any = null;
+              if (Array.isArray(preferenceResponse)) {
+                selectedOptionValue = preferenceResponse[0];
+              } else {
+                selectedOptionValue = preferenceResponse;
+              }
+              
+              let selectedOptionMainText: string | null = null;
+              if (preference2025Question.options && preference2025Question.options.length > 0) {
+                const matchedOption = preference2025Question.options.find((opt: any) => {
+                  const optValue = typeof opt === 'object' ? (opt.value || opt.text) : opt;
+                  const optText = typeof opt === 'object' ? opt.text : opt;
+                  return optValue === selectedOptionValue || 
+                         optText === selectedOptionValue ||
+                         String(optValue) === String(selectedOptionValue) ||
+                         String(optText) === String(selectedOptionValue);
+                });
+                
+                if (matchedOption) {
+                  const matchedOptionText = typeof matchedOption === 'object' 
+                    ? (matchedOption.text || matchedOption.value || '') 
+                    : String(matchedOption);
+                  selectedOptionMainText = getMainText(matchedOptionText);
+                } else {
+                  selectedOptionMainText = getMainText(String(selectedOptionValue));
+                }
+              } else {
+                selectedOptionMainText = getMainText(String(selectedOptionValue));
+              }
+              
+              if (selectedOptionMainText) {
+                displayOptions = displayOptions.filter((option: any) => {
+                  const optionText = typeof option === 'object' ? (option.text || option.value || '') : String(option);
+                  const optionValue = typeof option === 'object' ? (option.value || option.text) : option;
+                  const optionMainText = getMainText(optionText);
+                  const optionValueMainText = getMainText(String(optionValue));
+                  
+                  if (optionMainText === selectedOptionMainText || optionValueMainText === selectedOptionMainText) {
+                    return false;
+                  }
+                  if (optionValue === selectedOptionValue || String(optionValue) === String(selectedOptionValue)) {
+                    return false;
+                  }
+                  return true;
+                });
+              }
+            }
+          }
+        }
       } else {
-        // Compute shuffled options (will be cached in useEffect if this is the current question)
-        displayOptions = computeShuffledOptions(questionId, question.options || [], question);
+        // For other questions, use normal shuffling with cache
+        if (shuffledOptions[questionId]) {
+          displayOptions = shuffledOptions[questionId];
+        } else {
+          // Compute shuffled options (will be cached in useEffect if this is the current question)
+          displayOptions = computeShuffledOptions(questionId, filteredOptions || [], question);
+        }
       }
     } else if (question.type === 'single_choice' || question.type === 'single_select' || question.type === 'dropdown') {
       // Move "Others" to the end for single_choice and dropdown
       const othersOptions: any[] = [];
       const regularOptions: any[] = [];
-      (question.options || []).forEach((option: any) => {
+      (filteredOptions || []).forEach((option: any) => {
         const optionText = typeof option === 'object' ? (option.text || option.value || '') : String(option);
         if (isOthersOption(optionText)) {
           othersOptions.push(option);
@@ -2251,25 +3182,53 @@ export default function InterviewInterface({ navigation, route }: any) {
 
       case 'number':
       case 'numeric':
+        // Check if this is the phone number question
+        const questionText = question.text || '';
+        const isPhoneQuestion = questionText.toLowerCase().includes('share your mobile') || 
+                                questionText.toLowerCase().includes('mobile number') ||
+                                questionText.toLowerCase().includes('phone number');
+        const didNotAnswer = currentResponse === 0 || currentResponse === '0';
+        
         return (
-          <TextInput
-            mode="outlined"
-            value={currentResponse !== null && currentResponse !== undefined ? currentResponse.toString() : ''}
-            onChangeText={(text) => {
-              // Allow empty string or valid number (including 0 and negative numbers)
-              if (text === '') {
-                handleResponseChange(question.id, '');
-              } else {
-                const numValue = parseFloat(text);
-                if (!isNaN(numValue) && isFinite(numValue)) {
-                  handleResponseChange(question.id, numValue);
+          <View style={styles.phoneNumberContainer}>
+            <TextInput
+              mode="outlined"
+              value={didNotAnswer ? '' : (currentResponse !== null && currentResponse !== undefined ? currentResponse.toString() : '')}
+              onChangeText={(text) => {
+                // Allow empty string or valid number (including 0 and negative numbers)
+                if (text === '') {
+                  handleResponseChange(question.id, '');
+                } else {
+                  const numValue = parseFloat(text);
+                  if (!isNaN(numValue) && isFinite(numValue)) {
+                    handleResponseChange(question.id, numValue);
+                  }
                 }
-              }
-            }}
-            placeholder="Enter a number..."
-            keyboardType="numeric"
-            style={styles.textInput}
-          />
+              }}
+              placeholder="Enter a number..."
+              keyboardType="numeric"
+              editable={!didNotAnswer || !isPhoneQuestion}
+              style={[
+                styles.textInput,
+                didNotAnswer && isPhoneQuestion && styles.disabledInput
+              ]}
+            />
+            {isPhoneQuestion && (
+              <View style={styles.checkboxContainer}>
+                <Checkbox
+                  status={didNotAnswer ? 'checked' : 'unchecked'}
+                  onPress={() => {
+                    if (didNotAnswer) {
+                      handleResponseChange(question.id, '');
+                    } else {
+                      handleResponseChange(question.id, 0);
+                    }
+                  }}
+                />
+                <Text style={styles.checkboxLabel}>Did not Answer</Text>
+              </View>
+            )}
+          </View>
         );
 
       case 'multiple_choice':
@@ -2327,6 +3286,9 @@ export default function InterviewInterface({ navigation, route }: any) {
               const isSelected = allowMultiple 
                 ? (Array.isArray(currentResponse) && currentResponse.includes(optionValue))
                 : (currentResponse === optionValue);
+              
+              // Get party logo if applicable (exclude for Question 12)
+              const partyLogo = getPartyLogo(optionText, question.text);
               
               return (
                 <View key={option.id || index} style={styles.optionItem}>
@@ -2432,7 +3394,22 @@ export default function InterviewInterface({ navigation, route }: any) {
                       }
                     }}
                   />
-                  <Text style={styles.optionText}>{getDisplayText(optionText)}</Text>
+                  <View style={styles.optionContentContainer}>
+                    <Text style={styles.optionText} numberOfLines={0}>{getDisplayText(optionText)}</Text>
+                    {/* Party logo after text */}
+                    {partyLogo && (
+                      <Image 
+                        source={{ uri: partyLogo }} 
+                        style={styles.partyLogo}
+                        resizeMode="contain"
+                        onError={(error) => {
+                          console.error('❌ React Native - Multiple Choice - Logo failed to load:', partyLogo, error);
+                        }}
+                        onLoad={() => {
+                        }}
+                      />
+                    )}
+                  </View>
                 </View>
               );
             })}
@@ -2481,6 +3458,9 @@ export default function InterviewInterface({ navigation, route }: any) {
                 }
               }
               
+              // Get party logo if applicable (exclude for Question 12)
+              const partyLogo = getPartyLogo(option.text, question.text);
+              
               return (
                 <View key={option.id || index} style={styles.optionItem}>
                   <RadioButton
@@ -2488,8 +3468,21 @@ export default function InterviewInterface({ navigation, route }: any) {
                     status={currentResponse === option.value ? 'checked' : 'unchecked'}
                     onPress={() => handleResponseChange(question.id, option.value)}
                   />
-                  <View style={styles.optionContent}>
-                    <Text style={styles.optionText}>{getDisplayText(option.text)}</Text>
+                  <View style={styles.optionContentContainer}>
+                    <Text style={styles.optionText} numberOfLines={0}>{getDisplayText(option.text)}</Text>
+                    {/* Party logo after text */}
+                    {partyLogo && (
+                      <Image 
+                        source={{ uri: partyLogo }} 
+                        style={styles.partyLogo}
+                        resizeMode="contain"
+                        onError={(error) => {
+                          console.error('❌ React Native - Single Choice - Logo failed to load:', partyLogo, error);
+                        }}
+                        onLoad={() => {
+                        }}
+                      />
+                    )}
                     {quotaInfo && (
                       <View style={styles.quotaInfo}>
                         <Text style={styles.quotaText}>
@@ -2597,7 +3590,9 @@ export default function InterviewInterface({ navigation, route }: any) {
                 status={currentResponse === 'yes' ? 'checked' : 'unchecked'}
                 onPress={() => handleResponseChange(question.id, 'yes')}
               />
-              <Text style={styles.optionText}>Yes</Text>
+              <View style={styles.optionContentContainer}>
+                <Text style={styles.optionText}>Yes</Text>
+              </View>
             </View>
             <View style={styles.optionItem}>
               <RadioButton
@@ -2605,7 +3600,9 @@ export default function InterviewInterface({ navigation, route }: any) {
                 status={currentResponse === 'no' ? 'checked' : 'unchecked'}
                 onPress={() => handleResponseChange(question.id, 'no')}
               />
-              <Text style={styles.optionText}>No</Text>
+              <View style={styles.optionContentContainer}>
+                <Text style={styles.optionText}>No</Text>
+              </View>
             </View>
           </View>
         );
@@ -2865,9 +3862,10 @@ export default function InterviewInterface({ navigation, route }: any) {
                   </View>
                 )}
                 {catiRespondent && (
-                  <Text style={styles.respondentInfo}>
-                    {catiRespondent.name} - {catiRespondent.phone}
-                  </Text>
+                  <View style={styles.respondentInfoContainer}>
+                    <Text style={styles.respondentName}>{catiRespondent.name}</Text>
+                    <Text style={styles.respondentPhone}>{catiRespondent.phone}</Text>
+                  </View>
                 )}
               </View>
             )}
@@ -2953,7 +3951,13 @@ export default function InterviewInterface({ navigation, route }: any) {
                 {(() => {
                   // Get question number - use custom questionNumber if available, otherwise generate from position
                   let questionNumber = 'questionNumber' in currentQuestion ? (currentQuestion as any).questionNumber : undefined;
-                  if (!questionNumber && currentQuestion.sectionIndex !== undefined && currentQuestion.questionIndex !== undefined) {
+                  
+                  // Special handling for consent form and AC selection
+                  if (currentQuestion.id === 'consent-form') {
+                    questionNumber = '0.0';
+                  } else if (currentQuestion.id === 'ac-selection') {
+                    questionNumber = '0.1';
+                  } else if (!questionNumber && currentQuestion.sectionIndex !== undefined && currentQuestion.questionIndex !== undefined) {
                     questionNumber = `${currentQuestion.sectionIndex + 1}.${currentQuestion.questionIndex + 1}`;
                   } else if (!questionNumber) {
                     // Fallback: find question in allQuestions to get position
@@ -2984,6 +3988,83 @@ export default function InterviewInterface({ navigation, route }: any) {
                   return questionNumber ? `Q${questionNumber}: ` : '';
                 })()}
                 {getDisplayText(currentQuestion.text)}
+                {/* Show MP/MLA name for Question 16.a and 16.b - check by question text/number regardless of survey */}
+                {(() => {
+                  if (!currentQuestion) return null;
+                  
+                  const questionText = (currentQuestion.text || '').toLowerCase();
+                  const questionNumber = 'questionNumber' in currentQuestion ? (currentQuestion as any).questionNumber : '';
+                  const questionId = currentQuestion.id || '';
+                  
+                  // Check if this is Question 16.a (MP) or 16.b (MLA) by multiple methods
+                  // Prioritize question number over text to avoid conflicts
+                  // Check question number first (most reliable)
+                  const hasQuestionNumber16a = questionNumber === '16.a' || 
+                                               questionNumber === '16a' ||
+                                               questionNumber.includes('16.a') || 
+                                               questionNumber.includes('16a');
+                  const hasQuestionNumber16b = questionNumber === '16.b' || 
+                                               questionNumber === '16b' ||
+                                               questionNumber.includes('16.b') || 
+                                               questionNumber.includes('16b');
+                  
+                  // If question number matches, use that (most reliable)
+                  if (hasQuestionNumber16a) {
+                    // This is definitely 16.a - show MP name
+                    if (mpName) {
+                      return <Text style={{ color: '#2563eb', fontWeight: '600', marginLeft: 8 }}>: {mpName}</Text>;
+                    }
+                    if (isLoadingMPMLA) {
+                      return <Text style={{ color: '#6b7280', marginLeft: 8 }}> (Loading...)</Text>;
+                    }
+                    return null;
+                  }
+                  
+                  if (hasQuestionNumber16b) {
+                    // This is definitely 16.b - show MLA name
+                    if (mlaName) {
+                      return <Text style={{ color: '#2563eb', fontWeight: '600', marginLeft: 8 }}>: {mlaName}</Text>;
+                    }
+                    if (isLoadingMPMLA) {
+                      return <Text style={{ color: '#6b7280', marginLeft: 8 }}> (Loading...)</Text>;
+                    }
+                    return null;
+                  }
+                  
+                  // Fallback to text matching only if question number doesn't match
+                  // Check 16.b first to avoid conflicts
+                  const isQuestion16b = questionId.includes('16b') ||
+                                       questionText.includes('satisfaction with mla') || 
+                                       questionText.includes('16.b') ||
+                                       questionText.includes('16b') ||
+                                       (questionText.includes('mla') && questionText.includes('satisfaction') && !questionText.includes('mp')) ||
+                                       (questionText.includes('current mla') || questionText.includes('your current mla')) ||
+                                       (questionText.includes('work done by') && questionText.includes('mla') && !questionText.includes('mp'));
+                  
+                  // Only check for 16.a if it's not 16.b
+                  const isQuestion16a = !isQuestion16b && (
+                                       questionId.includes('16a') ||
+                                       questionText.includes('satisfaction with mp') || 
+                                       questionText.includes('16.a') ||
+                                       questionText.includes('16a') ||
+                                       (questionText.includes('mp') && questionText.includes('satisfaction') && !questionText.includes('mla')) ||
+                                       (questionText.includes('current mp') || questionText.includes('your current mp')) ||
+                                       (questionText.includes('work done by') && questionText.includes('mp') && !questionText.includes('mla')));
+                  
+                  
+                  // Check 16.b first (text fallback), then 16.a
+                  if (isQuestion16b && mlaName) {
+                    return <Text style={{ color: '#2563eb', fontWeight: '600', marginLeft: 8 }}>: {mlaName}</Text>;
+                  }
+                  if (isQuestion16a && mpName) {
+                    return <Text style={{ color: '#2563eb', fontWeight: '600', marginLeft: 8 }}>: {mpName}</Text>;
+                  }
+                  if ((isQuestion16a || isQuestion16b) && isLoadingMPMLA) {
+                    return <Text style={{ color: '#6b7280', marginLeft: 8 }}> (Loading...)</Text>;
+                  }
+                  // MP/MLA names will be displayed when available
+                  return null;
+                })()}
                 {currentQuestion.required && <Text style={styles.requiredAsterisk}> *</Text>}
                 {currentQuestion.type === 'multiple_choice' && currentQuestion.settings?.allowMultiple && (
                   <Text style={styles.multipleSelectionTag}> Multiple</Text>
@@ -2991,7 +4072,9 @@ export default function InterviewInterface({ navigation, route }: any) {
               </Text>
             </View>
             {currentQuestion.description && (
-              <Text style={styles.questionDescription}>{currentQuestion.description}</Text>
+              <Text style={styles.questionDescription}>
+                {getDisplayText(currentQuestion.description)}
+              </Text>
             )}
             
             <View style={[
@@ -3028,7 +4111,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           Previous
         </Button>
         
-        {currentQuestionIndex === visibleQuestions.length - 1 ? (
+        {(currentQuestionIndex === visibleQuestions.length - 1 || isConsentDisagreed) ? (
           <Button
             mode="contained"
             onPress={completeInterview}
@@ -3055,6 +4138,13 @@ export default function InterviewInterface({ navigation, route }: any) {
                (visibleQuestions[currentQuestionIndex]?.required && 
                 !responses[visibleQuestions[currentQuestionIndex]?.id]) ||
                (geofencingError && (currentQuestion as any)?.isPollingStationSelection && !locationControlBooster)) ||
+               // Check if polling station is not selected in CAPI mode
+               (!isCatiMode && currentQuestion && 
+                (currentQuestion.id === 'polling-station-selection' ||
+                 currentQuestion.type === 'polling_station' ||
+                 (currentQuestion as any)?.isPollingStationSelection ||
+                 (currentQuestion.text && currentQuestion.text.toLowerCase().includes('select polling station'))) &&
+                (!selectedPollingStation.groupName || !selectedPollingStation.stationName)) ||
                (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
                 !isRecording && audioPermission !== false)) && styles.disabledButton
             ]}
@@ -3065,6 +4155,13 @@ export default function InterviewInterface({ navigation, route }: any) {
                       !((currentQuestion as any)?.isPollingStationSelection && 
                         selectedPollingStation.groupName && selectedPollingStation.stationName)) ||
                      (geofencingError && (currentQuestion as any)?.isPollingStationSelection && !locationControlBooster) ||
+                     // Check if polling station is not selected in CAPI mode
+                     (!isCatiMode && currentQuestion && 
+                      (currentQuestion.id === 'polling-station-selection' ||
+                       currentQuestion.type === 'polling_station' ||
+                       (currentQuestion as any)?.isPollingStationSelection ||
+                       (currentQuestion.text && currentQuestion.text.toLowerCase().includes('select polling station'))) &&
+                      (!selectedPollingStation.groupName || !selectedPollingStation.stationName)) ||
                      (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
                       !isRecording && audioPermission !== false)}
           >
@@ -3108,45 +4205,53 @@ export default function InterviewInterface({ navigation, route }: any) {
       {showAbandonModal && (
         <View style={styles.modalOverlay}>
           <ScrollView style={styles.modalContent} contentContainerStyle={styles.modalContentContainer}>
-            <Text style={styles.modalTitle}>Abandon CATI Interview</Text>
-            <Text style={styles.modalText}>
-              {callStatus === 'failed' 
-                ? 'The call failed. You can abandon this interview or provide a reason below.'
-                : 'Please provide a reason for abandoning this interview.'}
-            </Text>
-            
-            {callStatus !== 'failed' && (
-              <>
-                <Text style={styles.modalLabel}>Reason (Required)</Text>
-                <View style={styles.radioGroup}>
-                  <RadioButton.Group
-                    onValueChange={setAbandonReason}
-                    value={abandonReason}
-                  >
-                    <RadioButton.Item label="Respondent Not Available" value="not_available" />
-                    <RadioButton.Item label="Respondent Refused" value="refused" />
-                    <RadioButton.Item label="Wrong Number" value="wrong_number" />
-                    <RadioButton.Item label="Call Later" value="call_later" />
-                    <RadioButton.Item label="Other" value="other" />
-                  </RadioButton.Group>
-                </View>
-                
-                {abandonReason === 'call_later' && (
-                  <View style={styles.datePickerContainer}>
-                    <Text style={styles.modalLabel}>Call Later Date</Text>
-                    <TextInput
-                      mode="outlined"
-                      placeholder="YYYY-MM-DD"
-                      value={callLaterDate}
-                      onChangeText={setCallLaterDate}
-                      style={styles.dateInput}
-                    />
-                  </View>
-                )}
-              </>
+            <Text style={styles.modalTitle}>Abandon Interview</Text>
+            {callStatus === 'failed' && (
+              <View style={styles.warningContainer}>
+                <Text style={styles.warningText}>
+                  <Text style={styles.warningBold}>Call Failed:</Text> You can abandon this interview without selecting a reason, or optionally provide one below.
+                </Text>
+              </View>
             )}
             
-            <Text style={styles.modalLabel}>Notes (Optional)</Text>
+            <Text style={styles.modalLabel}>
+              {callStatus === 'failed' 
+                ? 'Optionally select a reason for abandoning this interview:'
+                : 'Please select a reason for abandoning this interview:'}
+            </Text>
+            
+            <View style={styles.radioGroup}>
+              <RadioButton.Group
+                onValueChange={setAbandonReason}
+                value={abandonReason}
+              >
+                <RadioButton.Item label="Call Later" value="call_later" />
+                <RadioButton.Item label="Not Interested" value="not_interested" />
+                <RadioButton.Item label="Busy" value="busy" />
+                <RadioButton.Item label="No Answer" value="no_answer" />
+                <RadioButton.Item label="Switched Off" value="switched_off" />
+                <RadioButton.Item label="Not Reachable" value="not_reachable" />
+                <RadioButton.Item label="Number Does Not Exist" value="does_not_exist" />
+                <RadioButton.Item label="Call Rejected" value="rejected" />
+                <RadioButton.Item label="Technical Issue" value="technical_issue" />
+                <RadioButton.Item label="Other" value="other" />
+              </RadioButton.Group>
+            </View>
+                
+            {abandonReason === 'call_later' && (
+              <View style={styles.datePickerContainer}>
+                <Text style={styles.modalLabel}>Schedule Call For:</Text>
+                <TextInput
+                  mode="outlined"
+                  placeholder="YYYY-MM-DD HH:MM"
+                  value={callLaterDate}
+                  onChangeText={setCallLaterDate}
+                  style={styles.dateInput}
+                />
+              </View>
+            )}
+            
+            <Text style={styles.modalLabel}>Additional Notes (Optional):</Text>
             <TextInput
               mode="outlined"
               multiline
@@ -3184,9 +4289,13 @@ export default function InterviewInterface({ navigation, route }: any) {
                   setShowAbandonModal(false);
                   abandonInterview();
                 }}
+                disabled={
+                  (callStatus !== 'failed' && !abandonReason) ||
+                  (abandonReason === 'call_later' && !callLaterDate)
+                }
                 style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
               >
-                Abandon
+                {callStatus === 'failed' ? 'Abandon (No Reason Required)' : 'Submit'}
               </Button>
             </View>
           </ScrollView>
@@ -3398,6 +4507,26 @@ const styles = StyleSheet.create({
   textInput: {
     marginTop: 8,
   },
+  phoneNumberContainer: {
+    marginTop: 8,
+  },
+  disabledInput: {
+    backgroundColor: '#f3f4f6',
+    opacity: 0.6,
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+  },
+  checkboxLabel: {
+    fontSize: 16,
+    color: '#374151',
+    marginLeft: 8,
+  },
   selectionLimitContainer: {
     backgroundColor: '#dbeafe',
     borderColor: '#93c5fd',
@@ -3417,14 +4546,32 @@ const styles = StyleSheet.create({
   optionItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 2,
-    paddingHorizontal: 4,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    marginVertical: 2,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    minHeight: 40,
+  },
+  optionContentContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+    gap: 8,
   },
   optionText: {
     fontSize: 16,
     color: '#374151',
-    marginLeft: 8,
     flex: 1,
+    flexShrink: 1,
+    lineHeight: 22,
+    paddingRight: 4,
+  },
+  partyLogo: {
+    width: 28,
+    height: 28,
+    flexShrink: 0,
   },
   othersInputContainer: {
     marginLeft: 40,
@@ -3615,10 +4762,19 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     fontWeight: '500',
   },
-  respondentInfo: {
+  respondentInfoContainer: {
+    marginTop: 4,
+    alignItems: 'flex-start',
+  },
+  respondentName: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#374151',
+    marginBottom: 2,
+  },
+  respondentPhone: {
     fontSize: 11,
     color: '#9ca3af',
-    marginTop: 2,
   },
   modalContentContainer: {
     paddingBottom: 20,
@@ -3694,6 +4850,22 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  warningContainer: {
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#fbbf24',
+    borderRadius: 8,
+  },
+  warningText: {
+    fontSize: 13,
+    color: '#92400e',
+    lineHeight: 18,
+  },
+  warningBold: {
+    fontWeight: '600',
   },
   modalButtons: {
     flexDirection: 'row',

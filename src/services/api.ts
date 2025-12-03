@@ -115,11 +115,7 @@ class ApiService {
         }
       }
       
-      console.log('Making request to:', url);
-      console.log('Headers:', headers);
-      
       const response = await axios.get(url, { headers });
-      console.log('Available surveys response:', response.data);
       
       if (response.data.success) {
         return { 
@@ -160,17 +156,11 @@ class ApiService {
   async startInterview(surveyId: string) {
     try {
       const headers = await this.getHeaders();
-      console.log('🔍 Starting interview for survey:', surveyId);
-      console.log('🔍 API URL:', `${this.baseURL}/api/survey-responses/start/${surveyId}`);
-      console.log('🔍 Headers:', headers);
-      
       const response = await axios.post(
         `${this.baseURL}/api/survey-responses/start/${surveyId}`,
         {},
         { headers }
       );
-      
-      console.log('🔍 Start interview response:', response.data);
       return { success: true, response: response.data.data };
     } catch (error: any) {
       console.error('Start interview error:', error);
@@ -276,13 +266,16 @@ class ApiService {
     }
   }
 
-  // Abandon interview
-  async abandonInterview(sessionId: string) {
+  // Abandon interview - now accepts responses and metadata
+  async abandonInterview(sessionId: string, responses?: any[], metadata?: any) {
     try {
       const headers = await this.getHeaders();
       const response = await axios.post(
         `${this.baseURL}/api/survey-responses/session/${sessionId}/abandon`,
-        {},
+        {
+          responses,
+          metadata
+        },
         { headers }
       );
       return { success: true, response: response.data };
@@ -417,11 +410,7 @@ class ApiService {
   async getMyInterviews() {
     try {
       const headers = await this.getHeaders();
-      console.log('Making request to:', `${this.baseURL}/api/survey-responses/my-interviews`);
-      console.log('Headers:', headers);
-      
       const response = await axios.get(`${this.baseURL}/api/survey-responses/my-interviews`, { headers });
-      console.log('My interviews response:', response.data);
       
       if (response.data.success) {
         return { 
@@ -497,12 +486,7 @@ class ApiService {
   async getGenderResponseCounts(surveyId: string) {
     try {
       const headers = await this.getHeaders();
-      console.log('🔍 Getting gender response counts for survey:', surveyId);
-      console.log('🔍 API URL:', `${this.baseURL}/api/survey-responses/survey/${surveyId}/gender-counts`);
-      console.log('🔍 Headers:', headers);
-      
       const response = await axios.get(`${this.baseURL}/api/survey-responses/survey/${surveyId}/gender-counts`, { headers });
-      console.log('🔍 Gender response counts response:', response.data);
       return response.data;
     } catch (error: any) {
       console.error('Get gender response counts error:', error);
@@ -516,15 +500,38 @@ class ApiService {
     }
   }
 
+  // Get last CATI set number for a survey (to alternate sets)
+  async getLastCatiSetNumber(surveyId: string) {
+    try {
+      if (!surveyId) {
+        return {
+          success: false,
+          message: 'Survey ID is required',
+          error: 'Missing surveyId parameter'
+        };
+      }
+      const headers = await this.getHeaders();
+      const response = await axios.get(`${this.baseURL}/api/survey-responses/survey/${surveyId}/last-cati-set`, { headers });
+      return response.data;
+    } catch (error: any) {
+      // Silently handle 404 or other errors - return error response for frontend to handle
+      if (error.response && error.response.data) {
+        return error.response.data;
+      }
+      return {
+        success: false,
+        message: 'Failed to get last CATI set number',
+        error: error.message || 'Unknown error'
+      };
+    }
+  }
+
   // Polling Station API methods
   async getGroupsByAC(state: string, acIdentifier: string) {
     try {
       const headers = await this.getHeaders();
       const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}`;
-      console.log('🔍 getGroupsByAC - URL:', url);
-      console.log('🔍 getGroupsByAC - State:', state, 'AC Identifier:', acIdentifier);
       const response = await axios.get(url, { headers });
-      console.log('🔍 getGroupsByAC - Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error: any) {
       console.error('Get groups by AC error:', error);
@@ -540,10 +547,7 @@ class ApiService {
     try {
       const headers = await this.getHeaders();
       const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}`;
-      console.log('🔍 getPollingStationsByGroup - URL:', url);
-      console.log('🔍 getPollingStationsByGroup - State:', state, 'AC:', acIdentifier, 'Group:', groupName);
       const response = await axios.get(url, { headers });
-      console.log('🔍 getPollingStationsByGroup - Response:', JSON.stringify(response.data, null, 2));
       return response.data;
     } catch (error: any) {
       console.error('Get polling stations by group error:', error);
@@ -559,27 +563,20 @@ class ApiService {
   async startCatiInterview(surveyId: string) {
     try {
       const headers = await this.getHeaders();
-      console.log('📞 Starting CATI interview for survey:', surveyId);
       const response = await axios.post(
         `${this.baseURL}/api/cati-interview/start/${surveyId}`,
         {},
         { headers }
       );
       
-      console.log('📞 CATI start response:', JSON.stringify(response.data, null, 2));
-      
       // Check the backend's success field, not just HTTP status
       if (response.data.success === false) {
-        console.log('❌ Backend returned success: false');
         return {
           success: false,
           message: response.data.message || 'Failed to start CATI interview',
           data: response.data.data || null
         };
       }
-      
-      console.log('✅ Backend returned success: true');
-      console.log('✅ Response data:', JSON.stringify(response.data.data, null, 2));
       
       return {
         success: true,
@@ -648,14 +645,11 @@ class ApiService {
   async completeCatiInterview(queueId: string, interviewData: any) {
     try {
       const headers = await this.getHeaders();
-      console.log('📤 Completing CATI interview with queueId:', queueId);
-      console.log('📤 Interview data:', JSON.stringify(interviewData, null, 2));
       const response = await axios.post(
         `${this.baseURL}/api/cati-interview/complete/${queueId}`,
         interviewData,
         { headers }
       );
-      console.log('✅ Complete CATI interview response:', JSON.stringify(response.data, null, 2));
       return {
         success: true,
         data: response.data.data
@@ -840,6 +834,25 @@ class ApiService {
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to get recording',
+        error: error.response?.data
+      };
+    }
+  }
+
+  // Get MP and MLA names for an AC
+  async getACData(acName: string) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(
+        `${this.baseURL}/api/master-data/ac/${encodeURIComponent(acName)}`,
+        { headers }
+      );
+      return { success: true, data: response.data.data };
+    } catch (error: any) {
+      console.error('Get AC data error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to get AC data',
         error: error.response?.data
       };
     }
