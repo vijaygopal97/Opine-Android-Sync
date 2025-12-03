@@ -30,10 +30,10 @@ class ApiService {
   }
 
   // Authentication
-  async login(email: string, password: string) {
+  async login(identifier: string, password: string) {
     try {
       const response = await axios.post(`${this.baseURL}/api/auth/login`, {
-        email,
+        identifier, // Can be email or memberId
         password,
       });
 

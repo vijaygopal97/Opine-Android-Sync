@@ -27,22 +27,41 @@ interface LoginScreenProps {
 }
 
 export default function LoginScreen({ navigation, onLogin }: LoginScreenProps) {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState(''); // Can be email or memberId
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
 
+  const validateIdentifier = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    
+    // Check if it's a 6-digit memberId
+    const isMemberId = /^\d{6}$/.test(trimmed);
+    if (isMemberId) return true;
+    
+    // Check if it's a valid email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(trimmed);
+  };
+
   const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
-      showSnackbar('Please enter both email and password');
+    if (!identifier.trim() || !password.trim()) {
+      showSnackbar('Please enter both email/Member ID and password');
+      return;
+    }
+
+    // Validate identifier format
+    if (!validateIdentifier(identifier.trim())) {
+      showSnackbar('Please provide a valid email address or 6-digit Member ID');
       return;
     }
 
     setIsLoading(true);
     try {
-      const result = await apiService.login(email.trim(), password);
+      const result = await apiService.login(identifier.trim(), password);
       
       if (result.success && result.user && result.token) {
         // Check if user is an interviewer or quality agent
@@ -102,15 +121,16 @@ export default function LoginScreen({ navigation, onLogin }: LoginScreenProps) {
                 <Text style={styles.formTitle}>Login</Text>
                 
                 <TextInput
-                  label="Email"
-                  value={email}
-                  onChangeText={setEmail}
+                  label="Email Address or Member ID"
+                  value={identifier}
+                  onChangeText={setIdentifier}
                   mode="outlined"
-                  keyboardType="email-address"
+                  keyboardType="default"
                   autoCapitalize="none"
                   autoCorrect={false}
                   style={styles.input}
                   left={<TextInput.Icon icon="email" />}
+                  placeholder="Enter email or 6-digit Member ID"
                 />
                 
                 <TextInput
