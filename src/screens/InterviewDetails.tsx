@@ -45,6 +45,8 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [audioPosition, setAudioPosition] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
 
   useEffect(() => {
     if (interview) {
@@ -95,6 +97,13 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
       hour: '2-digit',
       minute: '2-digit',
     });
+  };
+
+  const formatTime = (millis: number) => {
+    const totalSeconds = Math.floor(millis / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
   const formatDuration = (seconds: number) => {
@@ -149,10 +158,17 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
         setSound(newSound);
         setIsPlaying(true);
         
+        const status = await newSound.getStatusAsync();
+        if (status.isLoaded) {
+          setAudioDuration(status.durationMillis || 0);
+        }
+        
         newSound.setOnPlaybackStatusUpdate((status) => {
           if (status.isLoaded) {
+            setAudioPosition(status.positionMillis || 0);
             if (status.didJustFinish) {
               setIsPlaying(false);
+              setAudioPosition(0);
             }
           }
         });
@@ -589,20 +605,53 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
                       </Text>
                     </View>
                   )}
-                  <TouchableOpacity 
-                    style={[styles.playButton, isLoadingAudio && styles.disabledButton]} 
-                    onPress={handlePlayAudio}
-                    disabled={isLoadingAudio}
-                  >
-                    <Ionicons 
-                      name={isLoadingAudio ? "hourglass" : (isPlaying ? "pause" : "play")} 
-                      size={20} 
-                      color="#ffffff" 
-                    />
-                    <Text style={styles.playButtonText}>
-                      {isLoadingAudio ? "Loading..." : (isPlaying ? "Pause Audio" : "Play Audio")}
-                    </Text>
-                  </TouchableOpacity>
+                  {sound && audioDuration > 0 ? (
+                    <View style={styles.audioPlayerRow}>
+                      <TouchableOpacity 
+                        style={[styles.playButtonInline, isLoadingAudio && styles.disabledButton]} 
+                        onPress={handlePlayAudio}
+                        disabled={isLoadingAudio}
+                      >
+                        <Ionicons 
+                          name={isLoadingAudio ? "hourglass" : (isPlaying ? "pause" : "play")} 
+                          size={18} 
+                          color="#ffffff" 
+                        />
+                        <Text style={styles.playButtonTextInline}>
+                          {isLoadingAudio ? "Loading..." : (isPlaying ? "Pause" : "Play")}
+                        </Text>
+                      </TouchableOpacity>
+                      <Text style={styles.audioTime}>
+                        {formatTime(audioPosition)}
+                      </Text>
+                      <View style={styles.audioTimeline}>
+                        <View 
+                          style={[
+                            styles.audioTimelineProgress,
+                            { width: `${audioDuration > 0 ? (audioPosition / audioDuration) * 100 : 0}%` }
+                          ]}
+                        />
+                      </View>
+                      <Text style={styles.audioTime}>
+                        {formatTime(audioDuration)}
+                      </Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity 
+                      style={[styles.playButton, isLoadingAudio && styles.disabledButton]} 
+                      onPress={handlePlayAudio}
+                      disabled={isLoadingAudio}
+                    >
+                      <Ionicons 
+                        name={isLoadingAudio ? "hourglass" : (isPlaying ? "pause" : "play")} 
+                        size={20} 
+                        color="#ffffff" 
+                      />
+                      <Text style={styles.playButtonText}>
+                        {isLoadingAudio ? "Loading..." : (isPlaying ? "Pause Audio" : "Play Audio")}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </>
               )}
             </View>
@@ -923,6 +972,49 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '500',
     marginLeft: 8,
+  },
+  playButtonInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3b82f6',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  playButtonTextInline: {
+    color: '#ffffff',
+    fontWeight: '500',
+    marginLeft: 6,
+    fontSize: 14,
+  },
+  audioPlayerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 8,
+  },
+  audioTime: {
+    fontSize: 12,
+    color: '#6b7280',
+    minWidth: 45,
+    textAlign: 'center',
+  },
+  audioTimeline: {
+    flex: 1,
+    height: 4,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 2,
+    position: 'relative',
+  },
+  audioTimelineProgress: {
+    height: 4,
+    backgroundColor: '#3b82f6',
+    borderRadius: 2,
+    position: 'absolute',
+    left: 0,
+    top: 0,
   },
   disabledButton: {
     backgroundColor: '#9ca3af',

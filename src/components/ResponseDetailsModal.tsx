@@ -307,6 +307,52 @@ export default function ResponseDetailsModal({
     }));
   };
 
+  // Helper function to check if a value is a rejection option for a question type
+  const isRejectionOption = (questionType: string, value: string): boolean => {
+    if (!value || value === '') return false;
+    
+    switch (questionType) {
+      case 'audioStatus':
+        // Rejection options: anything that's not "1", "4", or "7"
+        return value !== '1' && value !== '4' && value !== '7';
+      case 'gender':
+        // Rejection options: "2" (Not Matched), "3" (Male answering on behalf of female)
+        return value === '2' || value === '3';
+      case 'upcomingElection':
+      case 'assembly2021':
+      case 'lokSabha2024':
+      case 'name':
+      case 'age':
+        // Rejection options: "2" (Not Matched), "4" (Did not ask)
+        // Note: "3" (Cannot hear) is acceptable, not a rejection
+        return value === '2' || value === '4';
+      default:
+        return false;
+    }
+  };
+
+  // Helper function to check if any rejection option has been selected
+  const hasRejectionOption = (): boolean => {
+    // Check in order of questions
+    const questionOrder = [
+      { type: 'audioStatus', value: verificationForm.audioStatus },
+      { type: 'gender', value: verificationForm.genderMatching },
+      { type: 'upcomingElection', value: verificationForm.upcomingElectionsMatching },
+      { type: 'assembly2021', value: verificationForm.previousElectionsMatching },
+      { type: 'lokSabha2024', value: verificationForm.previousLoksabhaElectionsMatching },
+      { type: 'name', value: verificationForm.nameMatching },
+      { type: 'age', value: verificationForm.ageMatching },
+    ];
+    
+    for (const question of questionOrder) {
+      if (question.value && isRejectionOption(question.type, question.value)) {
+        return true;
+      }
+    }
+    
+    return false;
+  };
+
   // Helper function to check if a verification question should be shown
   const shouldShowVerificationQuestion = (questionType: string): boolean => {
     if (!interview) return true;
@@ -314,6 +360,36 @@ export default function ResponseDetailsModal({
     // Phone number question should not be shown for CATI responses
     if (questionType === 'phoneNumber' && interview.interviewMode === 'cati') {
       return false;
+    }
+    
+    // If any rejection option has been selected, hide all subsequent questions
+    if (hasRejectionOption()) {
+      // Define question order
+      const questionOrder = ['audioStatus', 'gender', 'upcomingElection', 'assembly2021', 'lokSabha2024', 'name', 'age', 'phoneNumber'];
+      const currentIndex = questionOrder.indexOf(questionType);
+      
+      // Find the first question with a rejection option
+      let rejectionIndex = -1;
+      if (isRejectionOption('audioStatus', verificationForm.audioStatus)) {
+        rejectionIndex = 0;
+      } else if (isRejectionOption('gender', verificationForm.genderMatching)) {
+        rejectionIndex = 1;
+      } else if (isRejectionOption('upcomingElection', verificationForm.upcomingElectionsMatching)) {
+        rejectionIndex = 2;
+      } else if (isRejectionOption('assembly2021', verificationForm.previousElectionsMatching)) {
+        rejectionIndex = 3;
+      } else if (isRejectionOption('lokSabha2024', verificationForm.previousLoksabhaElectionsMatching)) {
+        rejectionIndex = 4;
+      } else if (isRejectionOption('name', verificationForm.nameMatching)) {
+        rejectionIndex = 5;
+      } else if (isRejectionOption('age', verificationForm.ageMatching)) {
+        rejectionIndex = 6;
+      }
+      
+      // Hide all questions after the one with rejection option
+      if (rejectionIndex >= 0 && currentIndex > rejectionIndex) {
+        return false;
+      }
     }
     
     // Get verification responses to check if related response is skipped
@@ -344,7 +420,12 @@ export default function ResponseDetailsModal({
     // Audio status is always required
     if (verificationForm.audioStatus === '') return false;
     
-    // Check each question only if it should be shown
+    // If a rejection option is selected, form is valid (don't require other questions)
+    if (hasRejectionOption()) {
+      return true;
+    }
+    
+    // Otherwise, check each question only if it should be shown
     if (shouldShowVerificationQuestion('gender') && verificationForm.genderMatching === '') return false;
     if (shouldShowVerificationQuestion('upcomingElection') && verificationForm.upcomingElectionsMatching === '') return false;
     if (shouldShowVerificationQuestion('assembly2021') && verificationForm.previousElectionsMatching === '') return false;
@@ -358,6 +439,11 @@ export default function ResponseDetailsModal({
 
   const getApprovalStatus = () => {
     if (!interview) return 'rejected';
+    
+    // If any rejection option is selected, automatically reject
+    if (hasRejectionOption()) {
+      return 'rejected';
+    }
     
     const audioStatus = verificationForm.audioStatus;
     if (audioStatus !== '1' && audioStatus !== '4' && audioStatus !== '7') {
@@ -448,22 +534,9 @@ export default function ResponseDetailsModal({
 
   const getRespondentInfo = () => {
     const responses = interview.responses || [];
-    const nameResponse = responses.find((r: any) => 
-      r.questionText?.toLowerCase().includes('name') || 
-      r.questionText?.toLowerCase().includes('respondent')
-    );
-    const genderResponse = findGenderResponse(responses, interview.survey || interview.survey?.survey) || responses.find((r: any) => 
-      r.questionText?.toLowerCase().includes('gender') || 
-      r.questionText?.toLowerCase().includes('sex')
-    );
-    // Normalize gender response to handle translations
-    const genderValue = genderResponse?.response ? normalizeGenderResponse(genderResponse.response) : null;
-    const genderDisplay = genderValue === 'male' ? 'Male' : (genderValue === 'female' ? 'Female' : (genderResponse?.response || 'Not Available'));
-    const ageResponse = responses.find((r: any) => 
-      r.questionText?.toLowerCase().includes('age') || 
-      r.questionText?.toLowerCase().includes('year')
-    );
-
+    const surveyId = interview.survey?._id || interview.survey?.survey?._id || null;
+    
+    // Helper to extract value from response (handle arrays)
     const extractValue = (response: any) => {
       if (!response || !response.response) return null;
       if (Array.isArray(response.response)) {
@@ -472,9 +545,139 @@ export default function ResponseDetailsModal({
       return response.response;
     };
 
+    // Helper to find response by question text (ignoring translations)
+    const findResponseByQuestionText = (searchTexts: string[]) => {
+      return responses.find((r: any) => {
+        if (!r.questionText) return false;
+        const mainText = getMainText(r.questionText).toLowerCase();
+        return searchTexts.some(text => mainText.includes(text.toLowerCase()));
+      });
+    };
+
+    // Helper to find response by questionNumber
+    const findResponseByQuestionNumber = (questionNumber: string) => {
+      return responses.find((r: any) => {
+        if (!r.questionNumber) return false;
+        const qNum = r.questionNumber || '';
+        return qNum === questionNumber || qNum.includes(questionNumber) || questionNumber.includes(qNum);
+      });
+    };
+
+    // Find name from Q28 - "Would You like to share your name with us?"
+    let nameResponse = null;
+    if (surveyId === '68fd1915d41841da463f0d46') {
+      // Strategy 1: Find by questionNumber (Q28 or 28)
+      nameResponse = findResponseByQuestionNumber('Q28') || findResponseByQuestionNumber('28');
+      
+      // Strategy 2: Find by question text keywords
+      if (!nameResponse) {
+        nameResponse = findResponseByQuestionText([
+          'would you like to share your name',
+          'share your name',
+          'name with us'
+        ]);
+      }
+      
+      // Strategy 3: Find by question ID if available
+      if (!nameResponse && survey) {
+        const actualSurvey = survey.survey || survey;
+        let nameQuestion = null;
+        
+        // Search in sections
+        if (actualSurvey.sections) {
+          for (const section of actualSurvey.sections) {
+            if (section.questions) {
+              nameQuestion = section.questions.find((q: any) => {
+                const qText = getMainText(q.text || '').toLowerCase();
+                return qText.includes('would you like to share your name') ||
+                       qText.includes('share your name') ||
+                       (q.questionNumber && (q.questionNumber === '28' || q.questionNumber === 'Q28' || q.questionNumber.includes('28')));
+              });
+              if (nameQuestion) break;
+            }
+          }
+        }
+        
+        // Search in direct questions
+        if (!nameQuestion && actualSurvey.questions) {
+          nameQuestion = actualSurvey.questions.find((q: any) => {
+            const qText = getMainText(q.text || '').toLowerCase();
+            return qText.includes('would you like to share your name') ||
+                   qText.includes('share your name') ||
+                   (q.questionNumber && (q.questionNumber === '28' || q.questionNumber === 'Q28' || q.questionNumber.includes('28')));
+          });
+        }
+        
+        if (nameQuestion && nameQuestion.id) {
+          nameResponse = responses.find((r: any) => r.questionId === nameQuestion.id);
+        }
+      }
+      
+      // Fallback to general name search
+      if (!nameResponse) {
+        nameResponse = findResponseByQuestionText([
+          'what is your full name',
+          'full name',
+          'name'
+        ]);
+      }
+    } else {
+      // For other surveys, use general name search
+      nameResponse = findResponseByQuestionText([
+        'what is your full name',
+        'full name',
+        'name',
+        'respondent'
+      ]);
+    }
+
+    // Find gender response using genderUtils (more reliable)
+    const genderResponse = findGenderResponse(responses, survey) || responses.find((r: any) => {
+      const mainText = getMainText(r.questionText || '').toLowerCase();
+      return mainText.includes('gender') || mainText.includes('sex');
+    });
+    
+    // Get gender question from survey to format the response correctly
+    let genderQuestion = null;
+    if (genderResponse && survey) {
+      const actualSurvey = survey.survey || survey;
+      genderQuestion = findQuestionByText(genderResponse.questionText, actualSurvey);
+    }
+    
+    // Format gender response using formatResponseDisplay (removes translation part)
+    let genderDisplay = 'Not Available';
+    if (genderResponse?.response) {
+      const genderValue = extractValue(genderResponse.response);
+      if (genderValue) {
+        genderDisplay = formatResponseDisplay(genderValue, genderQuestion);
+      }
+    }
+
+    const ageResponse = responses.find((r: any) => {
+      const mainText = getMainText(r.questionText || '').toLowerCase();
+      return mainText.includes('age') || mainText.includes('year');
+    });
+
+    // Get name and capitalize it
+    let name = 'Not Available';
+    if (nameResponse?.response) {
+      const nameValue = extractValue(nameResponse.response);
+      if (nameValue && nameValue !== 'N/A' && String(nameValue).trim() !== '') {
+        // Make sure it's not a gender value
+        const nameStr = String(nameValue).toLowerCase().trim();
+        if (nameStr !== 'male' && nameStr !== 'female' && !nameStr.includes('_{')) {
+          // Capitalize the name
+          name = String(nameValue)
+            .split(' ')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+        }
+      }
+    }
+
     return {
-      name: extractValue(nameResponse) || 'Not Available',
-      gender: extractValue(genderResponse) || 'Not Available',
+      name: name,
+      gender: genderDisplay,
       age: extractValue(ageResponse) || 'Not Available'
     };
   };
@@ -800,7 +1003,6 @@ export default function ResponseDetailsModal({
     };
   };
 
-  const respondentInfo = getRespondentInfo();
   const survey = interview?.survey || interview?.survey?.survey || null;
   const verificationResponses = getVerificationResponses();
 
@@ -843,18 +1045,18 @@ export default function ResponseDetailsModal({
                 
                 {audioSound ? (
                   <View style={styles.audioControls}>
-                    <Button
-                      mode="contained"
-                      onPress={playAudio}
-                      icon={isPlaying ? "pause" : "play"}
-                      style={styles.audioButton}
-                      disabled={!audioSound}
-                    >
-                      {isPlaying ? 'Pause' : 'Play'}
-                    </Button>
-                    
-                    {audioDuration > 0 && (
+                    {audioDuration > 0 ? (
                       <View style={styles.audioTimelineContainer}>
+                        <Button
+                          mode="contained"
+                          onPress={playAudio}
+                          icon={isPlaying ? "pause" : "play"}
+                          style={styles.audioButtonInline}
+                          disabled={!audioSound}
+                          compact
+                        >
+                          {isPlaying ? 'Pause' : 'Play'}
+                        </Button>
                         <Text style={styles.audioTime}>
                           {formatTime(audioPosition)}
                         </Text>
@@ -890,6 +1092,16 @@ export default function ResponseDetailsModal({
                           {formatTime(audioDuration)}
                         </Text>
                       </View>
+                    ) : (
+                      <Button
+                        mode="contained"
+                        onPress={playAudio}
+                        icon={isPlaying ? "pause" : "play"}
+                        style={styles.audioButton}
+                        disabled={!audioSound}
+                      >
+                        {isPlaying ? 'Pause' : 'Play'}
+                      </Button>
                     )}
                   </View>
                 ) : (
@@ -950,28 +1162,6 @@ export default function ResponseDetailsModal({
                     </Text>
                   </View>
                 )}
-              </Card.Content>
-            </Card>
-
-            {/* Respondent Info */}
-            <Card style={styles.card}>
-              <Card.Content>
-                <Text style={styles.sectionTitle}>Respondent Information</Text>
-                
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Name:</Text>
-                  <Text style={styles.infoValue}>{respondentInfo.name}</Text>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Gender:</Text>
-                  <Text style={styles.infoValue}>{respondentInfo.gender}</Text>
-                </View>
-                
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Age:</Text>
-                  <Text style={styles.infoValue}>{respondentInfo.age}</Text>
-                </View>
               </Card.Content>
             </Card>
 
@@ -1436,12 +1626,16 @@ const styles = StyleSheet.create({
     minWidth: 100,
     marginBottom: 12,
   },
+  audioButtonInline: {
+    minWidth: 80,
+    marginRight: 8,
+  },
   audioTimelineContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     width: '100%',
     gap: 8,
-    marginTop: 8,
+    marginTop: 0,
   },
   sliderContainer: {
     flex: 1,
