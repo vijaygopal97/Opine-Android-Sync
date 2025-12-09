@@ -36,3 +36,7 @@ echo "   - For native builds, you MUST rebuild: npx expo prebuild --clean"
 echo "   - The native splash screen requires a rebuild to update"
 
 
+
+
+
+

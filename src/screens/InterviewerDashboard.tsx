@@ -20,6 +20,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { apiService } from '../services/api';
 import { User, Survey } from '../types';
+import { offlineStorage } from '../services/offlineStorage';
+import { syncService } from '../services/syncService';
 
 const { width } = Dimensions.get('window');
 
@@ -32,10 +34,16 @@ interface DashboardProps {
 export default function InterviewerDashboard({ navigation, user, onLogout }: DashboardProps) {
   const [availableSurveys, setAvailableSurveys] = useState<Survey[]>([]);
   const [myInterviews, setMyInterviews] = useState<any[]>([]);
+  const [offlineInterviews, setOfflineInterviews] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarType, setSnackbarType] = useState<'success' | 'error' | 'info'>('info');
+  const [pendingInterviewsCount, setPendingInterviewsCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [isSyncingSurveys, setIsSyncingSurveys] = useState(false);
   
   // Calculate interview stats
   const interviewStats = useMemo(() => {
@@ -46,28 +54,177 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 
   useEffect(() => {
     loadDashboardData();
+    loadPendingInterviewsCount();
   }, []);
+
+  // Refresh pending count when screen comes into focus
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadPendingInterviewsCount();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  const loadPendingInterviewsCount = async () => {
+    try {
+      const pending = await offlineStorage.getPendingInterviews();
+      setPendingInterviewsCount(pending.length);
+    } catch (error) {
+      console.error('Error loading pending interviews count:', error);
+    }
+  };
+
+  // Refresh pending count when screen comes into focus
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadPendingInterviewsCount();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  const handleSyncSurveyDetails = async () => {
+    if (isSyncingSurveys) return;
+    
+    // Check if online
+    const isOnline = await apiService.isOnline();
+    if (!isOnline) {
+      showSnackbar('Please connect to the internet to sync survey details.', 'error');
+      return;
+    }
+    
+    setIsSyncingSurveys(true);
+    try {
+      showSnackbar('Downloading & syncing survey details for offline...', 'info');
+      
+      // Fetch surveys from API
+      const surveysResult = await apiService.getAvailableSurveys();
+      
+      if (surveysResult.success) {
+        const surveys = surveysResult.surveys || [];
+        // Save to offline storage with dependent data download
+        await offlineStorage.saveSurveys(surveys, true);
+        setAvailableSurveys(surveys);
+        showSnackbar(`Successfully synced ${surveys.length} survey(s) with offline data`, 'success');
+      } else {
+        showSnackbar('Failed to sync survey details. Please try again.', 'error');
+      }
+    } catch (error: any) {
+      console.error('Error syncing survey details:', error);
+      showSnackbar('Failed to sync survey details. Please try again.', 'error');
+    } finally {
+      setIsSyncingSurveys(false);
+    }
+  };
+
+  const handleSyncOfflineInterviews = async () => {
+    if (isSyncing) return;
+    
+    // Check if online
+    const isOnline = await apiService.isOnline();
+    if (!isOnline) {
+      showSnackbar('Please connect to the internet to sync offline interviews.', 'error');
+      return;
+    }
+    
+    setIsSyncing(true);
+    try {
+      showSnackbar('Syncing offline interviews...', 'info');
+      const result = await syncService.syncOfflineInterviews();
+      
+      if (result.success && result.syncedCount > 0) {
+        showSnackbar(`Successfully synced ${result.syncedCount} interview(s)`, 'success');
+        await loadPendingInterviewsCount();
+        await loadDashboardData(); // Refresh dashboard data
+      } else if (result.failedCount > 0) {
+        showSnackbar(`Synced ${result.syncedCount}, failed ${result.failedCount}. Check details.`, 'error');
+        await loadPendingInterviewsCount();
+      } else if (result.syncedCount === 0 && result.failedCount === 0) {
+        showSnackbar('No pending interviews to sync', 'info');
+      } else {
+        showSnackbar('Sync failed. Please check your internet connection.', 'error');
+      }
+    } catch (error: any) {
+      console.error('Error syncing offline interviews:', error);
+      showSnackbar('Failed to sync interviews. Please try again.', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const loadDashboardData = async () => {
     setIsLoading(true);
     try {
-      const [surveysResult, interviewsResult] = await Promise.all([
-        apiService.getAvailableSurveys(),
-        apiService.getMyInterviews(),
-      ]);
-
-      if (surveysResult.success) {
-        setAvailableSurveys(surveysResult.surveys || []);
-      } else {
+      // Check if offline
+      const isOnline = await apiService.isOnline();
+      setIsOffline(!isOnline);
+      
+      if (!isOnline) {
+        // Offline mode - load from local storage
+        console.log('📴 Offline mode - loading from local storage');
+        const offlineSurveys = await offlineStorage.getSurveys();
+        setAvailableSurveys(offlineSurveys || []);
+        
+        // Load offline interviews - only show pending and failed ones (not synced or syncing)
+        const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
+        const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
+          (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+        );
+        setOfflineInterviews(pendingOfflineInterviews);
+        
+        // Don't try to load myInterviews in offline mode
+        setMyInterviews([]);
+        return;
       }
+      
+      // Online mode - load from offline storage first
+      const offlineSurveys = await offlineStorage.getSurveys();
+      
+      // First time login: If no surveys in offline storage, automatically sync
+      if (offlineSurveys.length === 0) {
+        console.log('🔄 First time login - no surveys cached, auto-syncing...');
+        setAvailableSurveys([]);
+        // Automatically sync survey details on first login (don't await - let it run in background)
+        // The button will show loading state, and surveys will appear when sync completes
+        handleSyncSurveyDetails().catch((error) => {
+          console.error('Error auto-syncing surveys on first login:', error);
+        });
+      } else {
+        // Not first time - just load from cache
+        setAvailableSurveys(offlineSurveys || []);
+      }
+
+      // Fetch interviews from API
+      const interviewsResult = await apiService.getMyInterviews();
 
       if (interviewsResult.success) {
         setMyInterviews(interviewsResult.interviews || []);
       } else {
+        // Don't show error, just leave empty
+        setMyInterviews([]);
       }
+      
+      // Always load offline interviews - only show pending and failed ones (not synced or syncing)
+      const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
+      const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
+        (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+      );
+      setOfflineInterviews(pendingOfflineInterviews);
     } catch (error) {
       console.error('Error loading dashboard data:', error);
-      showSnackbar('Failed to load dashboard data');
+      // Try to load from offline storage as fallback
+      try {
+        const offlineSurveys = await offlineStorage.getSurveys();
+        setAvailableSurveys(offlineSurveys || []);
+        const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
+        const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
+          (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+        );
+        setOfflineInterviews(pendingOfflineInterviews);
+        setIsOffline(true);
+      } catch (fallbackError) {
+        console.error('Error loading from offline storage:', fallbackError);
+        showSnackbar('Failed to load dashboard data');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -79,8 +236,9 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     setIsRefreshing(false);
   };
 
-  const showSnackbar = (message: string) => {
+  const showSnackbar = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setSnackbarMessage(message);
+    setSnackbarType(type);
     setSnackbarVisible(true);
   };
 
@@ -172,11 +330,27 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
           <Button
             mode="outlined"
             onPress={handleLogout}
-            style={styles.logoutButton}
+            style={[styles.logoutButton, isOffline && styles.disabledButton]}
             textColor="#ffffff"
+            disabled={isOffline}
             compact
           >
             Logout
+          </Button>
+        </View>
+        {/* Sync Survey Details Button */}
+        <View style={styles.syncSurveyContainer}>
+          <Button
+            mode="contained"
+            onPress={handleSyncSurveyDetails}
+            loading={isSyncingSurveys}
+            disabled={isSyncingSurveys || isOffline}
+            style={[styles.syncSurveyButton, isOffline && styles.disabledButton]}
+            icon="sync"
+            buttonColor={isOffline ? "#cccccc" : "#ffffff"}
+            textColor={isOffline ? "#666666" : "#001D48"}
+          >
+            {isSyncingSurveys ? 'Downloading & Syncing Data...' : 'Sync Survey Details'}
           </Button>
         </View>
       </LinearGradient>
@@ -335,74 +509,174 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
           )}
         </View>
 
-        {/* Recent Interviews */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Interviews</Text>
-            <Button
-              mode="text"
-              onPress={() => navigation.navigate('MyInterviews')}
-              textColor="#001D48"
-              compact
-            >
-              View All
-            </Button>
+        {/* Recent Interviews - Only show in online mode */}
+        {!isOffline && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Recent Interviews</Text>
+              <Button
+                mode="text"
+                onPress={() => navigation.navigate('MyInterviews')}
+                textColor="#001D48"
+                compact
+              >
+                View All
+              </Button>
+            </View>
+            
+            {myInterviews.length > 0 ? (
+              myInterviews.slice(0, 3).map((interview) => (
+                <Card key={interview._id} style={styles.interviewCard}>
+                  <Card.Content>
+                    <View style={styles.interviewHeader}>
+                      <Text style={styles.interviewTitle}>{interview.survey?.surveyName || 'Unknown Survey'}</Text>
+                      <View style={[styles.statusBadge, { backgroundColor: getStatusColor(interview.status) }]}>
+                        <Text style={styles.statusText}>{getStatusText(interview.status)}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.interviewMeta}>
+                      <View style={styles.metaItem}>
+                        <Text style={styles.metaLabel}>Started</Text>
+                        <Text style={styles.metaValue}>
+                          {formatDate(interview.startTime || interview.startedAt || interview.createdAt)}
+                        </Text>
+                      </View>
+                      <View style={styles.metaItem}>
+                        <Text style={styles.metaLabel}>Duration</Text>
+                        <Text style={styles.metaValue}>
+                          {interview.totalTimeSpent ? `${Math.floor(interview.totalTimeSpent / 60)} min` : 'N/A'}
+                        </Text>
+                      </View>
+                      <View style={styles.metaItem}>
+                        <Text style={styles.metaLabel}>Progress</Text>
+                        <Text style={styles.metaValue}>
+                          {interview.completionPercentage ? `${interview.completionPercentage}%` : 'N/A'}
+                        </Text>
+                      </View>
+                      <View style={styles.metaItem}>
+                        <Text style={styles.metaLabel}>Status</Text>
+                        <Text style={styles.metaValue}>
+                          {interview.status ? interview.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'N/A'}
+                        </Text>
+                      </View>
+                    </View>
+                    {(interview.endTime || interview.completedAt) && (
+                      <Text style={styles.interviewDate}>
+                        Completed: {formatDate(interview.endTime || interview.completedAt)}
+                      </Text>
+                    )}
+                  </Card.Content>
+                </Card>
+              ))
+            ) : (
+              <Card style={styles.emptyCard}>
+                <Card.Content style={styles.emptyContent}>
+                  <Text style={styles.emptyText}>No interviews yet</Text>
+                  <Text style={styles.emptySubtext}>Start your first interview from available surveys</Text>
+                </Card.Content>
+              </Card>
+            )}
           </View>
-          
-          {myInterviews.length > 0 ? (
-            myInterviews.slice(0, 3).map((interview) => (
-              <Card key={interview._id} style={styles.interviewCard}>
+        )}
+        
+        {/* Offline Interviews Section */}
+        {offlineInterviews.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Offline Saved Interviews</Text>
+              <Text style={styles.offlineBadge}>📴 Offline</Text>
+            </View>
+            
+            {offlineInterviews.slice(0, 5).map((interview) => (
+              <Card key={interview.id} style={styles.interviewCard}>
                 <Card.Content>
                   <View style={styles.interviewHeader}>
                     <Text style={styles.interviewTitle}>{interview.survey?.surveyName || 'Unknown Survey'}</Text>
-                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(interview.status) }]}>
-                      <Text style={styles.statusText}>{getStatusText(interview.status)}</Text>
+                    <View style={[styles.statusBadge, { 
+                      backgroundColor: interview.status === 'synced' ? '#059669' : 
+                                       interview.status === 'syncing' ? '#f59e0b' : 
+                                       interview.status === 'failed' ? '#dc2626' : '#6b7280'
+                    }]}>
+                      <Text style={styles.statusText}>
+                        {interview.status === 'synced' ? 'Synced' : 
+                         interview.status === 'syncing' ? 'Syncing' : 
+                         interview.status === 'failed' ? 'Failed' : 'Pending'}
+                      </Text>
                     </View>
                   </View>
                   <View style={styles.interviewMeta}>
                     <View style={styles.metaItem}>
-                      <Text style={styles.metaLabel}>Started</Text>
+                      <Text style={styles.metaLabel}>Saved</Text>
                       <Text style={styles.metaValue}>
-                        {formatDate(interview.startTime || interview.startedAt || interview.createdAt)}
+                        {formatDate(interview.startTime)}
                       </Text>
                     </View>
                     <View style={styles.metaItem}>
                       <Text style={styles.metaLabel}>Duration</Text>
                       <Text style={styles.metaValue}>
-                        {interview.totalTimeSpent ? `${Math.floor(interview.totalTimeSpent / 60)} min` : 'N/A'}
+                        {interview.duration ? `${Math.floor(interview.duration / 60)} min` : 'N/A'}
                       </Text>
                     </View>
                     <View style={styles.metaItem}>
-                      <Text style={styles.metaLabel}>Progress</Text>
+                      <Text style={styles.metaLabel}>Type</Text>
                       <Text style={styles.metaValue}>
-                        {interview.completionPercentage ? `${interview.completionPercentage}%` : 'N/A'}
+                        {interview.isCatiMode ? 'CATI' : 'CAPI'}
                       </Text>
                     </View>
                     <View style={styles.metaItem}>
                       <Text style={styles.metaLabel}>Status</Text>
                       <Text style={styles.metaValue}>
-                        {interview.status ? interview.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'N/A'}
+                        {interview.isCompleted ? 'Completed' : 'Abandoned'}
                       </Text>
                     </View>
                   </View>
-                  {(interview.endTime || interview.completedAt) && (
+                  {interview.status === 'failed' && interview.error && (
+                    <Text style={styles.errorText}>Error: {interview.error}</Text>
+                  )}
+                  {interview.lastSyncAttempt && (
                     <Text style={styles.interviewDate}>
-                      Completed: {formatDate(interview.endTime || interview.completedAt)}
+                      Last sync: {formatDate(interview.lastSyncAttempt)}
                     </Text>
                   )}
                 </Card.Content>
               </Card>
-            ))
-          ) : (
+            ))}
+            {offlineInterviews.length > 5 && (
+              <Text style={styles.moreText}>+ {offlineInterviews.length - 5} more offline interviews</Text>
+            )}
+          </View>
+        )}
+        
+        {/* Show message when offline and no interviews available */}
+        {isOffline && myInterviews.length === 0 && offlineInterviews.length === 0 && (
+          <View style={styles.section}>
             <Card style={styles.emptyCard}>
               <Card.Content style={styles.emptyContent}>
-                <Text style={styles.emptyText}>No interviews yet</Text>
-                <Text style={styles.emptySubtext}>Start your first interview from available surveys</Text>
+                <Text style={styles.emptyText}>📴 Offline Mode</Text>
+                <Text style={styles.emptySubtext}>Response history not available offline. Connect to internet to view your interviews.</Text>
               </Card.Content>
             </Card>
-          )}
-        </View>
+          </View>
+        )}
       </ScrollView>
+
+      {/* Sync Offline Interviews Button */}
+      {pendingInterviewsCount > 0 && (
+        <View style={styles.syncContainer}>
+          <Button
+            mode="contained"
+            onPress={handleSyncOfflineInterviews}
+            loading={isSyncing}
+            disabled={isSyncing || isOffline}
+            style={[styles.syncButton, isOffline && styles.disabledButton]}
+            icon="sync"
+            buttonColor={isOffline ? "#cccccc" : "#059669"}
+            textColor={isOffline ? "#666666" : "#ffffff"}
+          >
+            Sync Offline Interviews ({pendingInterviewsCount})
+          </Button>
+        </View>
+      )}
 
       <FAB
         icon="plus"
@@ -419,7 +693,12 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         visible={snackbarVisible}
         onDismiss={() => setSnackbarVisible(false)}
         duration={4000}
-        style={styles.snackbar}
+        style={[
+          styles.snackbar,
+          snackbarType === 'success' && styles.snackbarSuccess,
+          snackbarType === 'error' && styles.snackbarError,
+          snackbarType === 'info' && styles.snackbarInfo,
+        ]}
       >
         {snackbarMessage}
       </Snackbar>
@@ -445,7 +724,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingTop: 50,
-    paddingBottom: 30,
+    paddingBottom: 15,
     paddingHorizontal: 20,
   },
   headerContent: {
@@ -667,7 +946,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   snackbar: {
-    backgroundColor: '#dc2626',
+    // Default background color
+  },
+  snackbarSuccess: {
+    backgroundColor: '#059669', // Green for success
+  },
+  snackbarError: {
+    backgroundColor: '#dc2626', // Red for error
+  },
+  snackbarInfo: {
+    backgroundColor: '#3b82f6', // Blue for info
+  },
+  syncSurveyContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  syncSurveyButton: {
+    borderRadius: 8,
+    elevation: 2,
   },
   // Assigned ACs styles for dashboard
   assignedACsContainer: {
@@ -714,5 +1011,34 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6b7280',
     marginBottom: 2,
+  },
+  syncContainer: {
+    padding: 16,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  syncButton: {
+    backgroundColor: '#059669',
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  offlineBadge: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#dc2626',
+    marginTop: 8,
+  },
+  moreText: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
 });

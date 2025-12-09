@@ -36,6 +36,7 @@ import { apiService } from '../services/api';
 import { LocationService } from '../utils/location';
 import { Survey, SurveyResponse } from '../types';
 import { parseTranslation, getMainText } from '../utils/translations';
+import { offlineStorage, OfflineInterview } from '../services/offlineStorage';
 
 const { width, height } = Dimensions.get('window');
 
@@ -1184,13 +1185,19 @@ export default function InterviewInterface({ navigation, route }: any) {
         } else {
           // CAPI mode - get location and start normal interview
           setLocationLoading(true);
-          const location = await LocationService.getCurrentLocation();
-          setLocationData(location);
+          try {
+            const location = await LocationService.getCurrentLocation();
+            setLocationData(location);
+          } catch (locationError) {
+            console.error('Error getting location:', locationError);
+            // Continue without location if it fails
+            setLocationData(null);
+          }
           setLocationLoading(false);
 
-          // Start interview session
+          // Start interview session (works offline for CAPI)
           const result = await apiService.startInterview(survey._id);
-          if (result.success) {
+          if (result.success && result.response) {
             setSessionId(result.response.sessionId);
             setSessionData(result.response);
             setIsInterviewActive(true);
@@ -1204,6 +1211,11 @@ export default function InterviewInterface({ navigation, route }: any) {
             setRequiresACSelection(needsACSelection);
             setAssignedACs(result.response.assignedACs || []);
             
+            // Show message if offline
+            if (result.response.isOffline) {
+              showSnackbar('Offline mode: Interview started locally. Will sync when online.');
+            }
+            
             // Start audio recording automatically for CAPI mode
             const shouldRecordAudio = (survey.mode === 'capi') || 
                                      (survey.mode === 'multi_mode' && survey.assignedMode === 'capi');
@@ -1215,13 +1227,45 @@ export default function InterviewInterface({ navigation, route }: any) {
               }, 2000);
             }
           } else {
-            showSnackbar('Failed to start interview');
+            // Show detailed error message
+            const errorMsg = result.message || 'Failed to start interview. Please check your connection and try again.';
+            console.error('❌ Failed to start interview:', errorMsg);
+            console.error('❌ Result object:', result);
+            Alert.alert(
+              'Cannot Start Interview',
+              errorMsg,
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    navigation.goBack();
+                  }
+                }
+              ]
+            );
           }
         }
       } catch (error: any) {
         console.error('Error initializing interview:', error);
+        console.error('Error details:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+          stack: error.stack
+        });
         const errorMsg = error.response?.data?.message || error.message || 'Failed to initialize interview';
-        showSnackbar(errorMsg);
+        Alert.alert(
+          'Error Starting Interview',
+          errorMsg || 'An error occurred while starting the interview. Please try again.',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                navigation.goBack();
+              }
+            }
+          ]
+        );
       } finally {
         setIsLoading(false);
       }
@@ -1996,30 +2040,139 @@ export default function InterviewInterface({ navigation, route }: any) {
         
         const result = await apiService.abandonCatiInterview(
           catiQueueId,
-          reasonToSend,
-          notesToSend,
-          dateToSend,
-          callStatusForStats
+          reasonToSend || undefined,
+          notesToSend || undefined,
+          dateToSend || undefined,
+          callStatusForStats || undefined
         );
         
         if (result.success) {
           showSnackbar(isConsentRefused ? 'Interview abandoned. Consent refusal recorded for reporting.' : 'Interview abandoned');
           navigation.navigate('Dashboard');
         } else {
+          // CATI interviews require internet - don't save offline
           const errorMsg = result.message || 'Failed to abandon interview';
           showSnackbar(errorMsg);
         }
       } else if (sessionId) {
         // CAPI mode - use standard abandon endpoint with responses
-        try {
-          console.log('📋 Current responses state:', Object.keys(responses).length, 'responses');
-          console.log('📋 Response keys:', Object.keys(responses));
+        // Check if online FIRST - if offline, save directly without API call
+        const isOnline = await apiService.isOnline();
+        if (!isOnline && !isCatiMode) {
+          // Offline mode - save directly without attempting API call
+          console.log('📴 Offline mode detected - saving abandonment offline');
           
-          // Build final responses array (similar to completeInterview)
-          // Filter out AC selection and Polling Station questions (backend will also filter, but we do it here too for clarity)
+          // Build final responses array for offline save
           const finalResponses: any[] = [];
           
           allQuestions.forEach((question: any) => {
+            // Skip AC selection and Polling Station questions
+            const questionId = question.id || '';
+            const questionText = (question.text || '').toLowerCase();
+            const isACSelection = questionId === 'ac-selection' || 
+                                 questionText.includes('assembly constituency') ||
+                                 questionText.includes('select assembly constituency');
+            const isPollingStation = questionId === 'polling-station-selection' ||
+                                    question.type === 'polling_station' ||
+                                    question.isPollingStationSelection ||
+                                    questionText.includes('polling station') ||
+                                    questionText.includes('select polling station');
+            
+            if (isACSelection || isPollingStation) {
+              return; // Skip these questions
+            }
+            
+            let processedResponse = responses[question.id];
+            
+            // Handle "Others" option text input
+            if ((question.type === 'multiple_choice' || question.type === 'single_choice') && question.options) {
+              const othersOption = question.options.find((opt: any) => {
+                const optText = opt.text || '';
+                return isOthersOption(optText);
+              });
+              const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
+              
+              if (othersOptionValue) {
+                if (question.type === 'multiple_choice' && Array.isArray(processedResponse)) {
+                  const hasOthers = processedResponse.includes(othersOptionValue);
+                  if (hasOthers) {
+                    const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
+                    if (othersText) {
+                      processedResponse = processedResponse.map((val: string) => {
+                        if (val === othersOptionValue) {
+                          return `Others: ${othersText}`;
+                        }
+                        return val;
+                      });
+                    }
+                  }
+                } else if (processedResponse === othersOptionValue) {
+                  const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
+                  if (othersText) {
+                    processedResponse = `Others: ${othersText}`;
+                  }
+                }
+              }
+            }
+            
+            finalResponses.push({
+              sectionIndex: question.sectionIndex,
+              questionIndex: question.questionIndex,
+              questionId: question.id,
+              questionType: question.type,
+              questionText: question.text,
+              questionDescription: question.description,
+              questionOptions: question.options?.map((opt: any) => opt.text || opt.value) || [],
+              response: processedResponse || (question.type === 'multiple_choice' ? [] : ''),
+              responseTime: 0,
+              isRequired: question.required || false,
+              isSkipped: !hasResponseContent(processedResponse)
+            });
+          });
+          
+          const finalAbandonReason = abandonReason === 'other' ? abandonNotes.trim() : abandonReason;
+          
+          try {
+            await saveInterviewOffline({
+              responses,
+              finalResponses,
+              isCompleted: false,
+              abandonReason: finalAbandonReason,
+              abandonNotes: abandonReason === 'other' ? abandonNotes : undefined,
+            });
+            
+            Alert.alert(
+              'Interview Saved Offline',
+              'Your interview abandonment has been saved locally. It will be synced to the server when you have internet connection.',
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    setShowAbandonConfirm(false);
+                    setAbandonReason('');
+                    setAbandonNotes('');
+                    navigation.navigate('Dashboard');
+                  }
+                }
+              ]
+            );
+            return; // Exit early - don't attempt API call
+          } catch (offlineError: any) {
+            console.error('Error saving offline:', offlineError);
+            showSnackbar('Failed to abandon interview and save offline. Please try again when you have internet.');
+            return; // Exit early even on error
+          }
+        }
+        
+        // Online mode - proceed with API call
+        console.log('📋 Current responses state:', Object.keys(responses).length, 'responses');
+        console.log('📋 Response keys:', Object.keys(responses));
+        
+        // Build final responses array (similar to completeInterview)
+        // Filter out AC selection and Polling Station questions (backend will also filter, but we do it here too for clarity)
+        const finalResponses: any[] = [];
+        
+        allQuestions.forEach((question: any) => {
             // Skip AC selection and Polling Station questions (they're excluded from terminated responses)
             const questionId = question.id || '';
             const questionText = (question.text || '').toLowerCase();
@@ -2110,8 +2263,8 @@ export default function InterviewInterface({ navigation, route }: any) {
             abandonmentNotes: abandonReason !== 'other' ? abandonNotes : null
           };
           
-          
-          const result = await apiService.abandonInterview(sessionId, finalResponses, metadata);
+          try {
+            const result = await apiService.abandonInterview(sessionId, finalResponses, metadata);
           
           if (result.success) {
             setShowAbandonConfirm(false);
@@ -2124,11 +2277,86 @@ export default function InterviewInterface({ navigation, route }: any) {
             }
             navigation.navigate('Dashboard');
           } else {
-            showSnackbar(result.message || 'Failed to abandon interview');
+            // API returned error - check if network error
+            const isNetworkError = !await apiService.isOnline();
+            if (isNetworkError && !isCatiMode) {
+              // Save offline (CAPI only)
+              try {
+                await saveInterviewOffline({
+                  responses,
+                  finalResponses,
+                  isCompleted: false,
+                  abandonReason: finalAbandonReason,
+                  abandonNotes: abandonReason === 'other' ? abandonNotes : undefined,
+                });
+                
+                Alert.alert(
+                  'Interview Saved Offline',
+                  'Your interview abandonment has been saved locally. It will be synced to the server when you have internet connection.',
+                  [
+                    {
+                      text: 'OK',
+                      onPress: () => {
+                        setShowAbandonConfirm(false);
+                        setAbandonReason('');
+                        setAbandonNotes('');
+                        navigation.navigate('Dashboard');
+                      }
+                    }
+                  ]
+                );
+              } catch (offlineError: any) {
+                console.error('Error saving offline:', offlineError);
+                showSnackbar('Failed to abandon interview and save offline. Please try again when you have internet.');
+              }
+            } else {
+              showSnackbar(result.message || 'Failed to abandon interview');
+            }
           }
         } catch (error: any) {
           console.error('Error abandoning interview:', error);
-          showSnackbar('Failed to abandon interview');
+          
+          // Check if it's a network error
+          const isNetworkError = error.message?.includes('Network') || 
+                                error.message?.includes('timeout') ||
+                                error.code === 'NETWORK_ERROR' ||
+                                !await apiService.isOnline();
+          
+          if (isNetworkError && !isCatiMode) {
+            // Save offline (CAPI only)
+            try {
+              const finalAbandonReason = abandonReason === 'other' ? abandonNotes.trim() : abandonReason;
+              await saveInterviewOffline({
+                responses,
+                finalResponses: undefined, // Will be built from responses if needed
+                isCompleted: false,
+                abandonReason: finalAbandonReason,
+                abandonNotes: abandonReason === 'other' ? abandonNotes : undefined,
+              });
+              
+              Alert.alert(
+                'Interview Saved Offline',
+                'Your interview abandonment has been saved locally. It will be synced to the server when you have internet connection.',
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => {
+                      setShowAbandonConfirm(false);
+                      setAbandonReason('');
+                      setAbandonNotes('');
+                      navigation.navigate('Dashboard');
+                    }
+                  }
+                ]
+              );
+            } catch (offlineError: any) {
+              console.error('Error saving offline:', offlineError);
+              showSnackbar('Failed to abandon interview and save offline. Please try again when you have internet.');
+            }
+          } else {
+            const errorMsg = error.response?.data?.message || error.message || 'Failed to abandon interview';
+            showSnackbar(errorMsg);
+          }
         }
       } else {
         showSnackbar('No active interview to abandon');
@@ -2138,6 +2366,8 @@ export default function InterviewInterface({ navigation, route }: any) {
       console.error('Error abandoning interview:', err);
       const errorMsg = err.response?.data?.message || err.message || 'Failed to abandon interview';
       showSnackbar(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -2300,6 +2530,20 @@ export default function InterviewInterface({ navigation, route }: any) {
       console.log('Starting recording...');
       try {
         await recording.startAsync();
+        
+        // Get URI immediately after starting (some platforms provide it early)
+        try {
+          const uri = recording.getURI();
+          if (uri) {
+            setAudioUri(uri);
+            console.log('✅ Audio URI set after start:', uri);
+          } else {
+            console.log('⚠️ URI not available immediately after start (will be available after stop)');
+          }
+        } catch (uriError) {
+          console.log('⚠️ Could not get URI immediately after start (normal):', uriError);
+          // This is normal - URI might not be available until recording stops
+        }
       } catch (startError: any) {
         console.error('Start error:', startError);
         globalRecording = null;
@@ -2368,19 +2612,60 @@ export default function InterviewInterface({ navigation, route }: any) {
 
   const stopAudioRecording = async () => {
     try {
-      console.log('Stopping audio recording...');
+      console.log('🛑 Stopping audio recording...');
+      console.log('   Current isRecording:', isRecording);
+      console.log('   Current globalRecording:', !!globalRecording);
+      console.log('   Current audioUri state:', audioUri);
       
       if (!isRecording || !globalRecording) {
+        console.log('⚠️ Not recording or no globalRecording, returning existing audioUri:', audioUri);
         return audioUri;
       }
       
+      // Get URI BEFORE stopping (some platforms require this)
+      let uri: string | null = null;
+      try {
+        uri = globalRecording.getURI();
+        console.log('📹 URI before stop:', uri);
+      } catch (uriError) {
+        console.warn('⚠️ Could not get URI before stop:', uriError);
+      }
+      
+      // Stop and unload the recording
       await globalRecording.stopAndUnloadAsync();
+      console.log('✅ Recording stopped and unloaded');
       
-      const uri = globalRecording.getURI();
-      console.log('Recording stopped. URI:', uri);
+      // Try to get URI again after stopping (some platforms set it after stop)
+      if (!uri) {
+        try {
+          uri = globalRecording.getURI();
+          console.log('📹 URI after stop:', uri);
+        } catch (uriError) {
+          console.warn('⚠️ Could not get URI after stop:', uriError);
+        }
+      }
       
-      if (uri) {
-        setAudioUri(uri);
+      // If still no URI, try to get it from the recording object's internal state
+      if (!uri && globalRecording) {
+        try {
+          // Some platforms store URI differently - try accessing it directly
+          const status = await globalRecording.getStatusAsync();
+          console.log('📊 Final recording status:', status);
+          // Note: getURI() should work, but if it doesn't, we'll use the existing audioUri
+        } catch (statusError) {
+          console.warn('⚠️ Could not get status after stop:', statusError);
+        }
+      }
+      
+      // Use the retrieved URI or fall back to existing
+      const finalUri = uri || audioUri;
+      console.log('✅ Final audio URI:', finalUri);
+      
+      if (finalUri) {
+        setAudioUri(finalUri);
+        console.log('✅ Audio URI saved to state');
+      } else {
+        console.error('❌ No audio URI available after stopping recording!');
       }
       
       setIsRecording(false);
@@ -2400,10 +2685,24 @@ export default function InterviewInterface({ navigation, route }: any) {
       }
       
       showSnackbar('Audio recording completed');
-      return uri;
-    } catch (error) {
-      console.error('Error stopping recording:', error);
+      return finalUri;
+    } catch (error: any) {
+      console.error('❌ Error stopping recording:', error);
       showSnackbar('Failed to stop recording');
+      
+      // Try to get URI even if stop failed
+      let fallbackUri = audioUri;
+      if (globalRecording) {
+        try {
+          const uri = globalRecording.getURI();
+          if (uri) {
+            fallbackUri = uri;
+            console.log('✅ Retrieved URI from failed recording:', fallbackUri);
+          }
+        } catch (uriError) {
+          console.warn('⚠️ Could not get URI from failed recording:', uriError);
+        }
+      }
       
       // Force cleanup anyway
       globalRecording = null;
@@ -2411,7 +2710,11 @@ export default function InterviewInterface({ navigation, route }: any) {
       setIsAudioPaused(false);
       setRecording(null);
       
-      return audioUri;
+      if (fallbackUri) {
+        setAudioUri(fallbackUri);
+      }
+      
+      return fallbackUri;
     }
   };
 
@@ -2478,6 +2781,157 @@ export default function InterviewInterface({ navigation, route }: any) {
     return unansweredRequiredQuestions;
   };
 
+  // Helper function to save interview offline (CAPI only)
+  const saveInterviewOffline = async (
+    interviewData: {
+      responses: Record<string, any>;
+      finalResponses?: any[];
+      isCompleted: boolean;
+      abandonReason?: string;
+      abandonNotes?: string;
+    }
+  ): Promise<string> => {
+    // CATI interviews should not be saved offline - they require internet
+    if (isCatiMode) {
+      throw new Error('CATI interviews cannot be saved offline - internet connection required');
+    }
+    
+    try {
+      const interviewId = offlineStorage.generateInterviewId();
+      const endTime = new Date();
+      
+      // Calculate actual duration from start and end time
+      // Use the current duration state as fallback, but prefer calculated from timestamps
+      let actualDuration = duration; // Use current duration state as default
+      if (startTime) {
+        try {
+          // startTime is a Date object, so we can use it directly
+          const start = startTime instanceof Date ? startTime : new Date(startTime);
+          const end = endTime;
+          const calculatedDuration = Math.floor((end.getTime() - start.getTime()) / 1000);
+          // Use calculated duration if it's valid and positive
+          if (calculatedDuration > 0) {
+            actualDuration = calculatedDuration;
+            console.log('✅ Calculated duration from timestamps:', actualDuration, 'seconds');
+          } else {
+            console.log('⚠️ Calculated duration is invalid, using state duration:', duration);
+          }
+        } catch (durationError) {
+          console.error('Error calculating duration:', durationError);
+          console.log('Using state duration as fallback:', duration);
+        }
+      } else {
+        console.log('⚠️ No startTime available, using state duration:', duration);
+      }
+      
+      console.log('📊 Saving interview with duration:', actualDuration, 'seconds');
+      
+      // Ensure audio is stopped and saved - CRITICAL for offline mode
+      let finalAudioUri = audioUri;
+      if (isRecording || !audioUri) {
+        console.log('🔄 Stopping audio recording before saving offline...');
+        console.log('   Current isRecording:', isRecording);
+        console.log('   Current audioUri:', audioUri);
+        try {
+          const stoppedUri = await stopAudioRecording();
+          if (stoppedUri) {
+            finalAudioUri = stoppedUri;
+            setAudioUri(stoppedUri); // Update state
+            console.log('✅ Audio stopped and URI retrieved:', finalAudioUri);
+          } else {
+            console.warn('⚠️ stopAudioRecording returned null/undefined, using existing audioUri:', audioUri);
+          }
+        } catch (audioError) {
+          console.error('❌ Error stopping audio before saving offline:', audioError);
+          // Try to use existing audioUri if available
+          if (!finalAudioUri) {
+            console.warn('⚠️ No audio URI available after error');
+          }
+        }
+      } else {
+        console.log('✅ Using existing audio URI:', finalAudioUri);
+      }
+      
+      // Verify audio file exists if URI is present
+      if (finalAudioUri) {
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(finalAudioUri);
+          if (fileInfo.exists) {
+            console.log('✅ Audio file exists at path:', finalAudioUri, 'Size:', fileInfo.size, 'bytes');
+          } else {
+            console.error('❌ Audio file does NOT exist at path:', finalAudioUri);
+            console.warn('⚠️ Saving interview without audio file');
+            finalAudioUri = null; // Don't save invalid URI
+          }
+        } catch (fileCheckError) {
+          console.error('❌ Error checking audio file:', fileCheckError);
+          // Continue anyway - file might exist but check failed
+        }
+      } else {
+        console.warn('⚠️ No audio URI to save for offline interview');
+      }
+      
+      const offlineInterview: OfflineInterview = {
+        id: interviewId,
+        surveyId: survey._id,
+        survey: survey, // Store full survey object
+        sessionId: sessionId || undefined,
+        catiQueueId: undefined, // Not used for CAPI
+        callId: undefined, // Not used for CAPI
+        isCatiMode: false, // Always false for offline saved interviews
+        responses: interviewData.responses,
+        locationData: locationData, // Includes GPS coordinates, address, city, state, etc.
+        selectedAC: selectedAC || null,
+        selectedPollingStation: selectedPollingStation.stationName ? {
+          ...selectedPollingStation,
+          // Ensure all polling station data is included (Lok Sabha, District, etc.)
+          state: selectedPollingStation.state || survey?.acAssignmentState || 'West Bengal',
+          acNo: selectedPollingStation.acNo,
+          acName: selectedPollingStation.acName,
+          pcNo: selectedPollingStation.pcNo,
+          pcName: selectedPollingStation.pcName,
+          district: selectedPollingStation.district,
+          groupName: selectedPollingStation.groupName,
+          stationName: selectedPollingStation.stationName,
+          gpsLocation: selectedPollingStation.gpsLocation,
+          latitude: selectedPollingStation.latitude,
+          longitude: selectedPollingStation.longitude
+        } : null,
+        selectedSetNumber: selectedSetNumber || null,
+        startTime: startTime ? startTime.toISOString() : new Date().toISOString(),
+        endTime: endTime.toISOString(),
+        duration: actualDuration, // Use calculated duration
+        audioUri: finalAudioUri || null, // Use final audio URI
+        metadata: {
+          qualityMetrics: {
+            averageResponseTime: 0,
+            backNavigationCount: 0,
+            dataQualityScore: 100,
+            totalPauseTime: 0,
+            totalPauses: 0,
+          },
+          callStatus: isCatiMode ? (responses['call-status'] || 'call_connected') : undefined,
+          supervisorID: responses['supervisor-id'] || undefined,
+          finalResponses: interviewData.finalResponses,
+          isCompleted: interviewData.isCompleted,
+          abandonReason: interviewData.abandonReason,
+          abandonNotes: interviewData.abandonNotes,
+          locationControlBooster: locationControlBooster, // Save booster status for geofencing bypass
+          geofencingError: geofencingError || null, // Save geofencing status
+        },
+        status: 'pending',
+        syncAttempts: 0,
+      };
+
+      await offlineStorage.saveOfflineInterview(offlineInterview);
+      console.log('✅ Interview saved offline:', interviewId);
+      return interviewId;
+    } catch (error: any) {
+      console.error('❌ Error saving interview offline:', error);
+      throw error;
+    }
+  };
+
   const completeInterview = async () => {
     if (!sessionId) return;
 
@@ -2495,8 +2949,8 @@ export default function InterviewInterface({ navigation, route }: any) {
           catiQueueId,
           'consent_refused',
           'Consent form: No',
-          null, // No call later date
-          null // No call status (call was connected, consent was refused)
+          undefined, // No call later date
+          undefined // No call status (call was connected, consent was refused)
         );
         
         if (result.success) {
@@ -2554,7 +3008,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           catiQueueId,
           abandonmentReason,
           `Call status: ${callStatusResponse}`,
-          null, // No call later date
+          undefined, // No call later date
           callStatusResponse // Pass call status for stats
         );
         
@@ -2590,13 +3044,18 @@ export default function InterviewInterface({ navigation, route }: any) {
     // For CATI interviews, if call status is not connected, consent form doesn't matter
     const shouldSkipConsentCheck = isCatiMode && callStatusResponse && !isCallConnected;
     
-    // If consent form is disagreed, only save consent response (unless call is not connected)
+    // If consent form is disagreed, save consent response + dynamic questions (interviewer ID, supervisor ID)
+    // For survey "68fd1915d41841da463f0d46", we need to include these even when consent is "No"
     if (isConsentDisagreed && !shouldSkipConsentCheck) {
       const consentQuestion = allQuestions.find((q: any) => q.id === 'consent-form');
+      const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+      
       if (consentQuestion) {
         try {
           setIsLoading(true);
-          const finalResponses = [{
+          
+          // Build finalResponses array - always include consent, and include dynamic questions for target survey
+          const finalResponses: any[] = [{
             sectionIndex: consentQuestion.sectionIndex,
             questionIndex: consentQuestion.questionIndex,
             questionId: consentQuestion.id,
@@ -2610,6 +3069,56 @@ export default function InterviewInterface({ navigation, route }: any) {
             isSkipped: false
           }];
           
+          // For target survey, also include interviewer ID and supervisor ID if they exist
+          if (isTargetSurvey) {
+            const interviewerIdQuestion = allQuestions.find((q: any) => q.id === 'interviewer-id');
+            const supervisorIdQuestion = allQuestions.find((q: any) => q.id === 'supervisor-id');
+            
+            if (interviewerIdQuestion && responses['interviewer-id'] !== undefined && responses['interviewer-id'] !== null && responses['interviewer-id'] !== '') {
+              finalResponses.push({
+                sectionIndex: interviewerIdQuestion.sectionIndex,
+                questionIndex: interviewerIdQuestion.questionIndex,
+                questionId: interviewerIdQuestion.id,
+                questionType: interviewerIdQuestion.type,
+                questionText: interviewerIdQuestion.text,
+                questionDescription: interviewerIdQuestion.description,
+                questionOptions: interviewerIdQuestion.options?.map((opt: any) => typeof opt === 'object' ? opt.text : opt) || [],
+                response: responses['interviewer-id'],
+                responseTime: 0,
+                isRequired: interviewerIdQuestion.required || false,
+                isSkipped: false
+              });
+            }
+            
+            if (supervisorIdQuestion && responses['supervisor-id'] !== undefined && responses['supervisor-id'] !== null && responses['supervisor-id'] !== '') {
+              finalResponses.push({
+                sectionIndex: supervisorIdQuestion.sectionIndex,
+                questionIndex: supervisorIdQuestion.questionIndex,
+                questionId: supervisorIdQuestion.id,
+                questionType: supervisorIdQuestion.type,
+                questionText: supervisorIdQuestion.text,
+                questionDescription: supervisorIdQuestion.description,
+                questionOptions: supervisorIdQuestion.options?.map((opt: any) => typeof opt === 'object' ? opt.text : opt) || [],
+                response: responses['supervisor-id'],
+                responseTime: 0,
+                isRequired: supervisorIdQuestion.required || false,
+                isSkipped: false
+              });
+            }
+          }
+          
+          // Extract interviewer ID and supervisor ID for metadata (for target survey)
+          let oldInterviewerID: string | null = null;
+          let supervisorID: string | null = null;
+          if (isTargetSurvey) {
+            if (responses['interviewer-id'] !== null && responses['interviewer-id'] !== undefined && responses['interviewer-id'] !== '') {
+              oldInterviewerID = String(responses['interviewer-id']);
+            }
+            if (responses['supervisor-id'] !== null && responses['supervisor-id'] !== undefined && responses['supervisor-id'] !== '') {
+              supervisorID = String(responses['supervisor-id']);
+            }
+          }
+          
           const result = await apiService.completeInterview(sessionId, {
             responses: finalResponses,
             qualityMetrics: {
@@ -2620,10 +3129,21 @@ export default function InterviewInterface({ navigation, route }: any) {
               totalPauses: 0
             },
             metadata: {
+              survey: survey._id,
+              interviewer: sessionData?.interviewer || 'current-user',
+              status: 'Pending_Approval',
+              sessionId: sessionId,
+              startTime: sessionData?.startTime || startTime || new Date(),
+              endTime: new Date(),
+              totalTimeSpent: duration,
+              interviewMode: survey.mode === 'multi_mode' ? (survey.assignedMode || 'capi') : (survey.mode || 'capi'),
               selectedAC: selectedAC || null,
               selectedPollingStation: selectedPollingStation || null,
               location: locationData || null,
-              setNumber: selectedSetNumber || null
+              setNumber: selectedSetNumber || null,
+              OldinterviewerID: oldInterviewerID, // Include interviewer ID for target survey
+              supervisorID: supervisorID, // Include supervisor ID for target survey
+              consentResponse: 'no' // Explicitly set consentResponse to 'no' for backend processing
             }
           });
           
@@ -2678,6 +3198,141 @@ export default function InterviewInterface({ navigation, route }: any) {
     try {
       setIsLoading(true);
       
+      // Check if offline BEFORE attempting API call
+      const isOnline = await apiService.isOnline();
+      if (!isOnline && !isCatiMode) {
+        // Offline mode - save directly without trying API call
+        console.log('📴 Offline mode detected - saving interview offline directly');
+        
+        // Stop audio recording first - CRITICAL for offline mode
+        let currentAudioUri = audioUri;
+        console.log('🔍 Audio state before saving offline:');
+        console.log('   isRecording:', isRecording);
+        console.log('   audioUri:', audioUri);
+        console.log('   globalRecording exists:', !!globalRecording);
+        
+        if (isRecording || !audioUri) {
+          console.log('🛑 Stopping audio recording before saving offline...');
+          try {
+            const stoppedUri = await stopAudioRecording();
+            if (stoppedUri) {
+              currentAudioUri = stoppedUri;
+              setAudioUri(stoppedUri); // Update state with final audio URI
+              console.log('✅ Audio stopped and URI saved:', currentAudioUri);
+            } else {
+              console.warn('⚠️ stopAudioRecording returned null, using existing audioUri:', audioUri);
+              currentAudioUri = audioUri;
+            }
+          } catch (audioStopError) {
+            console.error('❌ Error stopping audio:', audioStopError);
+            // Continue with existing audioUri if available
+            if (!currentAudioUri) {
+              console.warn('⚠️ No audio URI available after error');
+            }
+          }
+        } else {
+          console.log('✅ Using existing audio URI:', currentAudioUri);
+        }
+        
+        // Verify audio file exists
+        if (currentAudioUri) {
+          try {
+            const fileInfo = await FileSystem.getInfoAsync(currentAudioUri);
+            if (fileInfo.exists) {
+              console.log('✅ Audio file verified, size:', fileInfo.size, 'bytes');
+            } else {
+              console.error('❌ Audio file does NOT exist at:', currentAudioUri);
+              currentAudioUri = null; // Don't save invalid URI
+            }
+          } catch (fileCheckError) {
+            console.error('❌ Error checking audio file:', fileCheckError);
+            // Continue anyway - might be a permission issue
+          }
+        }
+        
+        // Build finalResponses from responses using the same logic as online completion
+        // This ensures all data (including "Others" text, response codes, etc.) is preserved
+        const finalResponsesToSave = allQuestions.map((question: any, index: number) => {
+          const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
+          const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
+          
+          // Process response similar to online completion
+          let processedResponse: any;
+          if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
+            if (Array.isArray(response)) {
+              processedResponse = response;
+            } else if (response && response !== '') {
+              processedResponse = [response];
+            } else {
+              processedResponse = [];
+            }
+          } else {
+            processedResponse = response || '';
+          }
+          
+          // Handle "Others" option text input
+          const othersOption = question.options?.find((opt: any) => {
+            const optText = opt.text || '';
+            return isOthersOption(optText);
+          });
+          const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
+          
+          // If response includes "Others" option, append the text input
+          let finalResponse = processedResponse;
+          if (othersOptionValue && (processedResponse === othersOptionValue || 
+              (Array.isArray(processedResponse) && processedResponse.includes(othersOptionValue)))) {
+            const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
+            if (othersText) {
+              if (Array.isArray(processedResponse)) {
+                finalResponse = processedResponse.map((r: any) => 
+                  r === othersOptionValue ? `Others: ${othersText}` : r
+                );
+              } else {
+                finalResponse = `Others: ${othersText}`;
+              }
+            }
+          }
+          
+          return {
+            sectionIndex: question.sectionIndex || 0,
+            questionIndex: question.questionIndex !== undefined ? question.questionIndex : index,
+            questionId: question.id,
+            questionType: question.type,
+            questionText: question.text,
+            questionDescription: question.description,
+            questionOptions: question.options?.map((opt: any) => (typeof opt === 'object' ? opt.text : opt)) || [],
+            response: finalResponse,
+            responseTime: 0,
+            isRequired: question.required || false,
+            isSkipped: !response || (Array.isArray(response) && response.length === 0)
+          };
+        });
+        
+        await saveInterviewOffline({
+          responses,
+          finalResponses: finalResponsesToSave,
+          isCompleted: true,
+        });
+        
+        Alert.alert(
+          'Interview Saved Offline',
+          'Your interview has been saved locally. It will be synced to the server when you have internet connection. You can sync it from the dashboard.',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Dashboard' }],
+                });
+              }
+            }
+          ]
+        );
+        setIsLoading(false);
+        return;
+      }
+      
       // Stop audio recording and get audio URI
       // Stop audio recording and upload if available (only for CAPI mode)
       let audioUrl = null;
@@ -2693,13 +3348,14 @@ export default function InterviewInterface({ navigation, route }: any) {
           // Stop recording and get the real audio file
           console.log('Stopping audio recording...');
           currentAudioUri = await stopAudioRecording();
+          setAudioUri(currentAudioUri); // Update state with final audio URI
           console.log('Audio file path from stopRecording:', currentAudioUri);
         }
         
         console.log('Final currentAudioUri:', currentAudioUri);
         
-        // Upload audio file if available
-        if (currentAudioUri) {
+        // Upload audio file if available (only if online)
+        if (currentAudioUri && isOnline) {
           console.log('Uploading audio file...', currentAudioUri);
           
           try {
@@ -3053,11 +3709,216 @@ export default function InterviewInterface({ navigation, route }: any) {
           ]
         );
       } else {
-        showSnackbar('Failed to complete interview');
+        // API call returned failure - check if it's a network error and save offline for CAPI
+        const errorMessage = result.message || 'Failed to complete interview';
+        const isNetworkError = errorMessage.includes('Network') || 
+                              errorMessage.includes('network') ||
+                              !await apiService.isOnline();
+        
+        if (isNetworkError && !isCatiMode) {
+          // Save offline (CAPI only) - don't show error, show success message instead
+          try {
+            // Stop audio if still recording
+            let currentAudioUri = audioUri;
+            if (isRecording) {
+              console.log('Stopping audio recording before saving offline (fallback)...');
+              currentAudioUri = await stopAudioRecording();
+              setAudioUri(currentAudioUri);
+            }
+            
+            // Build finalResponses using the same logic as the main offline save
+            const finalResponsesToSave = allQuestions.map((question: any, index: number) => {
+              const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
+              const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
+              
+              // Process response similar to online completion
+              let processedResponse: any;
+              if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
+                if (Array.isArray(response)) {
+                  processedResponse = response;
+                } else if (response && response !== '') {
+                  processedResponse = [response];
+                } else {
+                  processedResponse = [];
+                }
+              } else {
+                processedResponse = response || '';
+              }
+              
+              // Handle "Others" option text input
+              const othersOption = question.options?.find((opt: any) => {
+                const optText = opt.text || '';
+                return isOthersOption(optText);
+              });
+              const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
+              
+              let finalResponse = processedResponse;
+              if (othersOptionValue && (processedResponse === othersOptionValue || 
+                  (Array.isArray(processedResponse) && processedResponse.includes(othersOptionValue)))) {
+                const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
+                if (othersText) {
+                  if (Array.isArray(processedResponse)) {
+                    finalResponse = processedResponse.map((r: any) => 
+                      r === othersOptionValue ? `Others: ${othersText}` : r
+                    );
+                  } else {
+                    finalResponse = `Others: ${othersText}`;
+                  }
+                }
+              }
+              
+              return {
+                sectionIndex: question.sectionIndex || 0,
+                questionIndex: question.questionIndex !== undefined ? question.questionIndex : index,
+                questionId: question.id,
+                questionType: question.type,
+                questionText: question.text,
+                questionDescription: question.description,
+                questionOptions: question.options?.map((opt: any) => (typeof opt === 'object' ? opt.text : opt)) || [],
+                response: finalResponse,
+                responseTime: 0,
+                isRequired: question.required || false,
+                isSkipped: !response || (Array.isArray(response) && response.length === 0)
+              };
+            });
+            
+            await saveInterviewOffline({
+              responses,
+              finalResponses: finalResponsesToSave,
+              isCompleted: true,
+            });
+              
+            Alert.alert(
+              'Interview Saved Offline',
+              'Your interview has been saved locally. It will be synced to the server when you have internet connection. You can sync it from the dashboard.',
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    navigation.reset({
+                      index: 0,
+                      routes: [{ name: 'Dashboard' }],
+                    });
+                  }
+                }
+              ]
+            );
+            setIsLoading(false);
+            return; // Exit early - don't show error
+          } catch (offlineError: any) {
+            console.error('Error saving offline:', offlineError);
+            showSnackbar('Failed to complete interview and save offline. Please try again when you have internet.');
+          }
+        } else {
+          // CATI interviews require internet or other error - show error
+          const errorMsg = result.message || 'Failed to complete interview';
+          showSnackbar(errorMsg);
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error completing interview:', error);
-      showSnackbar('Failed to complete interview');
+      
+      // Check if it's a network error - only save offline for CAPI
+      const isNetworkError = error?.message?.includes('Network') || 
+                            error?.message?.includes('network') ||
+                            error?.code === 'NETWORK_ERROR' ||
+                            !await apiService.isOnline();
+      
+      if (isNetworkError && !isCatiMode) {
+        // Save offline (CAPI only)
+        try {
+          // Stop audio if still recording
+          let currentAudioUri = audioUri;
+          if (isRecording) {
+            console.log('Stopping audio recording before saving offline (catch block)...');
+            currentAudioUri = await stopAudioRecording();
+            setAudioUri(currentAudioUri);
+          }
+          
+          // Build finalResponses using the same logic
+          const finalResponsesToSave = allQuestions.map((question: any, index: number) => {
+            const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
+            const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
+            
+            let processedResponse: any;
+            if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
+              if (Array.isArray(response)) {
+                processedResponse = response;
+              } else if (response && response !== '') {
+                processedResponse = [response];
+              } else {
+                processedResponse = [];
+              }
+            } else {
+              processedResponse = response || '';
+            }
+            
+            const othersOption = question.options?.find((opt: any) => {
+              const optText = opt.text || '';
+              return isOthersOption(optText);
+            });
+            const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
+            
+            let finalResponse = processedResponse;
+            if (othersOptionValue && (processedResponse === othersOptionValue || 
+                (Array.isArray(processedResponse) && processedResponse.includes(othersOptionValue)))) {
+              const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
+              if (othersText) {
+                if (Array.isArray(processedResponse)) {
+                  finalResponse = processedResponse.map((r: any) => 
+                    r === othersOptionValue ? `Others: ${othersText}` : r
+                  );
+                } else {
+                  finalResponse = `Others: ${othersText}`;
+                }
+              }
+            }
+            
+            return {
+              sectionIndex: question.sectionIndex || 0,
+              questionIndex: question.questionIndex !== undefined ? question.questionIndex : index,
+              questionId: question.id,
+              questionType: question.type,
+              questionText: question.text,
+              questionDescription: question.description,
+              questionOptions: question.options?.map((opt: any) => (typeof opt === 'object' ? opt.text : opt)) || [],
+              response: finalResponse,
+              responseTime: 0,
+              isRequired: question.required || false,
+              isSkipped: !response || (Array.isArray(response) && response.length === 0)
+            };
+          });
+          
+          await saveInterviewOffline({
+            responses,
+            finalResponses: finalResponsesToSave,
+            isCompleted: true,
+          });
+            
+          Alert.alert(
+            'Interview Saved Offline',
+            'Your interview has been saved locally. It will be synced to the server when you have internet connection. You can sync it from the dashboard.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'Dashboard' }],
+                  });
+                }
+              }
+            ]
+          );
+          return; // Exit early after saving offline
+        } catch (offlineError: any) {
+          console.error('Error saving offline:', offlineError);
+          showSnackbar('Failed to complete interview and save offline. Please try again when you have internet.');
+        }
+      } else {
+        const errorMsg = error.response?.data?.message || error.message || 'Failed to complete interview';
+        showSnackbar(errorMsg);
+      }
     } finally {
       setIsLoading(false);
     }

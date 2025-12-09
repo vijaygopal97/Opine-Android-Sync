@@ -1,13 +1,31 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { offlineStorage } from './offlineStorage';
+// Note: offlineDataCache is imported dynamically in each method to avoid circular dependency
 
 const API_BASE_URL = 'https://opine.exypnossolutions.com';
 
 class ApiService {
   private baseURL: string;
+  private offlineDataCacheModule: any = null;
 
   constructor() {
     this.baseURL = API_BASE_URL;
+  }
+
+  // Helper to safely get offline cache (lazy load with error handling)
+  private async getOfflineCache() {
+    if (this.offlineDataCacheModule) {
+      return this.offlineDataCacheModule;
+    }
+    try {
+      const module = await import('./offlineDataCache');
+      this.offlineDataCacheModule = module.offlineDataCache;
+      return this.offlineDataCacheModule;
+    } catch (error) {
+      console.log('⚠️ Offline cache not available:', error);
+      return null;
+    }
   }
 
   private async getAuthToken(): Promise<string | null> {
@@ -29,37 +47,125 @@ class ApiService {
     };
   }
 
+  /**
+   * Normalize AC name to match master data spelling
+   * This handles common spelling mismatches between survey data and polling station master data
+   */
+  normalizeACName(acName: string): string {
+    if (!acName || typeof acName !== 'string') return acName;
+    
+    // Common AC name mappings based on master data spelling (from polling_stations.json)
+    // Master data uses: "COOCHBEHAR DAKSHIN" (all caps, no space in "COOCHBEHAR")
+    const acNameMappings: Record<string, string> = {
+      // Cooch Behar variations -> COOCHBEHAR (no space, all caps)
+      'Cooch Behar Uttar': 'COOCHBEHAR UTTAR (SC)',
+      'Cooch Behar Dakshin': 'COOCHBEHAR DAKSHIN',
+      'Coochbehar Uttar': 'COOCHBEHAR UTTAR (SC)',
+      'Coochbehar Dakshin': 'COOCHBEHAR DAKSHIN',
+      'COOCH BEHAR UTTAR': 'COOCHBEHAR UTTAR (SC)',
+      'COOCH BEHAR DAKSHIN': 'COOCHBEHAR DAKSHIN',
+      'cooch behar uttar': 'COOCHBEHAR UTTAR (SC)',
+      'cooch behar dakshin': 'COOCHBEHAR DAKSHIN',
+      // Add more mappings as needed
+    };
+    
+    // Check exact match first
+    if (acNameMappings[acName]) {
+      return acNameMappings[acName];
+    }
+    
+    // Try case-insensitive match
+    const normalized = acName.trim();
+    for (const [key, value] of Object.entries(acNameMappings)) {
+      if (key.toLowerCase() === normalized.toLowerCase()) {
+        return value;
+      }
+    }
+    
+    // If no mapping found, return original
+    return acName;
+  }
+
+  /**
+   * Check if device is online
+   */
+  async isOnline(): Promise<boolean> {
+    try {
+      // Use a shorter timeout for faster response
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+      
+      const response = await fetch('https://www.google.com/favicon.ico', {
+        method: 'HEAD',
+        cache: 'no-cache',
+        mode: 'no-cors',
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Check if request should fail due to offline mode
+   * Returns true if offline and operation requires internet
+   */
+  private async checkOfflineMode(requiresInternet: boolean = true): Promise<{ isOffline: boolean; error?: string }> {
+    const isOnline = await this.isOnline();
+    if (!isOnline && requiresInternet) {
+      return {
+        isOffline: true,
+        error: 'No internet connection. Please connect to the internet and try again.',
+      };
+    }
+    return { isOffline: false };
+  }
+
   // Authentication
   async login(identifier: string, password: string) {
     try {
+      console.log('🔐 Attempting login for:', identifier);
       const response = await axios.post(`${this.baseURL}/api/auth/login`, {
         email: identifier, // Backend expects 'email' but accepts email or memberId
         password,
       });
 
-      console.log('Login response:', response.data);
+      console.log('Login response status:', response.status);
+      console.log('Login response data:', response.data);
 
-      if (response.data.success) {
-        const { token, user } = response.data.data;
+      if (response.data && response.data.success) {
+        const { token, user } = response.data.data || {};
         
         // Validate token and user data before storing
         if (!token || !user) {
+          console.error('❌ Invalid response: missing token or user data');
           return { success: false, message: 'Invalid response from server' };
         }
         
+        console.log('✅ Login successful, storing credentials');
         // Store token and user data
         await AsyncStorage.setItem('authToken', token);
         await AsyncStorage.setItem('userData', JSON.stringify(user));
         
         return { success: true, token, user };
       } else {
-        return { success: false, message: response.data.message || 'Login failed' };
+        const errorMessage = response.data?.message || 'Login failed';
+        console.error('❌ Login failed:', errorMessage);
+        return { success: false, message: errorMessage };
       }
     } catch (error: any) {
-      console.error('Login error:', error);
+      console.error('❌ Login error:', error);
+      console.error('❌ Error response:', error.response?.data);
+      console.error('❌ Error status:', error.response?.status);
+      console.error('❌ Error message:', error.message);
+      
+      const errorMessage = error.response?.data?.message || error.message || 'Login failed. Please try again.';
       return {
         success: false,
-        message: error.response?.data?.message || 'Login failed. Please try again.',
+        message: errorMessage,
       };
     }
   }
@@ -155,6 +261,61 @@ class ApiService {
   // Survey Responses - Start interview session
   async startInterview(surveyId: string) {
     try {
+      // Check if offline - for CAPI interviews, create local session
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline mode - creating local interview session');
+        // Create a local session ID for offline interviews
+        const localSessionId = `offline_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Get survey from offline storage to check AC requirements
+        const surveys = await offlineStorage.getSurveys();
+        const survey = surveys.find((s: any) => s._id === surveyId || s.id === surveyId);
+        
+        // Determine if AC selection is required
+        let requiresACSelection = false;
+        let assignedACs: string[] = [];
+        
+        if (survey) {
+          // Check for AC assignment in different assignment types
+          if (survey.assignedInterviewers && survey.assignedInterviewers.length > 0) {
+            const assignment = survey.assignedInterviewers.find((a: any) => a.status === 'assigned');
+            if (assignment && assignment.assignedACs && assignment.assignedACs.length > 0) {
+              requiresACSelection = survey.assignACs === true;
+              assignedACs = assignment.assignedACs || [];
+            }
+          }
+          
+          // Check CAPI assignments
+          if (survey.capiInterviewers && survey.capiInterviewers.length > 0) {
+            const assignment = survey.capiInterviewers.find((a: any) => a.status === 'assigned');
+            if (assignment && assignment.assignedACs && assignment.assignedACs.length > 0) {
+              requiresACSelection = survey.assignACs === true;
+              assignedACs = assignment.assignedACs || [];
+            }
+          }
+        }
+        
+        // Create local session data
+        const localSessionData = {
+          sessionId: localSessionId,
+          survey: surveyId,
+          interviewMode: 'capi',
+          startTime: new Date().toISOString(),
+          requiresACSelection: requiresACSelection,
+          assignedACs: assignedACs,
+          acAssignmentState: survey?.acAssignmentState || 'West Bengal',
+          status: 'active',
+          isOffline: true, // Mark as offline session
+        };
+        
+        return { 
+          success: true, 
+          response: localSessionData 
+        };
+      }
+      
+      // Online - use API
       const headers = await this.getHeaders();
       const response = await axios.post(
         `${this.baseURL}/api/survey-responses/start/${surveyId}`,
@@ -166,6 +327,63 @@ class ApiService {
       console.error('Start interview error:', error);
       console.error('🔍 Error response:', error.response?.data);
       console.error('🔍 Error status:', error.response?.status);
+      
+      // If network error and we're offline, create local session
+      const isNetworkError = error.message?.includes('Network') || 
+                            error.message?.includes('timeout') ||
+                            error.code === 'NETWORK_ERROR' ||
+                            !await this.isOnline();
+      
+      if (isNetworkError) {
+        console.log('📴 Network error - creating local interview session');
+        // Create a local session ID for offline interviews
+        const localSessionId = `offline_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Get survey from offline storage
+        const surveys = await offlineStorage.getSurveys();
+        const survey = surveys.find((s: any) => s._id === surveyId || s.id === surveyId);
+        
+        // Determine if AC selection is required
+        let requiresACSelection = false;
+        let assignedACs: string[] = [];
+        
+        if (survey) {
+          if (survey.assignedInterviewers && survey.assignedInterviewers.length > 0) {
+            const assignment = survey.assignedInterviewers.find((a: any) => a.status === 'assigned');
+            if (assignment && assignment.assignedACs && assignment.assignedACs.length > 0) {
+              requiresACSelection = survey.assignACs === true;
+              assignedACs = assignment.assignedACs || [];
+            }
+          }
+          
+          if (survey.capiInterviewers && survey.capiInterviewers.length > 0) {
+            const assignment = survey.capiInterviewers.find((a: any) => a.status === 'assigned');
+            if (assignment && assignment.assignedACs && assignment.assignedACs.length > 0) {
+              requiresACSelection = survey.assignACs === true;
+              assignedACs = assignment.assignedACs || [];
+            }
+          }
+        }
+        
+        // Create local session data
+        const localSessionData = {
+          sessionId: localSessionId,
+          survey: surveyId,
+          interviewMode: 'capi',
+          startTime: new Date().toISOString(),
+          requiresACSelection: requiresACSelection,
+          assignedACs: assignedACs,
+          acAssignmentState: survey?.acAssignmentState || 'West Bengal',
+          status: 'active',
+          isOffline: true, // Mark as offline session
+        };
+        
+        return { 
+          success: true, 
+          response: localSessionData 
+        };
+      }
+      
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to start interview',
@@ -187,24 +405,6 @@ class ApiService {
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to save response',
-      };
-    }
-  }
-
-  async completeInterview(responseId: string, data: any) {
-    try {
-      const headers = await this.getHeaders();
-      const response = await axios.post(
-        `${this.baseURL}/api/survey-responses/${responseId}/complete`,
-        data,
-        { headers }
-      );
-      return { success: true, response: response.data.response };
-    } catch (error: any) {
-      console.error('Complete interview error:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to complete interview',
       };
     }
   }
@@ -485,13 +685,65 @@ class ApiService {
   // Get gender response counts for quota management
   async getGenderResponseCounts(surveyId: string) {
     try {
+      // Check offline cache first (lazy import to avoid circular dependency)
+      const cacheForRead = await this.getOfflineCache();
+      if (cacheForRead) {
+        try {
+          const cachedData = await cacheForRead.getGenderQuotas(surveyId);
+          if (cachedData) {
+            console.log('📦 Using cached gender quotas for survey:', surveyId);
+            return { success: true, data: cachedData };
+          }
+        } catch (cacheError) {
+          // Cache read failed, continue without cache
+        }
+      }
+
+      // Check if online
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - no cached gender quotas for survey:', surveyId);
+        return {
+          success: false,
+          message: 'No internet connection and no cached data available',
+          error: 'OFFLINE_NO_CACHE'
+        };
+      }
+
+      // Fetch from API
       const headers = await this.getHeaders();
       const response = await axios.get(`${this.baseURL}/api/survey-responses/survey/${surveyId}/gender-counts`, { headers });
+      
+      // Cache the data
+      const cacheForSave = await this.getOfflineCache();
+      if (cacheForSave && response.data.success && response.data.data) {
+        try {
+          await cacheForSave.saveGenderQuotas(surveyId, response.data.data);
+        } catch (cacheError) {
+          // Cache save failed, continue without caching
+        }
+      }
+      
       return response.data;
     } catch (error: any) {
       console.error('Get gender response counts error:', error);
       console.error('🔍 Error response:', error.response?.data);
       console.error('🔍 Error status:', error.response?.status);
+      
+      // Try cache as fallback
+      const cacheForFallback = await this.getOfflineCache();
+      if (cacheForFallback) {
+        try {
+          const cachedData = await cacheForFallback.getGenderQuotas(surveyId);
+          if (cachedData) {
+            console.log('📦 Using cached gender quotas as fallback for survey:', surveyId);
+            return { success: true, data: cachedData };
+          }
+        } catch (cacheError) {
+          // Cache not available, continue with error
+        }
+      }
+      
       return {
         success: false,
         message: 'Failed to get gender response counts',
@@ -510,14 +762,81 @@ class ApiService {
           error: 'Missing surveyId parameter'
         };
       }
+
+      // Check offline cache first (lazy import)
+      const cacheForRead = await this.getOfflineCache();
+      let cachedData = null;
+      if (cacheForRead) {
+        try {
+          cachedData = await cacheForRead.getCatiSetNumber(surveyId);
+        } catch (cacheError) {
+          // Cache read failed, continue
+        }
+      }
+      if (cachedData) {
+        console.log('📦 Using cached CATI set number for survey:', surveyId);
+        return { success: true, data: cachedData };
+      }
+
+      // Check if online
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - no cached CATI set number for survey:', surveyId);
+        // Return default for offline (Set 1)
+        return {
+          success: true,
+          data: { nextSetNumber: 1 }
+        };
+      }
+
+      // Fetch from API
       const headers = await this.getHeaders();
       const response = await axios.get(`${this.baseURL}/api/survey-responses/survey/${surveyId}/last-cati-set`, { headers });
+      
+      // Cache the data
+      const cacheForSave = await this.getOfflineCache();
+      if (cacheForSave && response.data.success && response.data.data) {
+        try {
+          await cacheForSave.saveCatiSetNumber(surveyId, response.data.data);
+        } catch (cacheError) {
+          // Cache save failed, continue
+        }
+      }
+      
       return response.data;
     } catch (error: any) {
       // Silently handle 404 or other errors - return error response for frontend to handle
       if (error.response && error.response.data) {
+        // Try cache as fallback
+        const cacheForFallback1 = await this.getOfflineCache();
+        if (cacheForFallback1) {
+          try {
+            const cachedData = await cacheForFallback1.getCatiSetNumber(surveyId);
+            if (cachedData) {
+              console.log('📦 Using cached CATI set number as fallback for survey:', surveyId);
+              return { success: true, data: cachedData };
+            }
+          } catch (cacheError) {
+            // Cache not available
+          }
+        }
         return error.response.data;
       }
+      
+      // Try cache as fallback
+      const cacheForFallback2 = await this.getOfflineCache();
+      if (cacheForFallback2) {
+        try {
+          const cachedData = await cacheForFallback2.getCatiSetNumber(surveyId);
+          if (cachedData) {
+            console.log('📦 Using cached CATI set number as fallback for survey:', surveyId);
+            return { success: true, data: cachedData };
+          }
+        } catch (cacheError) {
+          // Cache not available
+        }
+      }
+      
       return {
         success: false,
         message: 'Failed to get last CATI set number',
@@ -529,13 +848,89 @@ class ApiService {
   // Polling Station API methods
   async getGroupsByAC(state: string, acIdentifier: string) {
     try {
+      // Normalize AC name to match master data spelling
+      const normalizedAC = this.normalizeACName(acIdentifier);
+      
+      // Check offline cache first (lazy import) - try normalized name first
+      const cacheForRead = await this.getOfflineCache();
+      let cachedData = null;
+      if (cacheForRead) {
+        try {
+          cachedData = await cacheForRead.getPollingGroups(state, normalizedAC);
+          // If not found, try original name
+          if (!cachedData) {
+            cachedData = await cacheForRead.getPollingGroups(state, acIdentifier);
+          }
+        } catch (cacheError) {
+          // Cache read failed, continue
+        }
+      }
+      if (cachedData) {
+        console.log('📦 Using cached polling groups for:', state, normalizedAC);
+        return { success: true, data: cachedData };
+      }
+
+      // Check if online
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - no cached polling groups for:', state, normalizedAC);
+        return {
+          success: false,
+          message: 'No internet connection and no cached data available',
+        };
+      }
+
+      // Fetch from API using normalized AC name
       const headers = await this.getHeaders();
-      const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}`;
-      const response = await axios.get(url, { headers });
+      let response;
+      try {
+        const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(normalizedAC)}`;
+        response = await axios.get(url, { headers });
+      } catch (firstError: any) {
+        // If normalized name fails, try original name as fallback
+        if (normalizedAC !== acIdentifier && firstError.response?.status === 404) {
+          console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acIdentifier}"`);
+          const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}`;
+          response = await axios.get(url, { headers });
+        } else {
+          throw firstError;
+        }
+      }
+      
+      // Cache the data using normalized name
+      const cacheForSave = await this.getOfflineCache();
+      if (cacheForSave && response.data.success && response.data.data) {
+        try {
+          await cacheForSave.savePollingGroups(state, normalizedAC, response.data.data);
+        } catch (cacheError) {
+          // Cache save failed, continue
+        }
+      }
+      
       return response.data;
     } catch (error: any) {
       console.error('Get groups by AC error:', error);
       console.error('Error response:', error.response?.data);
+      console.error('AC Identifier used:', acIdentifier);
+      
+      // Try cache as fallback
+      const cacheForFallback = await this.getOfflineCache();
+      if (cacheForFallback) {
+        try {
+          const normalizedAC = this.normalizeACName(acIdentifier);
+          let cachedData = await cacheForFallback.getPollingGroups(state, normalizedAC);
+          if (!cachedData) {
+            cachedData = await cacheForFallback.getPollingGroups(state, acIdentifier);
+          }
+          if (cachedData) {
+            console.log('📦 Using cached polling groups as fallback for:', state, normalizedAC);
+            return { success: true, data: cachedData };
+          }
+        } catch (cacheError) {
+          // Cache not available
+        }
+      }
+      
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to fetch groups',
@@ -545,13 +940,89 @@ class ApiService {
 
   async getPollingStationsByGroup(state: string, acIdentifier: string, groupName: string) {
     try {
+      // Normalize AC name to match master data spelling
+      const normalizedAC = this.normalizeACName(acIdentifier);
+      
+      // Check offline cache first (lazy import) - try normalized name first
+      const cacheForRead = await this.getOfflineCache();
+      let cachedData = null;
+      if (cacheForRead) {
+        try {
+          cachedData = await cacheForRead.getPollingStations(state, normalizedAC, groupName);
+          // If not found, try original name
+          if (!cachedData) {
+            cachedData = await cacheForRead.getPollingStations(state, acIdentifier, groupName);
+          }
+        } catch (cacheError) {
+          // Cache read failed, continue
+        }
+      }
+      if (cachedData) {
+        console.log('📦 Using cached polling stations for:', state, normalizedAC, groupName);
+        return { success: true, data: cachedData };
+      }
+
+      // Check if online
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - no cached polling stations for:', state, normalizedAC, groupName);
+        return {
+          success: false,
+          message: 'No internet connection and no cached data available',
+        };
+      }
+
+      // Fetch from API using normalized AC name
       const headers = await this.getHeaders();
-      const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}`;
-      const response = await axios.get(url, { headers });
+      let response;
+      try {
+        const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(normalizedAC)}/${encodeURIComponent(groupName)}`;
+        response = await axios.get(url, { headers });
+      } catch (firstError: any) {
+        // If normalized name fails, try original name as fallback
+        if (normalizedAC !== acIdentifier && firstError.response?.status === 404) {
+          console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acIdentifier}"`);
+          const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}`;
+          response = await axios.get(url, { headers });
+        } else {
+          throw firstError;
+        }
+      }
+      
+      // Cache the data using normalized name
+      const cacheForSave = await this.getOfflineCache();
+      if (cacheForSave && response.data.success && response.data.data) {
+        try {
+          await cacheForSave.savePollingStations(state, normalizedAC, groupName, response.data.data);
+        } catch (cacheError) {
+          // Cache save failed, continue
+        }
+      }
+      
       return response.data;
     } catch (error: any) {
       console.error('Get polling stations by group error:', error);
       console.error('Error response:', error.response?.data);
+      console.error('AC Identifier used:', acIdentifier);
+      
+      // Try cache as fallback
+      const cacheForFallback = await this.getOfflineCache();
+      if (cacheForFallback) {
+        try {
+          const normalizedAC = this.normalizeACName(acIdentifier);
+          let cachedData = await cacheForFallback.getPollingStations(state, normalizedAC, groupName);
+          if (!cachedData) {
+            cachedData = await cacheForFallback.getPollingStations(state, acIdentifier, groupName);
+          }
+          if (cachedData) {
+            console.log('📦 Using cached polling stations as fallback for:', state, normalizedAC, groupName);
+            return { success: true, data: cachedData };
+          }
+        } catch (cacheError) {
+          // Cache not available
+        }
+      }
+      
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to fetch polling stations',
@@ -670,14 +1141,92 @@ class ApiService {
 
   async getPollingStationGPS(state: string, acIdentifier: string, groupName: string, stationName: string) {
     try {
+      // Normalize AC name to match master data spelling
+      const normalizedAC = this.normalizeACName(acIdentifier);
+      
+      // Check offline cache first (lazy import) - try normalized name first
+      const cacheForRead = await this.getOfflineCache();
+      let cachedData = null;
+      if (cacheForRead) {
+        try {
+          cachedData = await cacheForRead.getPollingGPS(state, normalizedAC, groupName, stationName);
+          // If not found, try original name
+          if (!cachedData) {
+            cachedData = await cacheForRead.getPollingGPS(state, acIdentifier, groupName, stationName);
+          }
+        } catch (cacheError) {
+          // Cache read failed, continue
+        }
+      }
+      if (cachedData) {
+        console.log('📦 Using cached GPS for:', state, normalizedAC, groupName, stationName);
+        return { success: true, data: cachedData };
+      }
+
+      // Check if online
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - no cached GPS for:', state, normalizedAC, groupName, stationName);
+        return {
+          success: false,
+          message: 'No internet connection and no cached data available',
+        };
+      }
+
+      // Fetch from API using normalized AC name
       const headers = await this.getHeaders();
-      const response = await axios.get(
-        `${this.baseURL}/api/polling-stations/gps/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}/${encodeURIComponent(stationName)}`,
-        { headers }
-      );
+      let response;
+      try {
+        response = await axios.get(
+          `${this.baseURL}/api/polling-stations/gps/${encodeURIComponent(state)}/${encodeURIComponent(normalizedAC)}/${encodeURIComponent(groupName)}/${encodeURIComponent(stationName)}`,
+          { headers }
+        );
+      } catch (firstError: any) {
+        // If normalized name fails, try original name as fallback
+        if (normalizedAC !== acIdentifier && firstError.response?.status === 404) {
+          console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acIdentifier}"`);
+          response = await axios.get(
+            `${this.baseURL}/api/polling-stations/gps/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}/${encodeURIComponent(stationName)}`,
+            { headers }
+          );
+        } else {
+          throw firstError;
+        }
+      }
+      
+      // Cache the data using normalized name
+      const cacheForSave = await this.getOfflineCache();
+      if (cacheForSave && response.data.success && response.data.data) {
+        try {
+          await cacheForSave.savePollingGPS(state, normalizedAC, groupName, stationName, response.data.data);
+        } catch (cacheError) {
+          // Cache save failed, continue
+        }
+      }
+      
       return response.data;
     } catch (error: any) {
       console.error('Get polling station GPS error:', error);
+      console.error('AC Identifier used:', acIdentifier);
+      
+      // Try cache as fallback
+      const cacheForFallback = await this.getOfflineCache();
+      if (cacheForFallback) {
+        try {
+          const normalizedAC = this.normalizeACName(acIdentifier);
+          let cachedData = await cacheForFallback.getPollingGPS(state, normalizedAC, groupName, stationName);
+          if (!cachedData) {
+            cachedData = await cacheForFallback.getPollingGPS(state, acIdentifier, groupName, stationName);
+          }
+          if (cachedData) {
+            console.log('📦 Using cached GPS as fallback for:', state, normalizedAC, groupName, stationName);
+            return { success: true, data: cachedData };
+          }
+        } catch (cacheError) {
+          // Cache not available
+        }
+      }
+      
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to fetch polling station GPS',
@@ -688,11 +1237,63 @@ class ApiService {
   // Get current user profile (to check locationControlBooster)
   async getCurrentUser() {
     try {
+      // Check offline cache first (lazy import)
+      const cacheForRead = await this.getOfflineCache();
+      let cachedData = null;
+      if (cacheForRead) {
+        try {
+          cachedData = await cacheForRead.getUserData();
+        } catch (cacheError) {
+          // Cache read failed, continue
+        }
+      }
+      if (cachedData) {
+        console.log('📦 Using cached user data');
+        return { success: true, user: cachedData };
+      }
+
+      // Check if online
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - no cached user data');
+        return {
+          success: false,
+          message: 'No internet connection and no cached data available',
+        };
+      }
+
+      // Fetch from API
       const headers = await this.getHeaders();
       const response = await axios.get(`${this.baseURL}/api/auth/me`, { headers });
+      
+      // Cache the data
+      const cacheForSave = await this.getOfflineCache();
+      if (cacheForSave && (response.data.data || response.data.user)) {
+        try {
+          await cacheForSave.saveUserData(response.data.data || response.data.user);
+        } catch (cacheError) {
+          // Cache save failed, continue
+        }
+      }
+      
       return { success: true, user: response.data.data || response.data.user };
     } catch (error: any) {
       console.error('Get current user error:', error);
+      
+      // Try cache as fallback
+      const cacheForFallback = await this.getOfflineCache();
+      if (cacheForFallback) {
+        try {
+          const cachedData = await cacheForFallback.getUserData();
+          if (cachedData) {
+            console.log('📦 Using cached user data as fallback');
+            return { success: true, user: cachedData };
+          }
+        } catch (cacheError) {
+          // Cache not available
+        }
+      }
+      
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to get user profile',
@@ -843,14 +1444,93 @@ class ApiService {
   // Get MP and MLA names for an AC
   async getACData(acName: string) {
     try {
+      // Normalize AC name to match master data spelling
+      const normalizedAC = this.normalizeACName(acName);
+      
+      // Check offline cache first (lazy import) - try normalized name first
+      const cacheForRead = await this.getOfflineCache();
+      let cachedData = null;
+      if (cacheForRead) {
+        try {
+          cachedData = await cacheForRead.getACData(normalizedAC);
+          // If not found, try original name
+          if (!cachedData) {
+            cachedData = await cacheForRead.getACData(acName);
+          }
+        } catch (cacheError) {
+          // Cache read failed, continue
+        }
+      }
+      if (cachedData) {
+        console.log('📦 Using cached AC data for:', normalizedAC);
+        return { success: true, data: cachedData };
+      }
+
+      // Check if online
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - no cached AC data for:', normalizedAC);
+        return {
+          success: false,
+          message: 'No internet connection and no cached data available',
+          error: 'OFFLINE_NO_CACHE'
+        };
+      }
+
+      // Fetch from API using normalized AC name
       const headers = await this.getHeaders();
-      const response = await axios.get(
-        `${this.baseURL}/api/master-data/ac/${encodeURIComponent(acName)}`,
-        { headers }
-      );
+      let response;
+      try {
+        response = await axios.get(
+          `${this.baseURL}/api/master-data/ac/${encodeURIComponent(normalizedAC)}`,
+          { headers }
+        );
+      } catch (firstError: any) {
+        // If normalized name fails, try original name as fallback
+        if (normalizedAC !== acName && firstError.response?.status === 404) {
+          console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acName}"`);
+          response = await axios.get(
+            `${this.baseURL}/api/master-data/ac/${encodeURIComponent(acName)}`,
+            { headers }
+          );
+        } else {
+          throw firstError;
+        }
+      }
+      
+      // Cache the data using normalized name
+      const cacheForSave = await this.getOfflineCache();
+      if (cacheForSave && response.data.data) {
+        try {
+          await cacheForSave.saveACData(normalizedAC, response.data.data);
+        } catch (cacheError) {
+          // Cache save failed, continue
+        }
+      }
+      
       return { success: true, data: response.data.data };
     } catch (error: any) {
       console.error('Get AC data error:', error);
+      console.error('AC Name used:', acName);
+      
+      // Try cache as fallback
+      const cacheForFallback = await this.getOfflineCache();
+      if (cacheForFallback) {
+        try {
+          const normalizedAC = this.normalizeACName(acName);
+          let cachedData = await cacheForFallback.getACData(normalizedAC);
+          if (!cachedData) {
+            cachedData = await cacheForFallback.getACData(acName);
+          }
+          if (cachedData) {
+            console.log('📦 Using cached AC data as fallback for:', normalizedAC);
+            return { success: true, data: cachedData };
+          }
+        } catch (cacheError) {
+          // Cache not available
+        }
+      }
+      
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to get AC data',

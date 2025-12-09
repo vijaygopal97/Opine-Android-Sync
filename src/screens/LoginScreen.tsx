@@ -62,22 +62,29 @@ export default function LoginScreen({ navigation, onLogin }: LoginScreenProps) {
 
     setIsLoading(true);
     try {
+      console.log('🔐 Login attempt started');
       const result = await apiService.login(identifier.trim(), password);
+      console.log('🔐 Login result:', result.success ? 'SUCCESS' : 'FAILED', result.message);
       
       if (result.success && result.user && result.token) {
         // Check if user is an interviewer or quality agent
         if (result.user.userType !== 'interviewer' && result.user.userType !== 'quality_agent') {
           showSnackbar('Access denied. This app is only for interviewers and quality agents.');
+          setIsLoading(false);
           return;
         }
         
+        console.log('✅ Login successful, calling onLogin callback');
         onLogin(result.user, result.token);
       } else {
-        showSnackbar(result.message || 'Login failed. Please try again.');
+        const errorMsg = result.message || 'Login failed. Please try again.';
+        console.error('❌ Login failed:', errorMsg);
+        showSnackbar(errorMsg);
       }
-    } catch (error) {
-      console.error('Login error:', error);
-      showSnackbar('Login failed. Please check your connection and try again.');
+    } catch (error: any) {
+      console.error('❌ Login exception:', error);
+      console.error('❌ Error details:', error.message, error.stack);
+      showSnackbar(error.message || 'Login failed. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }

@@ -22,6 +22,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { apiService } from '../services/api';
 import { Survey } from '../types';
+import { offlineStorage } from '../services/offlineStorage';
 
 export default function AvailableSurveys({ navigation }: any) {
   const [surveys, setSurveys] = useState<Survey[]>([]);
@@ -46,22 +47,71 @@ export default function AvailableSurveys({ navigation }: any) {
     }
   }, [searchQuery, selectedMode, surveys]);
 
-  const loadSurveys = async () => {
+  const loadSurveys = async (forceRefresh: boolean = false) => {
     setIsLoading(true);
     try {
-      // Always load all surveys first
-      const result = await apiService.getAvailableSurveys();
+      // First, try to load from offline storage (if not forcing refresh)
+      const offlineSurveys = await offlineStorage.getSurveys();
       
-      if (result.success) {
-        setSurveys(result.surveys || []);
-        // Apply client-side filtering
-        applyFilters(result.surveys || []);
+      if (offlineSurveys.length > 0 && !forceRefresh) {
+        // Use cached surveys - no need to fetch again
+        console.log('📦 Using cached surveys from offline storage');
+        setSurveys(offlineSurveys);
+        applyFilters(offlineSurveys);
+        setIsLoading(false);
+        return;
+      }
+      
+      // No cached surveys or force refresh - check if online
+      const isOnline = await apiService.isOnline();
+      
+      if (isOnline) {
+        // Online - fetch from server
+        const result = await apiService.getAvailableSurveys();
+        
+        if (result.success) {
+          const surveys = result.surveys || [];
+          setSurveys(surveys);
+          // Save to offline storage AND download all dependent data immediately
+          await offlineStorage.saveSurveys(surveys, true);
+          // Apply client-side filtering
+          applyFilters(surveys);
+        } else {
+          // If API fails, try loading from offline storage
+          if (offlineSurveys.length > 0) {
+            setSurveys(offlineSurveys);
+            applyFilters(offlineSurveys);
+            showSnackbar('Using cached surveys. Some data may be outdated.');
+          } else {
+            showSnackbar(result.message || 'Failed to load surveys');
+          }
+        }
       } else {
-        showSnackbar(result.message || 'Failed to load surveys');
+        // Offline - use cached data if available
+        if (offlineSurveys.length > 0) {
+          console.log('📴 Offline mode - loading surveys from local storage');
+          setSurveys(offlineSurveys);
+          applyFilters(offlineSurveys);
+          showSnackbar('Offline mode: Using locally saved surveys');
+        } else {
+          showSnackbar('No surveys available offline. Please connect to the internet and sync from dashboard.');
+        }
       }
     } catch (error) {
       console.error('Error loading surveys:', error);
-      showSnackbar('Failed to load surveys. Please try again.');
+      // Try loading from offline storage as fallback
+      try {
+        const offlineSurveys = await offlineStorage.getSurveys();
+        if (offlineSurveys.length > 0) {
+          setSurveys(offlineSurveys);
+          applyFilters(offlineSurveys);
+          showSnackbar('Using cached surveys due to error');
+        } else {
+          showSnackbar('Failed to load surveys. Please try again.');
+        }
+      } catch (offlineError) {
+        showSnackbar('Failed to load surveys. Please try again.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -95,7 +145,8 @@ export default function AvailableSurveys({ navigation }: any) {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await loadSurveys();
+    // Force refresh from server
+    await loadSurveys(true);
     setIsRefreshing(false);
   };
 
@@ -105,11 +156,22 @@ export default function AvailableSurveys({ navigation }: any) {
     setSnackbarVisible(true);
   };
 
-  const handleStartInterview = (survey: Survey) => {
+  const handleStartInterview = async (survey: Survey) => {
     // Check if this is a CATI interview (multi_mode with cati assignment or direct cati mode)
     const isCatiMode = survey.mode === 'cati' || (survey.mode === 'multi_mode' && survey.assignedMode === 'cati');
     
     if (isCatiMode) {
+      // Check if offline - CATI interviews require internet connection
+      const isOnline = await apiService.isOnline();
+      if (!isOnline) {
+        Alert.alert(
+          'CATI Not Available in Offline Mode',
+          'CATI (Computer-Assisted Telephonic Interviewing) interviews require an active internet connection. Please connect to the internet and try again.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      
       // CATI interview - navigate directly
       Alert.alert(
         'Start CATI Interview',

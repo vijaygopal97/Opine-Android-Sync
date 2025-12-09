@@ -149,25 +149,57 @@ export default function App() {
 
   const handleLogin = async (userData: any, token: string) => {
     try {
-      console.log('Handling login with user data:', userData);
-      console.log('Handling login with token:', !!token);
+      console.log('✅ handleLogin called with user data:', userData?.firstName, userData?.userType);
+      console.log('✅ Token exists:', !!token);
       
-      // Store the authentication data
-      await AsyncStorage.setItem('authToken', token);
-      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      // Store the authentication data (API service already stored it, but ensure it's here too)
+      try {
+        await AsyncStorage.setItem('authToken', token);
+        await AsyncStorage.setItem('userData', JSON.stringify(userData));
+        console.log('✅ Authentication data stored in App.tsx');
+      } catch (storageError) {
+        console.error('⚠️ Error storing auth data in App.tsx (non-critical):', storageError);
+      }
       
-      console.log('Authentication data stored successfully');
-      
-      // Update state
+      // Update state FIRST - this is critical for login to complete
       setUser(userData);
       setIsAuthenticated(true);
+      console.log('✅ User state updated, authentication complete');
       
-      console.log('User authenticated successfully');
+      // Download surveys and dependent data for offline use (completely async, non-blocking)
+      // Do this in the background so login completes immediately
+      // Use setTimeout with longer delay to ensure login completes first
+      setTimeout(async () => {
+        try {
+          console.log('📥 Starting background download of offline data...');
+          const { offlineStorage } = await import('./src/services/offlineStorage');
+          
+          console.log('📥 Downloading surveys for offline use...');
+          const surveysResult = await apiService.getAvailableSurveys();
+          if (surveysResult.success && surveysResult.surveys) {
+            // Save surveys AND download all dependent data in one call
+            // This ensures dependent data is downloaded immediately when surveys are saved
+            await offlineStorage.saveSurveys(surveysResult.surveys, true);
+            console.log('✅ Surveys and all dependent data downloaded and saved for offline use');
+          } else {
+            console.log('⚠️ Failed to download surveys, will retry later');
+          }
+        } catch (downloadError) {
+          console.error('⚠️ Error in background download (non-critical):', downloadError);
+          // Non-critical error, login already completed
+        }
+      }, 1000); // 1 second delay to ensure login completes
+      
     } catch (error) {
-      console.error('Error storing authentication data:', error);
-      // Even if storage fails, we can still set the user as authenticated for the current session
-      setUser(userData);
-      setIsAuthenticated(true);
+      console.error('❌ Error in handleLogin:', error);
+      // Even if there's an error, try to set user as authenticated
+      try {
+        setUser(userData);
+        setIsAuthenticated(true);
+        console.log('✅ User authenticated despite error');
+      } catch (stateError) {
+        console.error('❌ Critical error: Could not authenticate user:', stateError);
+      }
     }
   };
 
