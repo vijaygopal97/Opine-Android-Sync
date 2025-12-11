@@ -17,6 +17,7 @@ import {
 } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../services/api';
 import { User } from '../types';
 import ResponseDetailsModal from '../components/ResponseDetailsModal';
@@ -211,7 +212,7 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
@@ -339,7 +340,7 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
       >
         {snackbarMessage}
       </Snackbar>
-    </View>
+    </SafeAreaView>
   );
 }
 

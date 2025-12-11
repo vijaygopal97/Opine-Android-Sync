@@ -18,6 +18,7 @@ import {
   Divider,
 } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../services/api';
 import { SurveyResponse } from '../types';
 
@@ -178,7 +179,7 @@ export default function MyInterviews({ navigation }: any) {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
       
       {/* Search and Filter */}
@@ -390,7 +391,7 @@ export default function MyInterviews({ navigation }: any) {
       >
         {snackbarMessage}
       </Snackbar>
-    </View>
+    </SafeAreaView>
   );
 }
 

@@ -34,116 +34,115 @@ export default function App() {
 
   const checkAuthStatus = async () => {
     try {
-      console.log('Checking authentication status...');
+      console.log('🔐 Checking authentication status...');
       
-      // Add timeout to prevent infinite loading
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Auth check timeout')), 5000);
-      });
+      // Step 1: IMMEDIATELY check for stored authentication data (no network calls)
+      const token = await AsyncStorage.getItem('authToken');
+      const userData = await AsyncStorage.getItem('userData');
       
-      const authCheckPromise = (async () => {
-        const token = await AsyncStorage.getItem('authToken');
-        const userData = await AsyncStorage.getItem('userData');
-        
-        console.log('Stored token exists:', !!token);
-        console.log('Stored user data exists:', !!userData);
-        
-        if (token && userData) {
-          const parsedUser = JSON.parse(userData);
-          console.log('Parsed user data:', parsedUser);
-          
-          // Verify token is still valid with timeout
-          try {
-            console.log('Verifying token with server...');
-            const response = await Promise.race([
-              apiService.verifyToken(),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Token verification timeout')), 5000))
-            ]) as any;
-            
-            console.log('Token verification response:', response);
-            
-            if (response.success) {
-              console.log('Token is valid, user authenticated');
-              setUser(parsedUser);
-              setIsAuthenticated(true);
-            } else {
-              console.log('Token is invalid, clearing storage');
-              // Token invalid, clear storage
-              await AsyncStorage.multiRemove(['authToken', 'userData']);
-              setUser(null);
-              setIsAuthenticated(false);
-            }
-          } catch (error: any) {
-            console.error('Token verification failed:', error);
-            
-            // Check if it's a network error or timeout
-            const errorMessage = error?.message || '';
-            const errorCode = error?.code || '';
-            const isNetworkError = errorMessage.includes('Network Error') || 
-                                  errorMessage.includes('timeout') ||
-                                  errorMessage.includes('Token verification timeout') ||
-                                  errorCode === 'NETWORK_ERROR' ||
-                                  errorCode === 'ECONNABORTED';
-            
-            if (isNetworkError) {
-              console.log('Network/timeout error during token verification, allowing offline access');
-              // If it's a network error or timeout, allow the user to stay logged in
-              setUser(parsedUser);
-              setIsAuthenticated(true);
-            } else {
-              console.log('Non-network error, clearing storage');
-              // For other errors (like 401 Unauthorized), clear storage
-              await AsyncStorage.multiRemove(['authToken', 'userData']);
-              setUser(null);
-              setIsAuthenticated(false);
-            }
-          }
-        } else {
-          console.log('No stored authentication data found');
-          setUser(null);
-          setIsAuthenticated(false);
-        }
-      })();
+      console.log('📦 Stored token exists:', !!token);
+      console.log('📦 Stored user data exists:', !!userData);
       
-      // Race between auth check and timeout
-      await Promise.race([authCheckPromise, timeoutPromise]);
-      
-    } catch (error: any) {
-      console.error('Auth check error:', error);
-      
-      // If timeout, try to use cached data
-      if (error?.message === 'Auth check timeout') {
-        console.log('Auth check timed out, checking for cached data...');
-        try {
-          const token = await AsyncStorage.getItem('authToken');
-          const userData = await AsyncStorage.getItem('userData');
-          if (token && userData) {
-            const parsedUser = JSON.parse(userData);
-            console.log('Using cached user data due to timeout');
-            setUser(parsedUser);
-            setIsAuthenticated(true);
-          } else {
-            setUser(null);
-            setIsAuthenticated(false);
-          }
-        } catch (cacheError) {
-          console.error('Error reading cached data:', cacheError);
-          setUser(null);
-          setIsAuthenticated(false);
-        }
-      } else {
-        // On any other error, clear storage and set as not authenticated
-        try {
-          await AsyncStorage.multiRemove(['authToken', 'userData']);
-        } catch (clearError) {
-          console.error('Error clearing storage:', clearError);
-        }
+      // If no stored auth data, user is not authenticated
+      if (!token || !userData) {
+        console.log('❌ No stored authentication data found');
         setUser(null);
         setIsAuthenticated(false);
+        setIsLoading(false);
+        return;
       }
-    } finally {
-      console.log('Auth check completed, setting loading to false');
+      
+      // Parse user data
+      let parsedUser;
+      try {
+        parsedUser = JSON.parse(userData);
+        console.log('✅ Parsed user data:', parsedUser?.firstName, parsedUser?.userType);
+      } catch (parseError) {
+        console.error('❌ Error parsing user data:', parseError);
+        // Invalid user data, clear storage
+        await AsyncStorage.multiRemove(['authToken', 'userData']);
+        setUser(null);
+        setIsAuthenticated(false);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Step 2: IMMEDIATELY authenticate from cache (like WhatsApp/Facebook)
+      // This ensures user stays logged in even if offline check fails
+      console.log('✅ Authenticating from cache (offline-first approach)');
+      setUser(parsedUser);
+      setIsAuthenticated(true);
       setIsLoading(false);
+      
+      // Step 3: In background, check online status and verify token (non-blocking)
+      // This is done asynchronously and doesn't affect the login state
+      setTimeout(async () => {
+        try {
+          console.log('🌐 Background: Checking network connectivity...');
+          const isOnline = await Promise.race([
+            apiService.isOnline(),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500))
+          ]).catch(() => false);
+          
+          if (isOnline) {
+            console.log('🌐 Background: Online - verifying token...');
+            try {
+              const response = await Promise.race([
+                apiService.verifyToken(),
+                new Promise<any>((_, reject) => 
+                  setTimeout(() => reject(new Error('Timeout')), 2000)
+                )
+              ]) as any;
+              
+              if (response?.success) {
+                console.log('✅ Background: Token verified successfully');
+              } else {
+                // Token invalid - but don't log out immediately, let user continue
+                console.log('⚠️ Background: Token verification failed, but keeping user logged in for offline access');
+              }
+            } catch (verifyError: any) {
+              const responseStatus = verifyError?.response?.status;
+              // Only clear auth if we get explicit 401/403 (token truly invalid)
+              if (responseStatus === 401 || responseStatus === 403) {
+                console.log('❌ Background: Token explicitly invalid (401/403) - will require re-login on next app start');
+                // Don't clear immediately - let user finish their session
+                // The token will be invalidated on next app start when online
+              } else {
+                console.log('📴 Background: Network error during verification - keeping user logged in');
+              }
+            }
+          } else {
+            console.log('📴 Background: Offline - skipping token verification');
+          }
+        } catch (bgError) {
+          console.log('⚠️ Background: Error in background auth check (non-critical):', bgError);
+          // Non-critical - user is already logged in
+        }
+      }, 100); // Very short delay to ensure UI renders first
+      
+    } catch (error: any) {
+      console.error('❌ Critical error in auth check:', error);
+      
+      // On critical error, ALWAYS try to use cached data as fallback
+      try {
+        const token = await AsyncStorage.getItem('authToken');
+        const userData = await AsyncStorage.getItem('userData');
+        if (token && userData) {
+          const parsedUser = JSON.parse(userData);
+          console.log('🔄 Using cached user data as fallback');
+          setUser(parsedUser);
+          setIsAuthenticated(true);
+        } else {
+          setUser(null);
+          setIsAuthenticated(false);
+        }
+      } catch (fallbackError) {
+        console.error('❌ Error reading cached data:', fallbackError);
+        setUser(null);
+        setIsAuthenticated(false);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 

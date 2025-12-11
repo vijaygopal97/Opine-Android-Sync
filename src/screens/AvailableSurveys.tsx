@@ -20,6 +20,7 @@ import {
   Divider,
 } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../services/api';
 import { Survey } from '../types';
 import { offlineStorage } from '../services/offlineStorage';
@@ -261,7 +262,7 @@ export default function AvailableSurveys({ navigation }: any) {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
       
       {/* Search and Filter */}
@@ -595,7 +596,7 @@ export default function AvailableSurveys({ navigation }: any) {
           setSelectedSurvey(null);
         }}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 

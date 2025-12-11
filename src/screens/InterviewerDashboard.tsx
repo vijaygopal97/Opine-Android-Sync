@@ -18,6 +18,7 @@ import {
 } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiService } from '../services/api';
 import { User, Survey } from '../types';
 import { offlineStorage } from '../services/offlineStorage';
@@ -44,6 +45,9 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isSyncingSurveys, setIsSyncingSurveys] = useState(false);
+  
+  // Get safe area insets for bottom navigation
+  const insets = useSafeAreaInsets();
   
   // Calculate interview stats
   const interviewStats = useMemo(() => {
@@ -307,7 +311,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
@@ -663,7 +667,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 
       {/* Sync Offline Interviews Button */}
       {pendingInterviewsCount > 0 && (
-        <View style={styles.syncContainer}>
+        <View style={[styles.syncContainer, { paddingBottom: Math.max(16, insets.bottom) }]}>
           <Button
             mode="contained"
             onPress={handleSyncOfflineInterviews}
@@ -681,7 +685,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 
       <FAB
         icon="plus"
-        style={styles.fab}
+        style={[styles.fab, { bottom: Math.max(16, insets.bottom) }]}
         onPress={() => navigation.navigate('AvailableSurveys')}
         label="Start Interview"
         iconColor="#ffffff"
@@ -703,7 +707,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       >
         {snackbarMessage}
       </Snackbar>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -939,7 +943,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     margin: 16,
     right: 0,
-    bottom: 0,
+    // bottom will be set dynamically based on safe area insets
     backgroundColor: '#001D48',
   },
   fabLabel: {
