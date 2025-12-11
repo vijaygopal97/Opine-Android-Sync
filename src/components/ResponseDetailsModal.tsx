@@ -178,7 +178,7 @@ export default function ResponseDetailsModal({
             // Fetch signed URL from API
             console.log('Fetching signed URL for S3 key:', audioUrl);
             const token = await AsyncStorage.getItem('authToken');
-            const API_BASE_URL = 'https://opine.exypnossolutions.com';
+            const API_BASE_URL = 'https://convo.convergentview.com';
             const response = await fetch(`${API_BASE_URL}/api/survey-responses/audio-signed-url?audioUrl=${encodeURIComponent(audioUrl)}`, {
               headers: {
                 'Authorization': `Bearer ${token}`

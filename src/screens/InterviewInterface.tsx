@@ -63,7 +63,7 @@ const getPartyLogo = (optionText: string | null | undefined, questionText?: stri
     }
   }
   
-  const API_BASE_URL = 'https://opine.exypnossolutions.com';
+  const API_BASE_URL = 'https://convo.convergentview.com';
   const text = String(optionText).toLowerCase();
   const mainText = getMainText(optionText).toLowerCase();
   
@@ -1648,11 +1648,25 @@ export default function InterviewInterface({ navigation, route }: any) {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     const distance = R * c; // Distance in kilometers
     
-    if (distance > 5) {
+    // Add a small buffer (0.1km) to account for GPS accuracy issues
+    const buffer = 0.1;
+    if (distance > (5 + buffer)) {
       setGeofencingError(`You are not within the 5KM radius of the Polling station's location. Distance: ${distance.toFixed(2)} KM`);
+      console.log('🔒 Geofencing check failed:', {
+        currentLocation: { lat: locationData.latitude, lng: locationData.longitude },
+        stationLocation: { lat: stationLat, lng: stationLng },
+        distance: distance.toFixed(2) + ' km',
+        threshold: '5.1 km (5km + 0.1km buffer)'
+      });
       return false;
     } else {
       setGeofencingError(null);
+      console.log('✅ Geofencing check passed:', {
+        currentLocation: { lat: locationData.latitude, lng: locationData.longitude },
+        stationLocation: { lat: stationLat, lng: stationLng },
+        distance: distance.toFixed(2) + ' km',
+        threshold: '5.1 km (5km + 0.1km buffer)'
+      });
       return true;
     }
   };
