@@ -302,57 +302,77 @@ class SyncService {
         
         const fileInfo = await FileSystem.getInfoAsync(interview.audioUri);
         
+        // CRITICAL: Audio file MUST exist for CAPI interviews
         if (!fileInfo.exists) {
-          console.error('❌ Audio file does NOT exist at path:', interview.audioUri);
-          console.error('❌ Interview will be synced without audio');
-        } else {
-          console.log('✅ Audio file exists at path:', interview.audioUri);
-          console.log('📊 Audio file size:', fileInfo.size, 'bytes');
-          
-          if (fileInfo.size === 0) {
-            console.warn('⚠️ Audio file exists but is empty (0 bytes)');
+          throw new Error(`Audio file does NOT exist at path: ${interview.audioUri}. CAPI interviews require audio. Cannot sync without audio file.`);
+        }
+        
+        console.log('✅ Audio file exists at path:', interview.audioUri);
+        console.log('📊 Audio file size:', fileInfo.size, 'bytes');
+        
+        // CRITICAL: Audio file MUST not be empty
+        if (fileInfo.size === 0) {
+          throw new Error('Audio file exists but is empty (0 bytes). CAPI interviews require valid audio. Cannot sync with empty audio file.');
+        }
+        
+        console.log('📤 Uploading audio file BEFORE completeInterview...');
+        // TypeScript: Ensure all required values are strings
+        if (!interview.audioUri || !interview.surveyId || !sessionId) {
+          throw new Error('Missing required values for audio upload (audioUri, surveyId, or sessionId)');
+        }
+        
+        const uploadResult = await apiService.uploadAudioFile(
+          interview.audioUri,
+          sessionId,
+          interview.surveyId
+        );
+        
+        if (uploadResult.success && uploadResult.response?.audioUrl) {
+          // Only use the audioUrl if it's NOT a mock URL
+          const uploadedAudioUrl = uploadResult.response.audioUrl;
+          if (uploadedAudioUrl && !uploadedAudioUrl.startsWith('mock://')) {
+            audioUrl = uploadedAudioUrl;
+            audioFileSize = uploadResult.response?.size || fileInfo.size;
+            console.log('✅ Audio uploaded successfully BEFORE completeInterview');
+            console.log('✅ Audio URL:', audioUrl);
+            console.log('✅ Audio file size:', audioFileSize, 'bytes');
           } else {
-            console.log('📤 Uploading audio file BEFORE completeInterview...');
-            // TypeScript: Ensure all required values are strings
-            if (!interview.audioUri || !interview.surveyId || !sessionId) {
-              throw new Error('Missing required values for audio upload (audioUri, surveyId, or sessionId)');
-            }
-            const uploadResult = await apiService.uploadAudioFile(
-              interview.audioUri,
-              sessionId,
-              interview.surveyId
-            );
-            
-            if (uploadResult.success) {
-              // Backend returns: { success: true, data: { audioUrl, size, ... } }
-              audioUrl = uploadResult.response?.audioUrl || null;
-              audioFileSize = uploadResult.response?.size || fileInfo.size;
-              console.log('✅ Audio uploaded successfully BEFORE completeInterview');
-              console.log('✅ Audio URL:', audioUrl);
-              console.log('✅ Audio file size:', audioFileSize, 'bytes');
-              console.log('✅ Full upload response:', JSON.stringify(uploadResult.response));
-            } else {
-              console.error('❌ Audio upload failed:', uploadResult.message);
-              console.error('❌ Interview will be synced without audio');
-            }
+            // Mock URL means upload failed - throw error to prevent sync
+            throw new Error('Audio upload returned invalid mock URL. Upload failed. CAPI interviews require audio. Will retry on next sync.');
           }
+        } else {
+          // Upload failed - throw error to prevent sync without audio
+          throw new Error(`Audio upload failed: ${uploadResult.message || 'Unknown error'}. CAPI interviews require audio. Will retry on next sync.`);
         }
       } catch (audioError: any) {
         console.error('❌ Audio upload error:', audioError);
         console.error('❌ Error details:', audioError.message || audioError);
-        console.error('❌ Interview will be synced without audio');
-        // Continue with sync even if audio upload fails
+        console.error('❌ CAPI interview requires audio - sync will FAIL and retry later');
+        // DO NOT continue - throw error to prevent sync without audio
+        throw new Error(`Audio upload failed: ${audioError.message || audioError}. CAPI interviews require audio. Will retry on next sync.`);
       }
     } else {
-      console.warn('⚠️ No audio URI in interview data - interview will be synced without audio');
-      console.warn('⚠️ Interview ID:', interview.id);
+      // CAPI interviews REQUIRE audio - do not allow sync without audio
+      throw new Error('CAPI interview requires audio recording. Audio file is missing. Cannot sync interview without audio.');
     }
     
-    // Complete the interview with the (new) sessionId and audioUrl (if uploaded)
+    // CRITICAL: For CAPI interviews, audio MUST be uploaded successfully
+    // Do not proceed with interview completion if audio upload failed
+    if (interview.audioUri && !audioUrl) {
+      throw new Error('Audio upload failed. Cannot complete CAPI interview without audio. Will retry on next sync.');
+    }
+    
+    // Complete the interview with the (new) sessionId and audioUrl (MUST be present for CAPI)
     // TypeScript: Ensure sessionId is defined
     if (!sessionId) {
       throw new Error('SessionId is required to complete interview');
     }
+    
+    // Ensure audioUrl is present for CAPI interviews
+    if (!audioUrl && interview.survey?.mode === 'capi') {
+      throw new Error('Audio URL is required for CAPI interviews. Audio upload must succeed before completing interview.');
+    }
+    
     const result = await apiService.completeInterview(sessionId, {
       responses: finalResponses,
       qualityMetrics: interview.metadata.qualityMetrics || {
@@ -380,24 +400,17 @@ class SyncService {
         consentResponse: isConsentNo ? 'no' : null, // Set consentResponse if consent is "No"
         locationControlBooster: locationControlBooster, // Include booster status for geofencing enforcement
         geofencingError: locationControlBooster ? geofencingError : null, // Include error if booster enabled (enforce geofencing)
-        // Include audio recording info - audioUrl is already uploaded and available
-        audioRecording: interview.audioUri ? {
+        // Include audio recording info - audioUrl MUST be present for CAPI interviews
+        // At this point, audioUrl is guaranteed to be non-null because we throw errors if upload fails
+        audioRecording: {
           hasAudio: true,
-          audioUrl: audioUrl, // Use the uploaded audio URL (null if upload failed)
+          audioUrl: audioUrl!, // Non-null assertion - we've validated this above
           recordingDuration: totalTimeSpent, // Use actual calculated duration
           format: 'm4a',
           codec: 'aac',
           bitrate: 128000,
           fileSize: audioFileSize, // Include file size from upload
-          uploadedAt: audioUrl ? new Date().toISOString() : null // Set upload time if successful
-        } : {
-          hasAudio: false,
-          audioUrl: null,
-          recordingDuration: totalTimeSpent, // Include duration even if no audio
-          format: null,
-          codec: null,
-          bitrate: null,
-          uploadedAt: null
+          uploadedAt: new Date().toISOString() // Set upload time (always successful at this point)
         }
       },
     });
@@ -408,14 +421,8 @@ class SyncService {
 
     console.log(`✅ Interview completed successfully with sessionId: ${sessionId}`);
     
-    // Log audio status
-    if (audioUrl) {
-      console.log('✅ Interview synced WITH audio:', audioUrl);
-    } else if (interview.audioUri) {
-      console.warn('⚠️ Interview synced WITHOUT audio (upload failed or file missing)');
-    } else {
-      console.log('ℹ️ Interview synced without audio (no audio recorded)');
-    }
+    // Log audio status - audioUrl is guaranteed to be present at this point
+    console.log('✅ Interview synced WITH audio:', audioUrl);
 
     // Update interview with the real sessionId for future reference
     if (isOfflineSessionId || !interview.sessionId) {
@@ -508,5 +515,7 @@ class SyncService {
 }
 
 export const syncService = new SyncService();
+
+
 
 

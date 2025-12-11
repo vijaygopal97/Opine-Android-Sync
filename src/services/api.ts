@@ -494,14 +494,12 @@ class ApiService {
       console.log('Uploading audio file:', { audioUri, sessionId, surveyId });
       
       // Check if this is a mock URI (for testing)
+      // DO NOT allow mock URIs to be uploaded or saved to database
       if (audioUri.startsWith('mock://')) {
-        console.log('Mock audio URI detected, skipping upload');
+        console.error('❌ Mock audio URI detected - cannot upload mock files');
         return { 
-          success: true, 
-          response: { 
-            audioUrl: `mock://audio_${sessionId}_${Date.now()}.webm`,
-            message: 'Mock audio file - no actual upload performed'
-          } 
+          success: false, 
+          message: 'Mock audio files cannot be uploaded. Please record a real audio file.'
         };
       }
       
@@ -569,15 +567,14 @@ class ApiService {
     } catch (error: any) {
       console.error('Upload audio error:', error);
       
-      // If it's a network error, return a mock success for testing
+      // If it's a network error, return failure - DO NOT use mock URLs
+      // The audio upload failed, so we should not save a mock URL to the database
+      // The interview can still be completed without audio if needed
       if (error.message.includes('Network request failed') || error.name === 'AbortError') {
-        console.log('Network error detected, returning mock success for testing');
-        return { 
-          success: true, 
-          response: { 
-            audioUrl: `mock://audio_${sessionId}_${Date.now()}.webm`,
-            message: 'Network error - using mock audio URL for testing'
-          } 
+        console.error('❌ Network error during audio upload - upload failed');
+        return {
+          success: false,
+          message: 'Network error - audio upload failed. Interview can be completed without audio.',
         };
       }
       
