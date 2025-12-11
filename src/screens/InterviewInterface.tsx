@@ -1587,20 +1587,25 @@ export default function InterviewInterface({ navigation, route }: any) {
           longitude: stationLng
         }));
         
-        // Check geofencing if in CAPI mode and locationControlBooster is enabled (ON)
-        if ((survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && locationControlBooster && locationData) {
-          console.log('🔒 Checking geofencing - Current:', locationData.latitude, locationData.longitude, 'Station:', stationLat, stationLng);
+        // Check geofencing if in CAPI mode and locationControlBooster is DISABLED (OFF)
+        // When locationControlBooster is ON, geofencing is BYPASSED (not enforced)
+        if ((survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && !locationControlBooster && locationData) {
+          console.log('🔒 Checking geofencing (booster is OFF) - Current:', locationData.latitude, locationData.longitude, 'Station:', stationLat, stationLng);
           await checkGeofencing(stationLat, stationLng);
         } else {
-          // Clear geofencing error if booster is disabled OR if not in CAPI mode
+          // Clear geofencing error if booster is enabled (geofencing bypassed) OR if not in CAPI mode
+          if (locationControlBooster) {
+            console.log('✅ Geofencing BYPASSED - locationControlBooster is enabled');
+          }
           setGeofencingError(null);
         }
       } else {
         console.warn('⚠️ Could not get valid GPS coordinates for polling station - geofencing cannot be checked');
-        // If booster is enabled but we can't get GPS, show a warning
-        if ((survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && locationControlBooster) {
+        // If booster is DISABLED and we can't get GPS, show a warning (geofencing is enforced when booster is OFF)
+        if ((survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && !locationControlBooster) {
           setGeofencingError('GPS coordinates for polling station not available. Please sync survey details or connect to internet.');
         } else {
+          // If booster is enabled, geofencing is bypassed, so no error needed
           setGeofencingError(null);
         }
       }
@@ -1973,8 +1978,8 @@ export default function InterviewInterface({ navigation, route }: any) {
     // REMOVED: Registered voter question blocking logic
     // Users can proceed to next question normally - backend condition logic will handle "No" responses appropriately
     
-    // Check geofencing error for polling station questions (only if booster is enabled)
-    if (geofencingError && (currentQuestion as any)?.isPollingStationSelection && locationControlBooster) {
+    // Check geofencing error for polling station questions (only if booster is DISABLED - geofencing enforced when booster is OFF)
+    if (geofencingError && (currentQuestion as any)?.isPollingStationSelection && !locationControlBooster) {
       showSnackbar(geofencingError);
       return;
     }
@@ -3036,7 +3041,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           isCompleted: interviewData.isCompleted,
           abandonReason: interviewData.abandonReason,
           abandonNotes: interviewData.abandonNotes,
-          locationControlBooster: locationControlBooster, // Save booster status for geofencing bypass
+          locationControlBooster: locationControlBooster, // Save booster status (when true, geofencing is bypassed)
           geofencingError: geofencingError || null, // Save geofencing status
         },
         status: 'pending',
@@ -5253,8 +5258,8 @@ export default function InterviewInterface({ navigation, route }: any) {
               </View>
             )}
 
-            {/* Geofencing Error Display - Only show if booster is enabled */}
-            {geofencingError && locationControlBooster && (
+            {/* Geofencing Error Display - Only show if booster is DISABLED (geofencing enforced when booster is OFF) */}
+            {geofencingError && !locationControlBooster && (
               <View style={styles.geofencingErrorContainer}>
                 <Text style={styles.geofencingErrorText}>{geofencingError}</Text>
                 <Text style={styles.geofencingErrorHint}>
@@ -5659,7 +5664,7 @@ export default function InterviewInterface({ navigation, route }: any) {
               ((targetAudienceErrors.has(visibleQuestions[currentQuestionIndex]?.id) || 
                (visibleQuestions[currentQuestionIndex]?.required && 
                 !responses[visibleQuestions[currentQuestionIndex]?.id]) ||
-               (geofencingError && (currentQuestion as any)?.isPollingStationSelection && locationControlBooster)) ||
+               (geofencingError && (currentQuestion as any)?.isPollingStationSelection && !locationControlBooster)) ||
                // Check if polling station is not selected in CAPI mode
                (!isCatiMode && currentQuestion && 
                 (currentQuestion.id === 'polling-station-selection' ||
