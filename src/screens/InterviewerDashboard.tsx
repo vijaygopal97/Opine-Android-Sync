@@ -515,7 +515,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         </View>
 
         {/* Recent Interviews - Only show in online mode */}
-        {!isOffline && (
+        {/* Temporarily commented out - not showing Recent Interviews section */}
+        {/* {!isOffline && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recent Interviews</Text>
@@ -582,7 +583,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             </Card>
           )}
         </View>
-        )}
+        )} */}
         
         {/* Offline Interviews Section */}
         {offlineInterviews.length > 0 && (
