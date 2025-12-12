@@ -72,6 +72,19 @@ export default function ResponseDetailsModal({
 
   useEffect(() => {
     if (visible && interview) {
+      // Debug: Log interviewer data when modal opens
+      console.log('🔍 ResponseDetailsModal - Interview data:', {
+        responseId: interview.responseId,
+        hasInterviewer: !!interview.interviewer,
+        interviewerType: typeof interview.interviewer,
+        interviewerIsObject: interview.interviewer && typeof interview.interviewer === 'object',
+        interviewerKeys: interview.interviewer ? Object.keys(interview.interviewer) : [],
+        interviewerId: interview.interviewer?._id?.toString(),
+        interviewerName: interview.interviewer ? `${interview.interviewer.firstName || ''} ${interview.interviewer.lastName || ''}`.trim() : 'null',
+        interviewerMemberId: interview.interviewer?.memberId || 'null',
+        fullInterviewer: JSON.stringify(interview.interviewer, null, 2)
+      });
+      
       // Load audio if CAPI interview has audio recording
       // Check for signedUrl first (preferred for S3), then fallback to audioUrl
       const signedUrl = interview.metadata?.audioRecording?.signedUrl || 
@@ -1188,6 +1201,38 @@ export default function ResponseDetailsModal({
                   <Text style={styles.infoLabel}>Response ID:</Text>
                   <Text style={styles.infoValue}>{interview.responseId || 'N/A'}</Text>
                 </View>
+                
+                {interview.interviewer ? (
+                  <>
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Interviewer:</Text>
+                      <Text style={styles.infoValue}>
+                        {interview.interviewer.firstName || ''} {interview.interviewer.lastName || ''}
+                      </Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Interviewer ID:</Text>
+                      <Text style={styles.infoValue}>
+                        {(() => {
+                          const memberId = interview.interviewer?.memberId || interview.interviewer?.memberID;
+                          console.log('🔍 ResponseDetailsModal - Interviewer ID check:', {
+                            memberId: memberId,
+                            interviewer: interview.interviewer,
+                            hasMemberId: !!interview.interviewer?.memberId,
+                            hasMemberID: !!interview.interviewer?.memberID,
+                            allKeys: interview.interviewer ? Object.keys(interview.interviewer) : []
+                          });
+                          return memberId || 'N/A';
+                        })()}
+                      </Text>
+                    </View>
+                  </>
+                ) : (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Interviewer:</Text>
+                    <Text style={styles.infoValue}>Not available</Text>
+                  </View>
+                )}
                 
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Mode:</Text>

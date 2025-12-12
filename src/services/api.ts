@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { offlineStorage } from './offlineStorage';
 // Note: offlineDataCache is imported dynamically in each method to avoid circular dependency
 
-const API_BASE_URL = 'https://convo.convergentview.com';
+const API_BASE_URL = 'https://opine.exypnossolutions.com';
 
 class ApiService {
   private baseURL: string;

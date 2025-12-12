@@ -135,6 +135,14 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
       }
 
       // Set the assigned response
+      console.log('🔍 QualityAgentDashboard - Interview data received:', {
+        responseId: result.data.interview?.responseId,
+        hasInterviewer: !!result.data.interview?.interviewer,
+        interviewerId: result.data.interview?.interviewer?._id?.toString(),
+        interviewerName: result.data.interview?.interviewer ? `${result.data.interview.interviewer.firstName} ${result.data.interview.interviewer.lastName}` : 'null',
+        interviewerMemberId: result.data.interview?.interviewer?.memberId || 'null',
+        interviewerData: result.data.interview?.interviewer
+      });
       setCurrentAssignment(result.data.interview);
       setAssignmentExpiresAt(result.data.expiresAt ? new Date(result.data.expiresAt) : null);
       setSelectedInterview(result.data.interview);
