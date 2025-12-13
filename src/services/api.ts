@@ -572,7 +572,7 @@ class ApiService {
       // The interview can still be completed without audio if needed
       if (error.message.includes('Network request failed') || error.name === 'AbortError') {
         console.error('❌ Network error during audio upload - upload failed');
-        return {
+        return { 
           success: false,
           message: 'Network error - audio upload failed. Interview can be completed without audio.',
         };
@@ -919,7 +919,7 @@ class ApiService {
         // If normalized name fails, try original name as fallback
         if (normalizedAC !== acIdentifier && firstError.response?.status === 404) {
           console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acIdentifier}"`);
-          const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}`;
+      const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}`;
           response = await axios.get(url, { headers });
         } else {
           throw firstError;
@@ -1065,7 +1065,7 @@ class ApiService {
         // If normalized name fails, try original name as fallback
         if (normalizedAC !== acIdentifier && firstError.response?.status === 404) {
           console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acIdentifier}"`);
-          const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}`;
+      const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}`;
           response = await axios.get(url, { headers });
         } else {
           throw firstError;
@@ -1296,9 +1296,9 @@ class ApiService {
         if (normalizedAC !== acIdentifier && firstError.response?.status === 404) {
           console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acIdentifier}"`);
           response = await axios.get(
-            `${this.baseURL}/api/polling-stations/gps/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}/${encodeURIComponent(stationName)}`,
-            { headers }
-          );
+        `${this.baseURL}/api/polling-stations/gps/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}/${encodeURIComponent(stationName)}`,
+        { headers }
+      );
         } else {
           throw firstError;
         }
@@ -1600,9 +1600,9 @@ class ApiService {
         if (normalizedAC !== acName && firstError.response?.status === 404) {
           console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acName}"`);
           response = await axios.get(
-            `${this.baseURL}/api/master-data/ac/${encodeURIComponent(acName)}`,
-            { headers }
-          );
+        `${this.baseURL}/api/master-data/ac/${encodeURIComponent(acName)}`,
+        { headers }
+      );
         } else {
           throw firstError;
         }

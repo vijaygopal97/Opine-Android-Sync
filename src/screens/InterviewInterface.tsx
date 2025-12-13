@@ -1223,7 +1223,7 @@ export default function InterviewInterface({ navigation, route }: any) {
             
             // If offline, skip online geocoding (Nominatim) to avoid network errors
             const location = await LocationService.getCurrentLocation(!isOnline);
-            setLocationData(location);
+          setLocationData(location);
           } catch (locationError) {
             console.error('Error getting location:', locationError);
             // Continue without location if it fails
@@ -1533,7 +1533,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         return;
       }
       
-      const state = selectedPollingStation.state || survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
+        const state = selectedPollingStation.state || survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
       let stationLat: number | null = null;
       let stationLng: number | null = null;
       let gpsLocation: string | null = null;
@@ -1558,13 +1558,13 @@ export default function InterviewInterface({ navigation, route }: any) {
       // If not found in station list, try to fetch from API/cache
       if (!stationLat || !stationLng) {
         try {
-          const response = await apiService.getPollingStationGPS(
-            state,
-            selectedPollingStation.acName,
-            selectedPollingStation.groupName,
-            selectedPollingStation.stationName
-          );
-          
+        const response = await apiService.getPollingStationGPS(
+          state,
+          selectedPollingStation.acName,
+          selectedPollingStation.groupName,
+          selectedPollingStation.stationName
+        );
+        
           if (response.success && response.data) {
             console.log('📍 Using GPS from API/cache:', response.data.latitude, response.data.longitude);
             stationLat = response.data.latitude;
@@ -1580,25 +1580,25 @@ export default function InterviewInterface({ navigation, route }: any) {
       // Update polling station state with GPS if we found it
       // Validate that coordinates are valid numbers
       if (stationLat != null && stationLng != null && !isNaN(stationLat) && !isNaN(stationLng)) {
-        setSelectedPollingStation((prev: any) => ({
-          ...prev,
+          setSelectedPollingStation((prev: any) => ({
+            ...prev,
           gpsLocation: gpsLocation,
           latitude: stationLat,
           longitude: stationLng
-        }));
-        
+          }));
+          
         // Check geofencing if in CAPI mode and locationControlBooster is DISABLED (OFF)
         // When locationControlBooster is ON, geofencing is BYPASSED (not enforced)
-        if ((survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && !locationControlBooster && locationData) {
+          if ((survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && !locationControlBooster && locationData) {
           console.log('🔒 Checking geofencing (booster is OFF) - Current:', locationData.latitude, locationData.longitude, 'Station:', stationLat, stationLng);
           await checkGeofencing(stationLat, stationLng);
-        } else {
+          } else {
           // Clear geofencing error if booster is enabled (geofencing bypassed) OR if not in CAPI mode
           if (locationControlBooster) {
             console.log('✅ Geofencing BYPASSED - locationControlBooster is enabled');
           }
-          setGeofencingError(null);
-        }
+            setGeofencingError(null);
+          }
       } else {
         console.warn('⚠️ Could not get valid GPS coordinates for polling station - geofencing cannot be checked');
         // If booster is DISABLED and we can't get GPS, show a warning (geofencing is enforced when booster is OFF)
@@ -1818,7 +1818,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       }));
       setAvailablePollingStations([]);
       // Clear geofencing error when group changes (will be re-checked when station is selected)
-      setGeofencingError(null);
+        setGeofencingError(null);
       // Mark polling station question as answered (group selected)
       setResponses(prev => ({
         ...prev,
@@ -2281,14 +2281,14 @@ export default function InterviewInterface({ navigation, route }: any) {
         }
         
         // Online mode - proceed with API call
-        console.log('📋 Current responses state:', Object.keys(responses).length, 'responses');
-        console.log('📋 Response keys:', Object.keys(responses));
-        
-        // Build final responses array (similar to completeInterview)
-        // Filter out AC selection and Polling Station questions (backend will also filter, but we do it here too for clarity)
-        const finalResponses: any[] = [];
-        
-        allQuestions.forEach((question: any) => {
+          console.log('📋 Current responses state:', Object.keys(responses).length, 'responses');
+          console.log('📋 Response keys:', Object.keys(responses));
+          
+          // Build final responses array (similar to completeInterview)
+          // Filter out AC selection and Polling Station questions (backend will also filter, but we do it here too for clarity)
+          const finalResponses: any[] = [];
+          
+          allQuestions.forEach((question: any) => {
             // Skip AC selection and Polling Station questions (they're excluded from terminated responses)
             const questionId = question.id || '';
             const questionText = (question.text || '').toLowerCase();
@@ -2385,7 +2385,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           };
           
           try {
-            const result = await apiService.abandonInterview(sessionId, finalResponses, metadata);
+          const result = await apiService.abandonInterview(sessionId, finalResponses, metadata);
           
           if (result.success) {
             setShowAbandonConfirm(false);
@@ -2430,8 +2430,8 @@ export default function InterviewInterface({ navigation, route }: any) {
                 console.error('Error saving offline:', offlineError);
                 showSnackbar('Failed to abandon interview and save offline. Please try again when you have internet.');
               }
-            } else {
-              showSnackbar(result.message || 'Failed to abandon interview');
+          } else {
+            showSnackbar(result.message || 'Failed to abandon interview');
             }
           }
         } catch (error: any) {
@@ -3941,7 +3941,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           } catch (offlineError: any) {
             console.error('Error saving offline:', offlineError);
             showSnackbar('Failed to complete interview and save offline. Please try again when you have internet.');
-          }
+      }
         } else {
           // CATI interviews require internet or other error - show error
           const errorMsg = result.message || 'Failed to complete interview';
