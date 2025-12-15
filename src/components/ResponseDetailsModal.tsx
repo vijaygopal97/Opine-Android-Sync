@@ -71,35 +71,45 @@ export default function ResponseDetailsModal({
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [responsesSectionExpanded, setResponsesSectionExpanded] = useState(false);
+  
+  // Use ref to store audio sound to avoid dependency cycles
+  const audioSoundRef = useRef<Audio.Sound | null>(null);
+  
+  // Update ref whenever audioSound state changes
+  useEffect(() => {
+    audioSoundRef.current = audioSound;
+  }, [audioSound]);
 
-  // Function to stop and cleanup audio completely
+  // Function to stop and cleanup audio completely (using ref to avoid dependency cycles)
   const cleanupAudio = useCallback(async () => {
-    if (audioSound) {
+    const currentAudio = audioSoundRef.current;
+    if (currentAudio) {
       try {
-        const status = await audioSound.getStatusAsync();
+        const status = await currentAudio.getStatusAsync();
         if (status.isLoaded) {
           // Stop playback if playing
           if (status.isPlaying) {
-            await audioSound.stopAsync();
+            await currentAudio.stopAsync();
           }
           // Unload the sound
-          await audioSound.unloadAsync();
+          await currentAudio.unloadAsync();
         }
       } catch (error) {
         console.error('Error cleaning up audio:', error);
         // Force unload even if there's an error
         try {
-          await audioSound.unloadAsync();
+          await currentAudio.unloadAsync();
         } catch (unloadError) {
           console.error('Error force unloading audio:', unloadError);
         }
       }
+      audioSoundRef.current = null;
       setAudioSound(null);
       setIsPlaying(false);
       setAudioPosition(0);
       setPlaybackRate(1.0);
     }
-  }, [audioSound]);
+  }, []); // Empty dependency array - uses ref instead
 
   useEffect(() => {
     if (visible && interview) {
@@ -149,7 +159,7 @@ export default function ResponseDetailsModal({
       // Cleanup audio on unmount
       cleanupAudio();
     };
-  }, [visible, interview?.responseId, cleanupAudio]);
+  }, [visible, interview?.responseId]); // Removed cleanupAudio from dependencies
 
   // Listen to app state changes to stop audio when app goes to background or closes
   useEffect(() => {
@@ -207,8 +217,14 @@ export default function ResponseDetailsModal({
 
   const loadAudio = async (audioUrl: string) => {
     try {
-      if (audioSound) {
-        await audioSound.unloadAsync();
+      // Clean up existing audio using ref
+      if (audioSoundRef.current) {
+        try {
+          await audioSoundRef.current.unloadAsync();
+        } catch (error) {
+          console.error('Error unloading existing audio:', error);
+        }
+        audioSoundRef.current = null;
         setAudioSound(null);
       }
 
@@ -287,6 +303,8 @@ export default function ResponseDetailsModal({
         }
       );
 
+      // Update both state and ref
+      audioSoundRef.current = sound;
       setAudioSound(sound);
       
       const status = await sound.getStatusAsync();
@@ -730,9 +748,10 @@ export default function ResponseDetailsModal({
 
   // Handle close with confirmation dialog
   const handleClose = () => {
-    // Check if audio is playing
-    if (audioSound) {
-      audioSound.getStatusAsync().then((status) => {
+    // Check if audio is playing using ref
+    const currentAudio = audioSoundRef.current;
+    if (currentAudio) {
+      currentAudio.getStatusAsync().then((status) => {
         if (status.isLoaded && status.isPlaying) {
           // Audio is playing - show confirmation
           Alert.alert(
