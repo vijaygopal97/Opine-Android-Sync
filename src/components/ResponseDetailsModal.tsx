@@ -1254,27 +1254,29 @@ export default function ResponseDetailsModal({
                         {/* Speed Control */}
                         <View style={styles.speedControlContainer}>
                           <Text style={styles.speedLabel}>Speed:</Text>
-                          <Button
-                            mode="outlined"
+                          <TouchableOpacity
                             onPress={decreaseSpeed}
-                            icon="remove"
-                            style={styles.speedButton}
                             disabled={playbackRate <= 0.5}
-                            compact
+                            style={[styles.speedButtonTouchable, playbackRate <= 0.5 && styles.speedButtonDisabled]}
                           >
-                            -
-                          </Button>
+                            <Ionicons 
+                              name="remove-circle-outline" 
+                              size={24} 
+                              color={playbackRate <= 0.5 ? '#9ca3af' : '#2563eb'} 
+                            />
+                          </TouchableOpacity>
                           <Text style={styles.speedValue}>{playbackRate.toFixed(2)}x</Text>
-                          <Button
-                            mode="outlined"
+                          <TouchableOpacity
                             onPress={increaseSpeed}
-                            icon="add"
-                            style={styles.speedButton}
                             disabled={playbackRate >= 2.0}
-                            compact
+                            style={[styles.speedButtonTouchable, playbackRate >= 2.0 && styles.speedButtonDisabled]}
                           >
-                            +
-                          </Button>
+                            <Ionicons 
+                              name="add-circle-outline" 
+                              size={24} 
+                              color={playbackRate >= 2.0 ? '#9ca3af' : '#2563eb'} 
+                            />
+                          </TouchableOpacity>
                         </View>
                       </>
                     ) : (
@@ -1926,6 +1928,13 @@ const styles = StyleSheet.create({
   speedButton: {
     minWidth: 40,
     height: 36,
+  },
+  speedButtonTouchable: {
+    padding: 4,
+    borderRadius: 4,
+  },
+  speedButtonDisabled: {
+    opacity: 0.5,
   },
   responseItem: {
     marginBottom: 16,
