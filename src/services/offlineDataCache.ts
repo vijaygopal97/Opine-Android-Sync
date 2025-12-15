@@ -751,12 +751,12 @@ class OfflineDataCacheService {
       }
     }
 
-    // Download user data
+    // Download user data - ALWAYS force refresh from server to get latest locationControlBooster
     try {
-      const userResult = await apiService.getCurrentUser();
+      const userResult = await apiService.getCurrentUser(true); // forceRefresh = true to get latest booster status
       if (userResult.success && userResult.user) {
         await this.saveUserData(userResult.user);
-        console.log('✅ Cached user data');
+        console.log('✅ Cached fresh user data (locationControlBooster refreshed)');
       }
     } catch (error) {
       console.error('❌ Error downloading user data:', error);

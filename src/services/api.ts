@@ -1345,9 +1345,33 @@ class ApiService {
   }
 
   // Get current user profile (to check locationControlBooster)
-  async getCurrentUser() {
+  // @param forceRefresh - If true, always fetch from server when online, bypassing cache
+  async getCurrentUser(forceRefresh: boolean = false) {
     try {
-      // Check offline cache first (lazy import)
+      // Check if online first
+      const isOnline = await this.isOnline();
+      
+      // If online and forceRefresh is true, always fetch from server (for locationControlBooster updates)
+      if (isOnline && forceRefresh) {
+        console.log('🔄 Force refreshing user data from server...');
+        const headers = await this.getHeaders();
+        const response = await axios.get(`${this.baseURL}/api/auth/me`, { headers });
+        
+        // Cache the fresh data
+        const cacheForSave = await this.getOfflineCache();
+        if (cacheForSave && (response.data.data || response.data.user)) {
+          try {
+            await cacheForSave.saveUserData(response.data.data || response.data.user);
+            console.log('✅ Cached fresh user data');
+          } catch (cacheError) {
+            console.error('Error caching user data:', cacheError);
+          }
+        }
+        
+        return { success: true, user: response.data.data || response.data.user };
+      }
+      
+      // Check offline cache (only if not forcing refresh)
       const cacheForRead = await this.getOfflineCache();
       let cachedData = null;
       if (cacheForRead) {
@@ -1357,36 +1381,38 @@ class ApiService {
           // Cache read failed, continue
         }
       }
+      
+      // If online, always fetch fresh data to ensure locationControlBooster is up-to-date
+      if (isOnline) {
+        console.log('🌐 Online - fetching fresh user data from server...');
+        const headers = await this.getHeaders();
+        const response = await axios.get(`${this.baseURL}/api/auth/me`, { headers });
+        
+        // Cache the fresh data
+        const cacheForSave = await this.getOfflineCache();
+        if (cacheForSave && (response.data.data || response.data.user)) {
+          try {
+            await cacheForSave.saveUserData(response.data.data || response.data.user);
+            console.log('✅ Cached fresh user data');
+          } catch (cacheError) {
+            console.error('Error caching user data:', cacheError);
+          }
+        }
+        
+        return { success: true, user: response.data.data || response.data.user };
+      }
+      
+      // Offline - use cached data if available
       if (cachedData) {
-        console.log('📦 Using cached user data');
+        console.log('📦 Offline - Using cached user data');
         return { success: true, user: cachedData };
       }
-
-      // Check if online
-      const isOnline = await this.isOnline();
-      if (!isOnline) {
-        console.log('📴 Offline - no cached user data');
-        return {
-          success: false,
-          message: 'No internet connection and no cached data available',
-        };
-      }
-
-      // Fetch from API
-      const headers = await this.getHeaders();
-      const response = await axios.get(`${this.baseURL}/api/auth/me`, { headers });
       
-      // Cache the data
-      const cacheForSave = await this.getOfflineCache();
-      if (cacheForSave && (response.data.data || response.data.user)) {
-        try {
-          await cacheForSave.saveUserData(response.data.data || response.data.user);
-        } catch (cacheError) {
-          // Cache save failed, continue
-        }
-      }
-      
-      return { success: true, user: response.data.data || response.data.user };
+      console.log('📴 Offline - no cached user data');
+      return {
+        success: false,
+        message: 'No internet connection and no cached data available',
+      };
     } catch (error: any) {
       console.error('Get current user error:', error);
       

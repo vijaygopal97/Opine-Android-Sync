@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   StyleSheet,
@@ -1641,35 +1642,50 @@ export default function InterviewInterface({ navigation, route }: any) {
     updateStationGPS();
   }, [selectedPollingStation.stationName, selectedPollingStation.groupName, selectedPollingStation.acName, locationData, locationControlBooster, survey.mode, survey.assignedMode, availablePollingStations]);
 
-  // Check locationControlBooster on mount
-  useEffect(() => {
-    const checkLocationControl = async () => {
-      try {
-        const userResult = await apiService.getCurrentUser();
-        if (userResult.success && userResult.user) {
-          // Ensure proper boolean conversion (handle string "true"/"false" or boolean)
-          const boosterValue = userResult.user.preferences?.locationControlBooster;
-          const boosterEnabled = boosterValue === true || boosterValue === 'true' || boosterValue === 1;
-          console.log('🔍 Location Control Booster check:', {
-            rawValue: boosterValue,
-            type: typeof boosterValue,
-            converted: boosterEnabled
-          });
-          setLocationControlBooster(boosterEnabled);
-          // Note: Geofencing will be checked when polling station is selected if booster is DISABLED (false)
-        } else {
-          console.log('⚠️ Could not fetch user data, defaulting locationControlBooster to false');
-          setLocationControlBooster(false);
-        }
-      } catch (error) {
-        console.error('Error checking location control booster:', error);
-        // Default to false (geo-fencing enabled) if error
+  // Function to refresh locationControlBooster from server
+  const refreshLocationControlBooster = useCallback(async () => {
+    try {
+      // Force refresh from server when online to get latest locationControlBooster value
+      const userResult = await apiService.getCurrentUser(true); // forceRefresh = true
+      if (userResult.success && userResult.user) {
+        // Ensure proper boolean conversion (handle string "true"/"false" or boolean)
+        const boosterValue = userResult.user.preferences?.locationControlBooster;
+        const boosterEnabled = boosterValue === true || boosterValue === 'true' || boosterValue === 1;
+        console.log('🔍 Location Control Booster check (fresh from server):', {
+          rawValue: boosterValue,
+          type: typeof boosterValue,
+          converted: boosterEnabled,
+          memberId: userResult.user.memberId || userResult.user._id
+        });
+        setLocationControlBooster(boosterEnabled);
+        // Note: Geofencing will be checked when polling station is selected if booster is DISABLED (false)
+        return boosterEnabled;
+      } else {
+        console.log('⚠️ Could not fetch user data, defaulting locationControlBooster to false');
         setLocationControlBooster(false);
+        return false;
       }
-    };
-    
-    checkLocationControl();
+    } catch (error) {
+      console.error('Error checking location control booster:', error);
+      // Default to false (geo-fencing enabled) if error
+      setLocationControlBooster(false);
+      return false;
+    }
   }, []);
+
+  // Check locationControlBooster on mount and when survey changes
+  // Always fetch fresh data from server when online to ensure locationControlBooster is up-to-date
+  useEffect(() => {
+    refreshLocationControlBooster();
+  }, [survey?._id, survey?.id, refreshLocationControlBooster]); // Re-check when survey changes (e.g., when syncing survey details)
+
+  // Refresh locationControlBooster when screen comes into focus (e.g., after syncing survey details)
+  useFocusEffect(
+    useCallback(() => {
+      // Refresh user data when screen comes into focus to get latest locationControlBooster
+      refreshLocationControlBooster();
+    }, [refreshLocationControlBooster])
+  );
   
   // Note: Geofencing will be checked when polling station is selected if booster is enabled
   // No need to clear error here - let the geofencing check handle it
