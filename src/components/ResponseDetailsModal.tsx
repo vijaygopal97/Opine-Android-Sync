@@ -61,6 +61,7 @@ export default function ResponseDetailsModal({
   const [audioPosition, setAudioPosition] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1.0); // Playback speed (1.0 = normal, 0.5 = half, 2.0 = double)
   const sliderRef = useRef<View>(null);
   const [sliderWidth, setSliderWidth] = useState(0);
   const [catiCallDetails, setCatiCallDetails] = useState<any>(null);
@@ -115,6 +116,7 @@ export default function ResponseDetailsModal({
         stopAudio();
         audioSound.unloadAsync().catch(console.error);
         setAudioSound(null);
+        setPlaybackRate(1.0); // Reset playback rate
       }
     }
 
@@ -240,7 +242,11 @@ export default function ResponseDetailsModal({
 
       const { sound } = await Audio.Sound.createAsync(
         { uri: fullAudioUrl },
-        { shouldPlay: false }
+        { 
+          shouldPlay: false,
+          rate: playbackRate, // Set initial playback rate
+          shouldCorrectPitch: true // Maintain pitch when changing speed
+        }
       );
 
       setAudioSound(sound);
@@ -248,12 +254,14 @@ export default function ResponseDetailsModal({
       const status = await sound.getStatusAsync();
       if (status.isLoaded) {
         setAudioDuration(status.durationMillis || 0);
+        // Set initial playback rate
+        await sound.setRateAsync(playbackRate, true);
       }
 
       // Listen to playback status
       sound.setOnPlaybackStatusUpdate((status) => {
         if (status.isLoaded && !isSeeking) {
-          setIsPlaying(status.isPlaying);
+          setIsPlaying(status.isPlaying || false);
           setAudioPosition(status.positionMillis || 0);
           if (status.didJustFinish) {
             setIsPlaying(false);
@@ -286,6 +294,7 @@ export default function ResponseDetailsModal({
           await loadAudio(audioSource);
           // After loading, play it
           if (audioSound) {
+            await audioSound.setRateAsync(playbackRate, true);
             await audioSound.playAsync();
           }
           return;
@@ -294,10 +303,19 @@ export default function ResponseDetailsModal({
         return;
       }
 
-      if (isPlaying) {
-        await audioSound.pauseAsync();
-      } else {
-        await audioSound.playAsync();
+      // Get current status to check if actually playing
+      const status = await audioSound.getStatusAsync();
+      if (status.isLoaded) {
+        if (status.isPlaying) {
+          // Actually playing - pause it
+          await audioSound.pauseAsync();
+          setIsPlaying(false);
+        } else {
+          // Not playing - play it
+          await audioSound.setRateAsync(playbackRate, true);
+          await audioSound.playAsync();
+          setIsPlaying(true);
+        }
       }
     } catch (error) {
       console.error('Error playing audio:', error);
@@ -314,6 +332,34 @@ export default function ResponseDetailsModal({
         setAudioPosition(0);
       } catch (error) {
         console.error('Error stopping audio:', error);
+      }
+    }
+  };
+
+  // Increase playback speed
+  const increaseSpeed = async () => {
+    const newRate = Math.min(playbackRate + 0.25, 2.0); // Max 2x speed
+    setPlaybackRate(newRate);
+    if (audioSound) {
+      try {
+        await audioSound.setRateAsync(newRate, true);
+        console.log('✅ Playback speed increased to:', newRate);
+      } catch (error) {
+        console.error('Error setting playback rate:', error);
+      }
+    }
+  };
+
+  // Decrease playback speed
+  const decreaseSpeed = async () => {
+    const newRate = Math.max(playbackRate - 0.25, 0.5); // Min 0.5x speed
+    setPlaybackRate(newRate);
+    if (audioSound) {
+      try {
+        await audioSound.setRateAsync(newRate, true);
+        console.log('✅ Playback speed decreased to:', newRate);
+      } catch (error) {
+        console.error('Error setting playback rate:', error);
       }
     }
   };
@@ -1142,52 +1188,79 @@ export default function ResponseDetailsModal({
                 {audioSound ? (
                   <View style={styles.audioControls}>
                     {audioDuration > 0 ? (
-                      <View style={styles.audioTimelineContainer}>
-                        <Button
-                          mode="contained"
-                          onPress={playAudio}
-                          icon={isPlaying ? "pause" : "play"}
-                          style={styles.audioButtonInline}
-                          disabled={!audioSound}
-                          compact
-                        >
-                          {isPlaying ? 'Pause' : 'Play'}
-                        </Button>
-                        <Text style={styles.audioTime}>
-                          {formatTime(audioPosition)}
-                        </Text>
-                        <TouchableOpacity
-                          activeOpacity={1}
-                          style={styles.sliderContainer}
-                          onLayout={(event) => {
-                            const { width } = event.nativeEvent.layout;
-                            setSliderWidth(width);
-                          }}
-                          onPress={handleSliderPress}
-                          {...panResponder.panHandlers}
-                        >
-                          <View 
-                            ref={sliderRef}
-                            style={styles.sliderTrack}
+                      <>
+                        <View style={styles.audioTimelineContainer}>
+                          <Button
+                            mode="contained"
+                            onPress={playAudio}
+                            icon={isPlaying ? "pause" : "play"}
+                            style={styles.audioButtonInline}
+                            disabled={!audioSound}
+                            compact
+                          >
+                            {isPlaying ? 'Pause' : 'Play'}
+                          </Button>
+                          <Text style={styles.audioTime}>
+                            {formatTime(audioPosition)}
+                          </Text>
+                          <TouchableOpacity
+                            activeOpacity={1}
+                            style={styles.sliderContainer}
+                            onLayout={(event) => {
+                              const { width } = event.nativeEvent.layout;
+                              setSliderWidth(width);
+                            }}
+                            onPress={handleSliderPress}
+                            {...panResponder.panHandlers}
                           >
                             <View 
-                              style={[
-                                styles.sliderProgress,
-                                { width: `${audioDuration > 0 ? (audioPosition / audioDuration) * 100 : 0}%` }
-                              ]}
-                            />
-                            <View
-                              style={[
-                                styles.sliderThumb,
-                                { left: `${audioDuration > 0 ? (audioPosition / audioDuration) * 100 : 0}%` }
-                              ]}
-                            />
-                          </View>
-                        </TouchableOpacity>
-                        <Text style={styles.audioTime}>
-                          {formatTime(audioDuration)}
-                        </Text>
-                      </View>
+                              ref={sliderRef}
+                              style={styles.sliderTrack}
+                            >
+                              <View 
+                                style={[
+                                  styles.sliderProgress,
+                                  { width: `${audioDuration > 0 ? (audioPosition / audioDuration) * 100 : 0}%` }
+                                ]}
+                              />
+                              <View
+                                style={[
+                                  styles.sliderThumb,
+                                  { left: `${audioDuration > 0 ? (audioPosition / audioDuration) * 100 : 0}%` }
+                                ]}
+                              />
+                            </View>
+                          </TouchableOpacity>
+                          <Text style={styles.audioTime}>
+                            {formatTime(audioDuration)}
+                          </Text>
+                        </View>
+                        {/* Speed Control */}
+                        <View style={styles.speedControlContainer}>
+                          <Text style={styles.speedLabel}>Speed:</Text>
+                          <Button
+                            mode="outlined"
+                            onPress={decreaseSpeed}
+                            icon="remove"
+                            style={styles.speedButton}
+                            disabled={playbackRate <= 0.5}
+                            compact
+                          >
+                            -
+                          </Button>
+                          <Text style={styles.speedValue}>{playbackRate.toFixed(2)}x</Text>
+                          <Button
+                            mode="outlined"
+                            onPress={increaseSpeed}
+                            icon="add"
+                            style={styles.speedButton}
+                            disabled={playbackRate >= 2.0}
+                            compact
+                          >
+                            +
+                          </Button>
+                        </View>
+                      </>
                     ) : (
                       <Button
                         mode="contained"
@@ -1809,6 +1882,34 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     minWidth: 50,
     textAlign: 'center',
+  },
+  speedControlContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 8,
+  },
+  speedLabel: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
+    marginRight: 4,
+  },
+  speedValue: {
+    fontSize: 14,
+    color: '#1f2937',
+    fontWeight: '600',
+    minWidth: 50,
+    textAlign: 'center',
+  },
+  speedButton: {
+    minWidth: 40,
+    height: 36,
   },
   responseItem: {
     marginBottom: 16,
