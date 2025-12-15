@@ -1603,17 +1603,29 @@ export default function InterviewInterface({ navigation, route }: any) {
           }));
           
         // Check geofencing if in CAPI mode and locationControlBooster is DISABLED (OFF)
-        // When locationControlBooster is ON, geofencing is BYPASSED (not enforced)
-          if ((survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && !locationControlBooster && locationData) {
+        // When locationControlBooster is ON (true), geofencing is BYPASSED (not enforced)
+        const isCapiMode = survey.mode === 'capi' || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi');
+        const shouldCheckGeofencing = isCapiMode && !locationControlBooster && locationData;
+        
+        console.log('🔍 Geo-fencing check decision:', {
+          isCapiMode,
+          locationControlBooster,
+          hasLocationData: !!locationData,
+          shouldCheckGeofencing
+        });
+        
+        if (shouldCheckGeofencing) {
           console.log('🔒 Checking geofencing (booster is OFF) - Current:', locationData.latitude, locationData.longitude, 'Station:', stationLat, stationLng);
           await checkGeofencing(stationLat, stationLng);
-          } else {
+        } else {
           // Clear geofencing error if booster is enabled (geofencing bypassed) OR if not in CAPI mode
           if (locationControlBooster) {
-            console.log('✅ Geofencing BYPASSED - locationControlBooster is enabled');
+            console.log('✅ Geofencing BYPASSED - locationControlBooster is enabled (true)');
+          } else if (!isCapiMode) {
+            console.log('ℹ️ Geo-fencing not applicable - not in CAPI mode');
           }
-            setGeofencingError(null);
-          }
+          setGeofencingError(null);
+        }
       } else {
         console.warn('⚠️ Could not get valid GPS coordinates for polling station - geofencing cannot be checked');
         // If booster is DISABLED and we can't get GPS, show a warning (geofencing is enforced when booster is OFF)
@@ -1635,12 +1647,24 @@ export default function InterviewInterface({ navigation, route }: any) {
       try {
         const userResult = await apiService.getCurrentUser();
         if (userResult.success && userResult.user) {
-          const boosterEnabled = userResult.user.preferences?.locationControlBooster || false;
+          // Ensure proper boolean conversion (handle string "true"/"false" or boolean)
+          const boosterValue = userResult.user.preferences?.locationControlBooster;
+          const boosterEnabled = boosterValue === true || boosterValue === 'true' || boosterValue === 1;
+          console.log('🔍 Location Control Booster check:', {
+            rawValue: boosterValue,
+            type: typeof boosterValue,
+            converted: boosterEnabled
+          });
           setLocationControlBooster(boosterEnabled);
-          // Note: Geofencing will be checked when polling station is selected if booster is enabled
+          // Note: Geofencing will be checked when polling station is selected if booster is DISABLED (false)
+        } else {
+          console.log('⚠️ Could not fetch user data, defaulting locationControlBooster to false');
+          setLocationControlBooster(false);
         }
       } catch (error) {
         console.error('Error checking location control booster:', error);
+        // Default to false (geo-fencing enabled) if error
+        setLocationControlBooster(false);
       }
     };
     
