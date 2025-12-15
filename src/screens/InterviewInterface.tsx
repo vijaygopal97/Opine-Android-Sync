@@ -328,41 +328,22 @@ export default function InterviewInterface({ navigation, route }: any) {
       questions.push(callStatusQuestion);
     }
     
-    // Check if this is the target survey for Interviewer ID question
+    // Check if this is the target survey for Supervisor ID question
     const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
     
-    // Add "Enter Interviewer ID" question before Consent Form (only for target survey)
-    // SKIP for CATI interviews - these questions are not needed in CATI mode
+    // Add "Enter Supervisor ID" question before Consent Form (only for target survey, CAPI only)
+    // SKIP Interviewer ID question for both CATI and CAPI
+    // SKIP Supervisor ID question for CATI (only show for CAPI)
     if (isTargetSurvey && !isCatiMode) {
-      const interviewerIdQuestion = {
-        id: 'interviewer-id',
-        type: 'numeric',
-        text: 'Enter Interviewer ID {সাক্ষাৎকারকারীর আইডি লিখুন}',
-        description: '',
-        required: false, // Optional question
-        order: -3, // Make it appear before Consent Form (after Call Status for CATI)
-        sectionIndex: -3, // Special section for interviewer ID
-        questionIndex: -3,
-        sectionId: 'interviewer-id',
-        sectionTitle: 'Interviewer ID',
-        isInterviewerId: true, // Flag to identify this special question
-        validation: {
-          maxValue: 99999, // Max 5 digits
-          minValue: 0
-        }
-      };
-      questions.push(interviewerIdQuestion);
-      
-      // Add "Enter Supervisor ID" question after Interviewer ID
       const supervisorIdQuestion = {
         id: 'supervisor-id',
         type: 'numeric',
         text: 'Enter Supervisor ID {সুপারভাইজার আইডি লিখুন}',
         description: '',
         required: false, // Optional question
-        order: -2.5, // Make it appear after Interviewer ID but before Consent Form
-        sectionIndex: -2.5, // Special section for supervisor ID
-        questionIndex: -2.5,
+        order: -3, // Make it appear before Consent Form
+        sectionIndex: -3, // Special section for supervisor ID
+        questionIndex: -3,
         sectionId: 'supervisor-id',
         sectionTitle: 'Supervisor ID',
         isSupervisorId: true, // Flag to identify this special question
