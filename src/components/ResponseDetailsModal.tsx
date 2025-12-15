@@ -338,7 +338,7 @@ export default function ResponseDetailsModal({
 
   // Increase playback speed
   const increaseSpeed = async () => {
-    const newRate = Math.min(playbackRate + 0.25, 2.0); // Max 2x speed
+    const newRate = Math.min(playbackRate + 0.25, 4.0); // Max 4x speed
     setPlaybackRate(newRate);
     if (audioSound) {
       try {
@@ -1268,13 +1268,13 @@ export default function ResponseDetailsModal({
                           <Text style={styles.speedValue}>{playbackRate.toFixed(2)}x</Text>
                           <TouchableOpacity
                             onPress={increaseSpeed}
-                            disabled={playbackRate >= 2.0}
-                            style={[styles.speedButtonTouchable, playbackRate >= 2.0 && styles.speedButtonDisabled]}
+                            disabled={playbackRate >= 4.0}
+                            style={[styles.speedButtonTouchable, playbackRate >= 4.0 && styles.speedButtonDisabled]}
                           >
                             <Ionicons 
                               name="add-circle-outline" 
                               size={24} 
-                              color={playbackRate >= 2.0 ? '#9ca3af' : '#2563eb'} 
+                              color={playbackRate >= 4.0 ? '#9ca3af' : '#2563eb'} 
                             />
                           </TouchableOpacity>
                         </View>
