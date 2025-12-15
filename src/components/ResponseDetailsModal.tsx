@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -10,6 +10,7 @@ import {
   PanResponder,
   StatusBar,
   Platform,
+  AppState,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
@@ -71,6 +72,35 @@ export default function ResponseDetailsModal({
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [responsesSectionExpanded, setResponsesSectionExpanded] = useState(false);
 
+  // Function to stop and cleanup audio completely
+  const cleanupAudio = useCallback(async () => {
+    if (audioSound) {
+      try {
+        const status = await audioSound.getStatusAsync();
+        if (status.isLoaded) {
+          // Stop playback if playing
+          if (status.isPlaying) {
+            await audioSound.stopAsync();
+          }
+          // Unload the sound
+          await audioSound.unloadAsync();
+        }
+      } catch (error) {
+        console.error('Error cleaning up audio:', error);
+        // Force unload even if there's an error
+        try {
+          await audioSound.unloadAsync();
+        } catch (unloadError) {
+          console.error('Error force unloading audio:', unloadError);
+        }
+      }
+      setAudioSound(null);
+      setIsPlaying(false);
+      setAudioPosition(0);
+      setPlaybackRate(1.0);
+    }
+  }, [audioSound]);
+
   useEffect(() => {
     if (visible && interview) {
       // Debug: Log interviewer data when modal opens
@@ -112,21 +142,29 @@ export default function ResponseDetailsModal({
       }
     } else {
       // Stop and cleanup audio when modal closes
-      if (audioSound) {
-        stopAudio();
-        audioSound.unloadAsync().catch(console.error);
-        setAudioSound(null);
-        setPlaybackRate(1.0); // Reset playback rate
-      }
+      cleanupAudio();
     }
 
     return () => {
       // Cleanup audio on unmount
-      if (audioSound) {
-        audioSound.unloadAsync().catch(console.error);
-      }
+      cleanupAudio();
     };
-  }, [visible, interview?.responseId]);
+  }, [visible, interview?.responseId, cleanupAudio]);
+
+  // Listen to app state changes to stop audio when app goes to background or closes
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'background' || nextAppState === 'inactive') {
+        // App is going to background or closing - stop audio immediately
+        console.log('🛑 App going to background/inactive - stopping audio');
+        cleanupAudio();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [cleanupAudio]);
 
   const fetchCatiCallDetails = async (callId: string) => {
     try {
@@ -690,6 +728,105 @@ export default function ResponseDetailsModal({
     }
   };
 
+  // Handle close with confirmation dialog
+  const handleClose = () => {
+    // Check if audio is playing
+    if (audioSound) {
+      audioSound.getStatusAsync().then((status) => {
+        if (status.isLoaded && status.isPlaying) {
+          // Audio is playing - show confirmation
+          Alert.alert(
+            'Close Quality Check?',
+            'Audio is currently playing. Are you sure you want to close the Quality Check? The audio will be stopped.',
+            [
+              {
+                text: 'Cancel',
+                style: 'cancel',
+              },
+              {
+                text: 'Close',
+                style: 'destructive',
+                onPress: async () => {
+                  // Stop and cleanup audio
+                  await cleanupAudio();
+                  // Close modal
+                  onClose();
+                },
+              },
+            ],
+            { cancelable: true }
+          );
+        } else {
+          // Audio not playing - still show confirmation but simpler message
+          Alert.alert(
+            'Close Quality Check?',
+            'Are you sure you want to close the Quality Check?',
+            [
+              {
+                text: 'Cancel',
+                style: 'cancel',
+              },
+              {
+                text: 'Close',
+                style: 'destructive',
+                onPress: async () => {
+                  // Cleanup audio anyway (in case it's loaded but paused)
+                  await cleanupAudio();
+                  // Close modal
+                  onClose();
+                },
+              },
+            ],
+            { cancelable: true }
+          );
+        }
+      }).catch(() => {
+        // If we can't get status, assume audio might be playing and show confirmation
+        Alert.alert(
+          'Close Quality Check?',
+          'Are you sure you want to close the Quality Check? Any playing audio will be stopped.',
+          [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: 'Close',
+              style: 'destructive',
+              onPress: async () => {
+                // Cleanup audio
+                await cleanupAudio();
+                // Close modal
+                onClose();
+              },
+            },
+          ],
+          { cancelable: true }
+        );
+      });
+    } else {
+      // No audio loaded - show simple confirmation
+      Alert.alert(
+        'Close Quality Check?',
+        'Are you sure you want to close the Quality Check?',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Close',
+            style: 'destructive',
+            onPress: () => {
+              onClose();
+            },
+          },
+        ],
+        { cancelable: true }
+      );
+    }
+  };
+
   const getRespondentInfo = () => {
     const responses = interview.responses || [];
     const surveyId = interview.survey?._id || interview.survey?.survey?._id || null;
@@ -1173,7 +1310,7 @@ export default function ResponseDetailsModal({
       visible={visible}
       animationType="slide"
       transparent={false}
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
     >
       <View style={styles.modalContainer}>
         <StatusBar barStyle="dark-content" />
@@ -1183,7 +1320,7 @@ export default function ResponseDetailsModal({
           <Text style={styles.headerTitle}>Response Details</Text>
           <Button
             mode="text"
-            onPress={onClose}
+            onPress={handleClose}
             icon="close"
             textColor="#6b7280"
             compact
