@@ -461,6 +461,19 @@ export default function ResponseDetailsModal({
       }
     }
     
+    // For gender question, only show if audioStatus is valid (1 or 7)
+    // Audio Status must be either:
+    // - "1" (Survey Conversation can be heard)
+    // - "7" (Cannot hear the response clearly)
+    // If any other option is selected, the response will be rejected anyway, so don't show gender question
+    if (questionType === 'gender') {
+      const audioStatus = verificationForm.audioStatus;
+      // Only show gender question if audioStatus is '1' or '7'
+      if (audioStatus !== '1' && audioStatus !== '7') {
+        return false;
+      }
+    }
+    
     // Get verification responses to check if related response is skipped
     const verificationResponses = getVerificationResponses();
     
@@ -1388,31 +1401,33 @@ export default function ResponseDetailsModal({
                   </RadioButton.Group>
                 </View>
 
-                {/* Gender Matching */}
-                <View style={styles.formSection}>
-                  <Text style={styles.formLabel}>2. Gender of the Respondent Matching? (উত্তরদাতার লিঙ্গ কি মেলানো হয়েছে?) *</Text>
-                  <Text style={styles.responseDisplayText}>Response: {verificationResponses.gender}</Text>
-                  <RadioButton.Group
-                    onValueChange={(value) => handleVerificationFormChange('genderMatching', value)}
-                    value={verificationForm.genderMatching}
-                  >
-                    <RadioButton.Item 
-                      label="1 - Matched (মিলে গেছে)" 
-                      value="1" 
-                      style={styles.radioItem}
-                    />
-                    <RadioButton.Item 
-                      label="2 - Not Matched (মেলেনি)" 
-                      value="2" 
-                      style={styles.radioItem}
-                    />
-                    <RadioButton.Item 
-                      label="3 - Male answering on behalf of female (মহিলার পক্ষ থেকে পুরুষ উত্তর দিচ্ছেন।)" 
-                      value="3" 
-                      style={styles.radioItem}
-                    />
-                  </RadioButton.Group>
-                </View>
+                {/* Gender Matching - Only show if Audio Status is '1' or '7' */}
+                {shouldShowVerificationQuestion('gender') && (
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>2. Gender of the Respondent Matching? (উত্তরদাতার লিঙ্গ কি মেলানো হয়েছে?) *</Text>
+                    <Text style={styles.responseDisplayText}>Response: {verificationResponses.gender}</Text>
+                    <RadioButton.Group
+                      onValueChange={(value) => handleVerificationFormChange('genderMatching', value)}
+                      value={verificationForm.genderMatching}
+                    >
+                      <RadioButton.Item 
+                        label="1 - Matched (মিলে গেছে)" 
+                        value="1" 
+                        style={styles.radioItem}
+                      />
+                      <RadioButton.Item 
+                        label="2 - Not Matched (মেলেনি)" 
+                        value="2" 
+                        style={styles.radioItem}
+                      />
+                      <RadioButton.Item 
+                        label="3 - Male answering on behalf of female (মহিলার পক্ষ থেকে পুরুষ উত্তর দিচ্ছেন।)" 
+                        value="3" 
+                        style={styles.radioItem}
+                      />
+                    </RadioButton.Group>
+                  </View>
+                )}
 
                 {/* Upcoming Elections Matching */}
                 {shouldShowVerificationQuestion('upcomingElection') && (
