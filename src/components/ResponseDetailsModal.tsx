@@ -212,14 +212,16 @@ export default function ResponseDetailsModal({
           }
         } catch (error) {
           console.error('Error fetching signed URL:', error);
-          // Fallback: try to construct URL (may not work for S3)
-          const API_BASE_URL = 'https://opine.exypnossolutions.com';
+          // Fallback: try to construct URL using production API base URL
+          const API_BASE_URL = 'https://convo.convergentview.com';
           fullAudioUrl = `${API_BASE_URL}${audioUrl.startsWith('/') ? audioUrl : '/' + audioUrl}`;
+          console.log('Using fallback URL for audio:', fullAudioUrl);
         }
       } else if (!audioUrl.startsWith('http://') && !audioUrl.startsWith('https://')) {
-        // If it's a relative URL, prepend the base URL
-        const API_BASE_URL = 'https://opine.exypnossolutions.com';
+        // If it's a relative URL, prepend the production base URL
+        const API_BASE_URL = 'https://convo.convergentview.com';
         fullAudioUrl = `${API_BASE_URL}${audioUrl.startsWith('/') ? audioUrl : '/' + audioUrl}`;
+        console.log('Constructed audio URL from relative path:', fullAudioUrl);
       }
 
       console.log('Loading audio from URL:', fullAudioUrl);
