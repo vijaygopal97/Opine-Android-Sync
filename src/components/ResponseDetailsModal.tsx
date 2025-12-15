@@ -186,28 +186,40 @@ export default function ResponseDetailsModal({
           
           if (signedUrl) {
             fullAudioUrl = signedUrl;
-            console.log('Using provided signed URL for audio');
-          } else {
-            // Fetch signed URL from API
-            console.log('Fetching signed URL for S3 key:', audioUrl);
-            const token = await AsyncStorage.getItem('authToken');
-            const API_BASE_URL = 'https://convo.convergentview.com';
-            const response = await fetch(`${API_BASE_URL}/api/survey-responses/audio-signed-url?audioUrl=${encodeURIComponent(audioUrl)}`, {
-              headers: {
-                'Authorization': `Bearer ${token}`
+            console.log('✅ Using provided signed URL for audio');
+          } else if (audioUrl) {
+            // Fetch signed URL from API only if we have an audioUrl
+            console.log('📥 Fetching signed URL for S3 key:', audioUrl);
+            try {
+              const token = await AsyncStorage.getItem('authToken');
+              if (!token) {
+                throw new Error('No auth token available');
               }
-            });
-            
-            if (response.ok) {
-              const data = await response.json();
-              if (data.signedUrl) {
-                fullAudioUrl = data.signedUrl;
-                console.log('Successfully fetched signed URL for audio');
+              const API_BASE_URL = 'https://convo.convergentview.com';
+              const response = await fetch(`${API_BASE_URL}/api/survey-responses/audio-signed-url?audioUrl=${encodeURIComponent(audioUrl)}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+              
+              if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.signedUrl) {
+                  fullAudioUrl = data.signedUrl;
+                  console.log('✅ Successfully fetched signed URL for audio');
+                } else {
+                  console.warn('⚠️ No signed URL in response:', data);
+                  throw new Error('No signed URL in response');
+                }
               } else {
-                throw new Error('No signed URL in response');
+                const errorText = await response.text();
+                console.error('❌ Failed to fetch signed URL:', response.status, errorText);
+                throw new Error(`Failed to fetch signed URL: ${response.status}`);
               }
-            } else {
-              throw new Error('Failed to fetch signed URL');
+            } catch (fetchError) {
+              console.error('❌ Error fetching signed URL:', fetchError);
+              throw fetchError; // Re-throw to trigger fallback
             }
           }
         } catch (error) {
