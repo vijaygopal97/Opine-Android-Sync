@@ -342,8 +342,16 @@ export default function ResponseDetailsModal({
     setPlaybackRate(newRate);
     if (audioSound) {
       try {
-        await audioSound.setRateAsync(newRate, true);
-        console.log('✅ Playback speed increased to:', newRate);
+        const status = await audioSound.getStatusAsync();
+        if (status.isLoaded) {
+          const wasPlaying = status.isPlaying;
+          await audioSound.setRateAsync(newRate, true);
+          // If audio was playing, ensure it continues playing at new rate
+          if (wasPlaying && !status.isPlaying) {
+            await audioSound.playAsync();
+          }
+          console.log('✅ Playback speed increased to:', newRate);
+        }
       } catch (error) {
         console.error('Error setting playback rate:', error);
       }
@@ -356,8 +364,16 @@ export default function ResponseDetailsModal({
     setPlaybackRate(newRate);
     if (audioSound) {
       try {
-        await audioSound.setRateAsync(newRate, true);
-        console.log('✅ Playback speed decreased to:', newRate);
+        const status = await audioSound.getStatusAsync();
+        if (status.isLoaded) {
+          const wasPlaying = status.isPlaying;
+          await audioSound.setRateAsync(newRate, true);
+          // If audio was playing, ensure it continues playing at new rate
+          if (wasPlaying && !status.isPlaying) {
+            await audioSound.playAsync();
+          }
+          console.log('✅ Playback speed decreased to:', newRate);
+        }
       } catch (error) {
         console.error('Error setting playback rate:', error);
       }
