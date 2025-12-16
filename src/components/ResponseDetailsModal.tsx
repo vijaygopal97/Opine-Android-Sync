@@ -69,12 +69,21 @@ export default function ResponseDetailsModal({
   const [catiCallDetails, setCatiCallDetails] = useState<any>(null);
   const [catiRecordingUri, setCatiRecordingUri] = useState<string | null>(null);
   const [loadingCatiRecording, setLoadingCatiRecording] = useState(false);
+  const [catiAudioSound, setCatiAudioSound] = useState<Audio.Sound | null>(null);
+  const [isPlayingCatiAudio, setIsPlayingCatiAudio] = useState(false);
+  const [catiAudioPosition, setCatiAudioPosition] = useState(0);
+  const [catiAudioDuration, setCatiAudioDuration] = useState(0);
+  const [catiPlaybackRate, setCatiPlaybackRate] = useState(1.0);
+  const [catiIsSeeking, setCatiIsSeeking] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [responsesSectionExpanded, setResponsesSectionExpanded] = useState(false);
   
   // Use ref to store audio sound to avoid dependency cycles
   const audioSoundRef = useRef<Audio.Sound | null>(null);
+  const catiAudioSoundRef = useRef<Audio.Sound | null>(null);
+  const catiSliderRef = useRef<View>(null);
+  const [catiSliderWidth, setCatiSliderWidth] = useState(0);
   
   // Update ref whenever audioSound state changes
   useEffect(() => {
@@ -643,13 +652,6 @@ export default function ResponseDetailsModal({
         console.error('Error setting playback rate:', error);
       }
     }
-  };
-
-  const formatTime = (millis: number) => {
-    const totalSeconds = Math.floor(millis / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
   const handleSeek = async (positionMillis: number) => {
