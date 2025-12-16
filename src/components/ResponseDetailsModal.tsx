@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
 import {
   Text,
   Card,
@@ -80,6 +81,11 @@ export default function ResponseDetailsModal({
     audioSoundRef.current = audioSound;
   }, [audioSound]);
 
+  // Update ref whenever catiAudioSound state changes
+  useEffect(() => {
+    catiAudioSoundRef.current = catiAudioSound;
+  }, [catiAudioSound]);
+
   // Function to stop and cleanup audio completely (using ref to avoid dependency cycles)
   const cleanupAudio = useCallback(async () => {
     const currentAudio = audioSoundRef.current;
@@ -110,6 +116,34 @@ export default function ResponseDetailsModal({
       setPlaybackRate(1.0);
     }
   }, []); // Empty dependency array - uses ref instead
+
+  // Function to stop and cleanup CATI audio
+  const cleanupCatiAudio = useCallback(async () => {
+    const currentAudio = catiAudioSoundRef.current;
+    if (currentAudio) {
+      try {
+        const status = await currentAudio.getStatusAsync();
+        if (status.isLoaded) {
+          if (status.isPlaying) {
+            await currentAudio.stopAsync();
+          }
+          await currentAudio.unloadAsync();
+        }
+      } catch (error) {
+        console.error('Error cleaning up CATI audio:', error);
+        try {
+          await currentAudio.unloadAsync();
+        } catch (unloadError) {
+          console.error('Error force unloading CATI audio:', unloadError);
+        }
+      }
+      catiAudioSoundRef.current = null;
+      setCatiAudioSound(null);
+      setIsPlayingCatiAudio(false);
+      setCatiAudioPosition(0);
+      setCatiPlaybackRate(1.0);
+    }
+  }, []);
 
   useEffect(() => {
     if (visible && interview) {
@@ -168,13 +202,14 @@ export default function ResponseDetailsModal({
         // App is going to background or closing - stop audio immediately
         console.log('🛑 App going to background/inactive - stopping audio');
         cleanupAudio();
+        cleanupCatiAudio();
       }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [cleanupAudio]);
+  }, [cleanupAudio, cleanupCatiAudio]);
 
   // Helper function to format duration
   const formatDuration = (seconds: number): string => {
@@ -213,22 +248,171 @@ export default function ResponseDetailsModal({
       setLoadingCatiRecording(true);
       const result = await apiService.getCatiRecording(callId);
       if (result.success && result.blob) {
-        // For React Native, we need to convert blob to a playable URI
-        // This would typically require saving to file system or using a different approach
-        // For now, we'll handle it differently - the API should return a direct URL
-        showSnackbar('Recording available - playback will be implemented');
+        // Convert blob to a data URL that can be played
+        // Create a FileReader to convert blob to base64 data URL
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64data = reader.result as string;
+          if (base64data) {
+            try {
+              // Load the audio from the data URL
+              await loadCatiAudio(base64data);
+            } catch (loadError) {
+              console.error('Error loading CATI audio:', loadError);
+            }
+          }
+        };
+        reader.onerror = (error) => {
+          console.error('Error reading blob:', error);
+          setLoadingCatiRecording(false);
+        };
+        reader.readAsDataURL(result.blob);
+      } else {
+        setLoadingCatiRecording(false);
       }
     } catch (error: any) {
       // Silently handle 404 errors (recording not available) - this is expected
       if (error?.response?.status === 404 || error?.status === 404) {
         // Recording not available - this is normal, don't log as error
+        setLoadingCatiRecording(false);
         return;
       }
       // Only log unexpected errors
       console.error('Error fetching CATI recording:', error);
-    } finally {
       setLoadingCatiRecording(false);
     }
+  };
+
+  const loadCatiAudio = async (audioUri: string) => {
+    try {
+      // Clean up existing CATI audio
+      if (catiAudioSoundRef.current) {
+        try {
+          await catiAudioSoundRef.current.unloadAsync();
+        } catch (error) {
+          console.error('Error unloading existing CATI audio:', error);
+        }
+        catiAudioSoundRef.current = null;
+        setCatiAudioSound(null);
+      }
+
+      console.log('Loading CATI audio from URI');
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: audioUri },
+        { 
+          shouldPlay: false,
+          rate: catiPlaybackRate,
+        }
+      );
+
+      catiAudioSoundRef.current = sound;
+      setCatiAudioSound(sound);
+      setCatiRecordingUri(audioUri);
+
+      // Set up status update listener
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && !catiIsSeeking) {
+          setCatiAudioPosition(status.positionMillis || 0);
+          setCatiAudioDuration(status.durationMillis || 0);
+          setIsPlayingCatiAudio(status.isPlaying || false);
+          
+          if (status.didJustFinish) {
+            setIsPlayingCatiAudio(false);
+            setCatiAudioPosition(0);
+          }
+        }
+      });
+
+      setLoadingCatiRecording(false);
+    } catch (error) {
+      console.error('Error loading CATI audio:', error);
+      setLoadingCatiRecording(false);
+    }
+  };
+
+  const playCatiAudio = async () => {
+    try {
+      if (catiAudioSoundRef.current) {
+        await catiAudioSoundRef.current.playAsync();
+        setIsPlayingCatiAudio(true);
+      }
+    } catch (error) {
+      console.error('Error playing CATI audio:', error);
+    }
+  };
+
+  const pauseCatiAudio = async () => {
+    try {
+      if (catiAudioSoundRef.current) {
+        await catiAudioSoundRef.current.pauseAsync();
+        setIsPlayingCatiAudio(false);
+      }
+    } catch (error) {
+      console.error('Error pausing CATI audio:', error);
+    }
+  };
+
+  const formatTime = (milliseconds: number): string => {
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // CATI Audio speed control functions
+  const increaseCatiSpeed = async () => {
+    if (catiPlaybackRate < 4.0) {
+      const newRate = Math.min(catiPlaybackRate + 0.25, 4.0);
+      setCatiPlaybackRate(newRate);
+      if (catiAudioSoundRef.current) {
+        try {
+          await catiAudioSoundRef.current.setRateAsync(newRate, true);
+        } catch (error) {
+          console.error('Error setting CATI audio rate:', error);
+        }
+      }
+    }
+  };
+
+  const decreaseCatiSpeed = async () => {
+    if (catiPlaybackRate > 0.5) {
+      const newRate = Math.max(catiPlaybackRate - 0.25, 0.5);
+      setCatiPlaybackRate(newRate);
+      if (catiAudioSoundRef.current) {
+        try {
+          await catiAudioSoundRef.current.setRateAsync(newRate, true);
+        } catch (error) {
+          console.error('Error setting CATI audio rate:', error);
+        }
+      }
+    }
+  };
+
+  // CATI Audio seek handler
+  const handleCatiSeek = async (positionMillis: number) => {
+    if (!catiAudioSoundRef.current || catiAudioDuration === 0) return;
+    
+    try {
+      const clampedPosition = Math.max(0, Math.min(positionMillis, catiAudioDuration));
+      await catiAudioSoundRef.current.setPositionAsync(clampedPosition);
+      setCatiAudioPosition(clampedPosition);
+    } catch (error) {
+      console.error('Error seeking CATI audio:', error);
+    } finally {
+      setCatiIsSeeking(false);
+    }
+  };
+
+  // CATI Audio slider handler
+  const handleCatiSliderPress = (event: any) => {
+    if (!catiSliderRef.current || catiSliderWidth === 0 || catiAudioDuration === 0) return;
+    
+    const { locationX } = event.nativeEvent;
+    const percentage = Math.max(0, Math.min(1, locationX / catiSliderWidth));
+    const positionMillis = Math.floor(percentage * catiAudioDuration);
+    setCatiIsSeeking(true);
+    handleCatiSeek(positionMillis);
   };
 
   const loadAudio = async (audioUrl: string) => {
@@ -1676,6 +1860,125 @@ export default function ResponseDetailsModal({
               </Card>
             )}
 
+            {/* CATI Call Recording */}
+            {interview.interviewMode === 'cati' && catiCallDetails?.recordingUrl && (
+              <Card style={styles.card}>
+                <Card.Content>
+                  <Text style={styles.sectionTitle}>Call Recording</Text>
+                  
+                  {loadingCatiRecording ? (
+                    <View style={styles.audioControls}>
+                      <ActivityIndicator size="small" color="#2563eb" />
+                      <Text style={styles.noDataText}>Loading recording...</Text>
+                    </View>
+                  ) : catiAudioSound ? (
+                    <View style={styles.audioControls}>
+                      {catiAudioDuration > 0 ? (
+                        <>
+                          <View style={styles.audioTimelineContainer}>
+                            <Button
+                              mode="contained"
+                              onPress={isPlayingCatiAudio ? pauseCatiAudio : playCatiAudio}
+                              icon={isPlayingCatiAudio ? "pause" : "play"}
+                              style={styles.audioButtonInline}
+                              disabled={!catiAudioSound}
+                              compact
+                            >
+                              {isPlayingCatiAudio ? 'Pause' : 'Play'}
+                            </Button>
+                            <Text style={styles.audioTime}>
+                              {formatTime(catiAudioPosition)}
+                            </Text>
+                            <TouchableOpacity
+                              activeOpacity={1}
+                              style={styles.sliderContainer}
+                              onLayout={(event) => {
+                                const { width } = event.nativeEvent.layout;
+                                setCatiSliderWidth(width);
+                              }}
+                              onPress={handleCatiSliderPress}
+                            >
+                              <View 
+                                ref={catiSliderRef}
+                                style={styles.sliderTrack}
+                              >
+                                <View 
+                                  style={[
+                                    styles.sliderProgress,
+                                    { width: `${catiAudioDuration > 0 ? (catiAudioPosition / catiAudioDuration) * 100 : 0}%` }
+                                  ]}
+                                />
+                                <View
+                                  style={[
+                                    styles.sliderThumb,
+                                    { left: `${catiAudioDuration > 0 ? (catiAudioPosition / catiAudioDuration) * 100 : 0}%` }
+                                  ]}
+                                />
+                              </View>
+                            </TouchableOpacity>
+                            <Text style={styles.audioTime}>
+                              {formatTime(catiAudioDuration)}
+                            </Text>
+                          </View>
+                          {/* Speed Control */}
+                          <View style={styles.speedControlContainer}>
+                            <Text style={styles.speedLabel}>Speed:</Text>
+                            <TouchableOpacity
+                              onPress={decreaseCatiSpeed}
+                              disabled={catiPlaybackRate <= 0.5}
+                              style={[styles.speedButtonTouchable, catiPlaybackRate <= 0.5 && styles.speedButtonDisabled]}
+                            >
+                              <Ionicons 
+                                name="remove-circle-outline" 
+                                size={24} 
+                                color={catiPlaybackRate <= 0.5 ? '#9ca3af' : '#2563eb'} 
+                              />
+                            </TouchableOpacity>
+                            <Text style={styles.speedValue}>{catiPlaybackRate.toFixed(2)}x</Text>
+                            <TouchableOpacity
+                              onPress={increaseCatiSpeed}
+                              disabled={catiPlaybackRate >= 4.0}
+                              style={[styles.speedButtonTouchable, catiPlaybackRate >= 4.0 && styles.speedButtonDisabled]}
+                            >
+                              <Ionicons 
+                                name="add-circle-outline" 
+                                size={24} 
+                                color={catiPlaybackRate >= 4.0 ? '#9ca3af' : '#2563eb'} 
+                              />
+                            </TouchableOpacity>
+                          </View>
+                          <View style={styles.audioInfoContainer}>
+                            <Text style={styles.audioInfoText}>
+                              Call Duration: {catiCallDetails?.callDuration ? formatDuration(catiCallDetails.callDuration) : 'N/A'}
+                            </Text>
+                            <Text style={styles.audioInfoText}>
+                              Talk Duration: {catiCallDetails?.talkDuration ? formatDuration(catiCallDetails.talkDuration) : 'N/A'}
+                            </Text>
+                            <Text style={styles.audioInfoText}>Format: MP3</Text>
+                            <Text style={styles.audioInfoText}>
+                              Status: {catiCallDetails?.callStatusDescription || catiCallDetails?.callStatus || 'N/A'}
+                            </Text>
+                          </View>
+                        </>
+                      ) : (
+                        <Button
+                          mode="contained"
+                          onPress={playCatiAudio}
+                          icon={isPlayingCatiAudio ? "pause" : "play"}
+                          style={styles.audioButton}
+                          disabled={!catiAudioSound}
+                        >
+                          {isPlayingCatiAudio ? 'Pause' : 'Play'}
+                        </Button>
+                      )}
+                    </View>
+                  ) : catiCallDetails?.recordingUrl ? (
+                    <Text style={styles.noDataText}>No recording available</Text>
+                  ) : null}
+                </Card.Content>
+              </Card>
+            )}
+
             {/* Responses - Collapsible */}
             <Card style={styles.card}>
               <Card.Content>
@@ -2218,6 +2521,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#9ca3af',
     fontStyle: 'italic',
+  },
+  audioInfoContainer: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+  },
+  audioInfoText: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 4,
   },
   formSection: {
     marginBottom: 20,
