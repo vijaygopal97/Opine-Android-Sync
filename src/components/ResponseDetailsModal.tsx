@@ -15,6 +15,7 @@ import {
 import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
+import { fromByteArray } from 'base64-js';
 import {
   Text,
   Card,
@@ -268,25 +269,56 @@ export default function ResponseDetailsModal({
       const API_BASE_URL = 'https://convo.convergentview.com';
       const recordingUrl = `${API_BASE_URL}/api/cati/recording/${callId}`;
       
-      // Download to a temporary file
+      // Download to a temporary file using legacy API
       const fileUri = `${FileSystem.cacheDirectory}cati_recording_${callId}_${Date.now()}.mp3`;
       
-      const downloadResult = await FileSystem.downloadAsync(
-        recordingUrl,
-        fileUri,
-        {
+      try {
+        const downloadResult = await FileSystem.downloadAsync(
+          recordingUrl,
+          fileUri,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+          }
+        );
+
+        if (downloadResult.status === 200) {
+          // Load the audio from the downloaded file
+          await loadCatiAudio(downloadResult.uri);
+        } else {
+          console.error('Failed to download recording:', downloadResult.status);
+          setLoadingCatiRecording(false);
+        }
+      } catch (downloadError: any) {
+        // If legacy API fails, try using fetch as fallback
+        console.log('Legacy downloadAsync failed, trying fetch approach...', downloadError);
+        
+        const response = await fetch(recordingUrl, {
           headers: {
             'Authorization': `Bearer ${token}`,
           },
-        }
-      );
+        });
 
-      if (downloadResult.status === 200) {
-        // Load the audio from the downloaded file
-        await loadCatiAudio(downloadResult.uri);
-      } else {
-        console.error('Failed to download recording:', downloadResult.status);
-        setLoadingCatiRecording(false);
+        if (!response.ok) {
+          if (response.status === 404) {
+            setLoadingCatiRecording(false);
+            return;
+          }
+          throw new Error(`Failed to download: ${response.status}`);
+        }
+
+        // Get the arrayBuffer and convert to base64 using base64-js (React Native compatible)
+        const arrayBuffer = await response.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        // Convert Uint8Array to base64 using base64-js
+        const base64 = Buffer.from(uint8Array).toString('base64');
+        
+        await FileSystem.writeAsStringAsync(fileUri, base64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        
+        await loadCatiAudio(fileUri);
       }
     } catch (error: any) {
       // Silently handle 404 errors (recording not available) - this is expected
