@@ -15,7 +15,7 @@ import {
 import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
-import { fromByteArray } from 'base64-js';
+import { toByteArray } from 'base64-js';
 import {
   Text,
   Card,
@@ -311,8 +311,8 @@ export default function ResponseDetailsModal({
         // Get the arrayBuffer and convert to base64 using base64-js (React Native compatible)
         const arrayBuffer = await response.arrayBuffer();
         const uint8Array = new Uint8Array(arrayBuffer);
-        // Convert Uint8Array to base64 using base64-js
-        const base64 = Buffer.from(uint8Array).toString('base64');
+        // Convert Uint8Array to base64 string using base64-js
+        const base64 = fromByteArray(uint8Array);
         
         await FileSystem.writeAsStringAsync(fileUri, base64, {
           encoding: FileSystem.EncodingType.Base64,
