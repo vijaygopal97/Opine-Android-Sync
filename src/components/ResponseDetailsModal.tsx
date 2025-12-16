@@ -176,6 +176,22 @@ export default function ResponseDetailsModal({
     };
   }, [cleanupAudio]);
 
+  // Helper function to format duration
+  const formatDuration = (seconds: number): string => {
+    if (!seconds) return 'N/A';
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${secs}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${secs}s`;
+    } else {
+      return `${secs}s`;
+    }
+  };
+
   const fetchCatiCallDetails = async (callId: string) => {
     try {
       const result = await apiService.getCatiCallById(callId);
@@ -1540,7 +1556,7 @@ export default function ResponseDetailsModal({
               </Card.Content>
             </Card>
 
-            {/* CATI Call Recording */}
+            {/* CATI Call Information */}
             {interview.interviewMode === 'cati' && (
               <Card style={styles.card}>
                 <Card.Content>
@@ -1551,21 +1567,110 @@ export default function ResponseDetailsModal({
                   ) : catiCallDetails ? (
                     <View>
                       <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>Call ID:</Text>
-                        <Text style={styles.infoValue}>{catiCallDetails.callId || 'N/A'}</Text>
+                        <Text style={styles.infoLabel}>Call Status:</Text>
+                        <Text style={[
+                          styles.infoValue,
+                          (catiCallDetails.callStatus === 'completed' || catiCallDetails.callStatus === 'answered') && { color: '#16a34a' },
+                          (catiCallDetails.callStatus === 'failed' || catiCallDetails.callStatus === 'busy') && { color: '#dc2626' }
+                        ]}>
+                          {catiCallDetails.callStatusDescription || catiCallDetails.statusDescription || catiCallDetails.callStatus || 'N/A'}
+                        </Text>
+                      </View>
+                      
+                      {(catiCallDetails.callStatusCode || catiCallDetails.originalStatusCode) && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Status Code:</Text>
+                          <Text style={styles.infoValue}>
+                            {catiCallDetails.callStatusCode || catiCallDetails.originalStatusCode}
+                          </Text>
+                        </View>
+                      )}
+                      
+                      {catiCallDetails.callId && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Call ID:</Text>
+                          <Text style={[styles.infoValue, { fontFamily: 'monospace', fontSize: 11 }]}>
+                            {catiCallDetails.callId}
+                          </Text>
+                        </View>
+                      )}
+                      
+                      <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>From Number:</Text>
+                        <Text style={styles.infoValue}>{catiCallDetails.fromNumber || 'N/A'}</Text>
                       </View>
                       
                       <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>Status:</Text>
-                        <Text style={styles.infoValue}>{catiCallDetails.callStatus || 'N/A'}</Text>
+                        <Text style={styles.infoLabel}>To Number:</Text>
+                        <Text style={styles.infoValue}>{catiCallDetails.toNumber || 'N/A'}</Text>
                       </View>
                       
+                      <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Call Duration:</Text>
+                        <Text style={styles.infoValue}>
+                          {catiCallDetails.callDuration ? formatDuration(catiCallDetails.callDuration) : 'N/A'}
+                        </Text>
+                      </View>
+                      
+                      <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Talk Duration:</Text>
+                        <Text style={styles.infoValue}>
+                          {catiCallDetails.talkDuration ? formatDuration(catiCallDetails.talkDuration) : 'N/A'}
+                        </Text>
+                      </View>
+                      
+                      {(catiCallDetails.startTime || catiCallDetails.callStartTime) && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Call Start Time:</Text>
+                          <Text style={styles.infoValue}>
+                            {new Date(catiCallDetails.startTime || catiCallDetails.callStartTime).toLocaleString()}
+                          </Text>
+                        </View>
+                      )}
+                      
+                      {(catiCallDetails.endTime || catiCallDetails.callEndTime) && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Call End Time:</Text>
+                          <Text style={styles.infoValue}>
+                            {new Date(catiCallDetails.endTime || catiCallDetails.callEndTime).toLocaleString()}
+                          </Text>
+                        </View>
+                      )}
+                      
+                      {catiCallDetails.ringDuration && catiCallDetails.ringDuration > 0 && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Ring Duration:</Text>
+                          <Text style={styles.infoValue}>
+                            {formatDuration(catiCallDetails.ringDuration)}
+                          </Text>
+                        </View>
+                      )}
+                      
+                      {catiCallDetails.hangupCause && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Hangup Cause:</Text>
+                          <Text style={styles.infoValue}>{catiCallDetails.hangupCause}</Text>
+                        </View>
+                      )}
+                      
+                      {catiCallDetails.hangupBySource && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Hangup By:</Text>
+                          <Text style={styles.infoValue}>{catiCallDetails.hangupBySource}</Text>
+                        </View>
+                      )}
+                      
                       {catiCallDetails.recordingUrl && (
-                        <Text style={styles.infoValue}>Recording available</Text>
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Recording Available:</Text>
+                          <Text style={[styles.infoValue, { color: '#16a34a' }]}>Yes</Text>
+                        </View>
                       )}
                     </View>
                   ) : (
-                    <Text style={styles.infoValue}>Call details not available</Text>
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoValue}>Call details not available</Text>
+                    </View>
                   )}
                 </Card.Content>
               </Card>
