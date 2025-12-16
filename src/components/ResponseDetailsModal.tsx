@@ -246,33 +246,42 @@ export default function ResponseDetailsModal({
   const fetchCatiRecording = async (callId: string) => {
     try {
       setLoadingCatiRecording(true);
-      const result = await apiService.getCatiRecording(callId);
-      if (result.success && result.blob) {
-        // Convert blob to a data URL that can be played
-        // Create a FileReader to convert blob to base64 data URL
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const base64data = reader.result as string;
-          if (base64data) {
-            try {
-              // Load the audio from the data URL
-              await loadCatiAudio(base64data);
-            } catch (loadError) {
-              console.error('Error loading CATI audio:', loadError);
-            }
-          }
-        };
-        reader.onerror = (error) => {
-          console.error('Error reading blob:', error);
-          setLoadingCatiRecording(false);
-        };
-        reader.readAsDataURL(result.blob);
+      
+      // Use expo-file-system to download the recording directly
+      // This is better for React Native than handling blobs
+      const token = await AsyncStorage.getItem('authToken');
+      if (!token) {
+        console.error('No auth token available');
+        setLoadingCatiRecording(false);
+        return;
+      }
+
+      const API_BASE_URL = 'https://convo.convergentview.com';
+      const recordingUrl = `${API_BASE_URL}/api/cati/recording/${callId}`;
+      
+      // Download to a temporary file
+      const fileUri = `${FileSystem.cacheDirectory}cati_recording_${callId}_${Date.now()}.mp3`;
+      
+      const downloadResult = await FileSystem.downloadAsync(
+        recordingUrl,
+        fileUri,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (downloadResult.status === 200) {
+        // Load the audio from the downloaded file
+        await loadCatiAudio(downloadResult.uri);
       } else {
+        console.error('Failed to download recording:', downloadResult.status);
         setLoadingCatiRecording(false);
       }
     } catch (error: any) {
       // Silently handle 404 errors (recording not available) - this is expected
-      if (error?.response?.status === 404 || error?.status === 404) {
+      if (error?.response?.status === 404 || error?.status === 404 || error?.message?.includes('404')) {
         // Recording not available - this is normal, don't log as error
         setLoadingCatiRecording(false);
         return;
