@@ -809,18 +809,23 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                 </View>
               )}
             </View>
-            {offlineInterviews.length > 0 && (
+          </View>
+          {/* Clear All button - moved to separate row to prevent overlap */}
+          {offlineInterviews.length > 0 && (
+            <View style={styles.clearAllContainer}>
               <Button
-                mode="text"
+                mode="outlined"
                 onPress={handleClearAllFailedInterviews}
                 textColor="#dc2626"
+                buttonColor="#fff"
+                icon="delete-outline"
                 compact
                 style={styles.clearAllButton}
               >
-                Clear All
+                Clear All Failed
               </Button>
-            )}
-          </View>
+            </View>
+          )}
           
           {offlineInterviews.length > 0 ? (
             <>
@@ -828,30 +833,35 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
               <Card key={interview.id} style={styles.interviewCard}>
                 <Card.Content>
                   <View style={styles.interviewHeader}>
-                    <Text style={styles.interviewTitle}>{interview.survey?.surveyName || 'Unknown Survey'}</Text>
-                    <View style={styles.interviewHeaderRight}>
-                      <View style={[styles.statusBadge, { 
-                        backgroundColor: interview.status === 'synced' ? '#059669' : 
-                                         interview.status === 'syncing' ? '#f59e0b' : 
-                                         interview.status === 'failed' ? '#dc2626' : '#6b7280'
-                      }]}>
-                        <Text style={styles.statusText}>
-                          {interview.status === 'synced' ? 'Synced' : 
-                           interview.status === 'syncing' ? 'Syncing' : 
-                           interview.status === 'failed' ? 'Failed' : 'Pending'}
-                        </Text>
-                      </View>
-                      {/* Delete button for failed/synced interviews with errors */}
-                      {(interview.status === 'failed' || (interview.status === 'synced' && interview.error)) && (
-                        <TouchableOpacity
-                          onPress={() => handleDeleteOfflineInterview(interview.id)}
-                          style={styles.deleteButton}
-                        >
-                          <Ionicons name="trash-outline" size={20} color="#dc2626" />
-                        </TouchableOpacity>
-                      )}
+                    <View style={styles.interviewTitleContainer}>
+                      <Text style={styles.interviewTitle} numberOfLines={2}>
+                        {interview.survey?.surveyName || 'Unknown Survey'}
+                      </Text>
+                    </View>
+                    <View style={[styles.statusBadge, { 
+                      backgroundColor: interview.status === 'synced' ? '#059669' : 
+                                       interview.status === 'syncing' ? '#f59e0b' : 
+                                       interview.status === 'failed' ? '#dc2626' : '#6b7280'
+                    }]}>
+                      <Text style={styles.statusText}>
+                        {interview.status === 'synced' ? 'Synced' : 
+                         interview.status === 'syncing' ? 'Syncing' : 
+                         interview.status === 'failed' ? 'Failed' : 'Pending'}
+                      </Text>
                     </View>
                   </View>
+                  {/* Delete button row - separate row to prevent overlap */}
+                  {(interview.status === 'failed' || (interview.status === 'synced' && interview.error)) && (
+                    <View style={styles.deleteButtonContainer}>
+                      <TouchableOpacity
+                        onPress={() => handleDeleteOfflineInterview(interview.id)}
+                        style={styles.deleteButtonRow}
+                      >
+                        <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                        <Text style={styles.deleteButtonText}>Delete Interview</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                   <View style={styles.interviewMeta}>
                     <View style={styles.metaItem}>
                       <Text style={styles.metaLabel}>Saved</Text>
@@ -1073,6 +1083,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    flexWrap: 'wrap',
+  },
+  clearAllContainer: {
+    marginTop: 8,
+    marginBottom: 12,
+    alignItems: 'flex-end',
   },
   sectionTitle: {
     fontSize: 18,
@@ -1310,7 +1326,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   clearAllButton: {
-    marginLeft: 'auto',
+    borderColor: '#dc2626',
   },
   errorText: {
     fontSize: 12,
