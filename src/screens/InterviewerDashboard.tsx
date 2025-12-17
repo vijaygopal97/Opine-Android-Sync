@@ -1003,7 +1003,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 
       <FAB
         icon="plus"
-        style={[styles.fab, { bottom: Math.max(16, insets.bottom) + 25 }]} // Move 25px higher as requested
+        style={[styles.fab, { bottom: Math.max(16, insets.bottom) + 16 }]} // Positioned at bottom with safe area margin
         onPress={() => navigation.navigate('AvailableSurveys')}
         label="Start Interview"
         iconColor="#ffffff"
@@ -1412,12 +1412,16 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   syncContainer: {
-    padding: 16,
+    paddingHorizontal: 16,
     paddingTop: 16,
+    paddingBottom: 0, // Will be set dynamically with safe area insets
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
-    position: 'relative', // Ensure proper positioning
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
   },
   syncButton: {
     backgroundColor: '#059669',
