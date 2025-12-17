@@ -984,7 +984,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       {/* Position above FAB button with proper safe area insets */}
       {(pendingInterviewsCount > 0 || offlineInterviews.length > 0) && (
         <View style={[styles.syncContainer, { 
-          paddingBottom: Math.max(16, insets.bottom) + 50 // Add space for FAB button (56px FAB + small gap)
+          paddingBottom: Math.max(16, insets.bottom) + 15 // Minimal space above FAB button
         }]}>
           <Button
             mode="contained"
