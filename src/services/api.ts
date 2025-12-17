@@ -1002,14 +1002,41 @@ class ApiService {
   // Polling Station API methods
   async getGroupsByAC(state: string, acIdentifier: string) {
     try {
-      // Normalize AC name to match master data spelling
-      const normalizedAC = this.normalizeACName(acIdentifier);
+      // FIRST: Try bundled data (always available, no network needed)
+      try {
+        const { bundledDataService } = await import('./bundledDataService');
+        const bundledResult = await bundledDataService.getGroupsByAC(state, acIdentifier);
+        if (bundledResult.success) {
+          console.log('📦 Using bundled polling groups for:', state, acIdentifier);
+          
+          // Also cache it for faster future lookups
+          const cacheForSave = await this.getOfflineCache();
+          if (cacheForSave && bundledResult.data) {
+            try {
+              await cacheForSave.savePollingGroups(state, acIdentifier, bundledResult.data);
+              // Also save with AC code if available
+              if (bundledResult.data.ac_no) {
+                await cacheForSave.savePollingGroups(state, bundledResult.data.ac_no.toString(), bundledResult.data);
+              }
+            } catch (cacheError) {
+              // Cache save failed, but that's okay - we have bundled data
+            }
+          }
+          
+          return bundledResult;
+        }
+      } catch (bundledError) {
+        console.warn('⚠️ Error loading bundled data, trying cache/API:', bundledError);
+      }
       
-      // Check offline cache first (lazy import) - try multiple variations
+      // SECOND: Check offline cache (lazy import) - try multiple variations
       const cacheForRead = await this.getOfflineCache();
       let cachedData = null;
       if (cacheForRead) {
         try {
+          // Normalize AC name to match master data spelling
+          const normalizedAC = this.normalizeACName(acIdentifier);
+          
           // Try normalized name first
           cachedData = await cacheForRead.getPollingGroups(state, normalizedAC);
           if (cachedData) {
@@ -1053,8 +1080,8 @@ class ApiService {
       
       // If force offline mode is enabled, don't try online fetch
       if (this.forceOfflineMode) {
-        console.log('🔴 Force offline mode - no cached data found for getGroupsByAC');
-        return { success: false, message: 'Force offline mode - no cached data available' };
+        console.log('🔴 Force offline mode - no bundled or cached data found for getGroupsByAC');
+        return { success: false, message: 'Force offline mode - no data available' };
       }
 
       // Check if online
@@ -1183,14 +1210,42 @@ class ApiService {
 
   async getPollingStationsByGroup(state: string, acIdentifier: string, groupName: string) {
     try {
-      // Normalize AC name to match master data spelling
-      const normalizedAC = this.normalizeACName(acIdentifier);
+      // FIRST: Try bundled data (always available, no network needed)
+      try {
+        const { bundledDataService } = await import('./bundledDataService');
+        const bundledResult = await bundledDataService.getPollingStationsByGroup(state, acIdentifier, groupName);
+        if (bundledResult.success) {
+          console.log('📦 Using bundled polling stations for:', state, acIdentifier, groupName);
+          
+          // Also cache it for faster future lookups
+          const cacheForSave = await this.getOfflineCache();
+          if (cacheForSave && bundledResult.data) {
+            try {
+              await cacheForSave.savePollingStations(state, acIdentifier, groupName, bundledResult.data);
+              // Also try to get AC code from cached groups
+              const cachedGroups = await cacheForSave.getPollingGroups(state, acIdentifier);
+              if (cachedGroups && (cachedGroups as any).ac_no) {
+                await cacheForSave.savePollingStations(state, (cachedGroups as any).ac_no.toString(), groupName, bundledResult.data);
+              }
+            } catch (cacheError) {
+              // Cache save failed, but that's okay - we have bundled data
+            }
+          }
+          
+          return bundledResult;
+        }
+      } catch (bundledError) {
+        console.warn('⚠️ Error loading bundled data, trying cache/API:', bundledError);
+      }
       
-      // Check offline cache first (lazy import) - try multiple variations
+      // SECOND: Check offline cache (lazy import) - try multiple variations
       const cacheForRead = await this.getOfflineCache();
       let cachedData = null;
       if (cacheForRead) {
         try {
+          // Normalize AC name to match master data spelling
+          const normalizedAC = this.normalizeACName(acIdentifier);
+          
           // Try normalized name first
           cachedData = await cacheForRead.getPollingStations(state, normalizedAC, groupName);
           if (cachedData) {
@@ -1241,8 +1296,8 @@ class ApiService {
       
       // If force offline mode is enabled, don't try online fetch
       if (this.forceOfflineMode) {
-        console.log('🔴 Force offline mode - no cached data found for getPollingStationsByGroup');
-        return { success: false, message: 'Force offline mode - no cached data available' };
+        console.log('🔴 Force offline mode - no bundled or cached data found for getPollingStationsByGroup');
+        return { success: false, message: 'Force offline mode - no data available' };
       }
 
       // Check if online

@@ -293,16 +293,24 @@ class OfflineDataCacheService {
       
       // If not found, try to find by AC code if acIdentifier is an AC name
       // Check if any cached entry has matching ac_name
+      const normalizedSearchName = acIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim().replace(/\s+/g, ' ');
+      
       for (const [cachedKey, cachedData] of Object.entries(allStations)) {
         if (cachedKey.startsWith(`${state}::`) && cachedKey.endsWith(`::${groupName}`)) {
           const parts = cachedKey.replace(`${state}::`, '').replace(`::${groupName}`, '');
           const cachedACIdentifier = parts;
           const cachedACName = (cachedData as any).ac_name;
           
-          // Check if the cached AC name matches our search identifier
+          // Normalize cached AC name for comparison
+          const normalizedCachedName = cachedACName 
+            ? cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim().replace(/\s+/g, ' ')
+            : '';
+          
+          // Check if the cached AC name matches our search identifier (exact or partial)
           if (cachedACName && (
-            cachedACName.toLowerCase() === acIdentifier.toLowerCase() ||
-            cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim() === acIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim()
+            normalizedCachedName === normalizedSearchName ||
+            normalizedCachedName.includes(normalizedSearchName) ||
+            normalizedSearchName.includes(normalizedCachedName)
           )) {
             console.log(`📦 Found cached stations by AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
             return cachedData as PollingStation;
@@ -310,12 +318,21 @@ class OfflineDataCacheService {
           
           // Also check if cached key is AC code and we can match by name
           if (/^\d+$/.test(cachedACIdentifier) && cachedACName) {
-            const normalizedCachedName = cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim();
-            const normalizedSearchName = acIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim();
-            if (normalizedCachedName === normalizedSearchName) {
+            if (normalizedCachedName === normalizedSearchName ||
+                normalizedCachedName.includes(normalizedSearchName) ||
+                normalizedSearchName.includes(normalizedCachedName)) {
               console.log(`📦 Found cached stations by AC code match: "${acIdentifier}" -> code "${cachedACIdentifier}" (name: "${cachedACName}")`);
               return cachedData as PollingStation;
             }
+          }
+          
+          // Also try matching the cache key itself
+          const normalizedCachedKey = cachedACIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim().replace(/\s+/g, ' ');
+          if (normalizedCachedKey === normalizedSearchName ||
+              normalizedCachedKey.includes(normalizedSearchName) ||
+              normalizedSearchName.includes(normalizedCachedKey)) {
+            console.log(`📦 Found cached stations by cache key match: "${acIdentifier}" -> "${cachedACIdentifier}" (key: ${cachedKey})`);
+            return cachedData as PollingStation;
           }
         }
       }
