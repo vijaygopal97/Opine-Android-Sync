@@ -126,6 +126,19 @@ class SyncService {
   private async syncCapiInterview(interview: OfflineInterview): Promise<void> {
     console.log(`📋 Syncing CAPI interview: ${interview.id}`);
 
+    // Fetch survey from cache if not stored in interview (to reduce storage size)
+    let survey = interview.survey;
+    if (!survey && interview.surveyId) {
+      console.log(`📦 Fetching survey ${interview.surveyId} from cache...`);
+      const { offlineStorage } = await import('./offlineStorage');
+      const surveys = await offlineStorage.getSurveys();
+      survey = surveys.find((s: any) => s._id === interview.surveyId || s.id === interview.surveyId);
+      if (!survey) {
+        throw new Error(`Survey ${interview.surveyId} not found in cache`);
+      }
+      console.log(`✅ Found survey ${interview.surveyId} in cache`);
+    }
+
     // Check if sessionId is an offline session ID (starts with "offline_")
     // Offline session IDs don't exist on the server, so we need to start a new session
     const isOfflineSessionId = interview.sessionId && interview.sessionId.startsWith('offline_');
@@ -155,6 +168,16 @@ class SyncService {
     }
 
     // Build final responses array
+    // Fetch survey if needed for buildFinalResponses
+    if (!interview.survey && interview.surveyId) {
+      const { offlineStorage } = await import('./offlineStorage');
+      const surveys = await offlineStorage.getSurveys();
+      interview.survey = surveys.find((s: any) => s._id === interview.surveyId || s.id === interview.surveyId);
+      if (!interview.survey) {
+        throw new Error(`Survey ${interview.surveyId} not found in cache`);
+      }
+    }
+    
     const finalResponses = this.buildFinalResponses(interview);
 
     // Calculate duration from startTime and endTime if available
@@ -223,6 +246,13 @@ class SyncService {
     console.log('📊 Final duration for sync:', totalTimeSpent, 'seconds (', Math.floor(totalTimeSpent / 60), 'minutes)');
 
     // Extract interviewer ID and supervisor ID from responses (for survey 68fd1915d41841da463f0d46)
+    // Fetch survey if needed
+    if (!interview.survey && interview.surveyId) {
+      const { offlineStorage } = await import('./offlineStorage');
+      const surveys = await offlineStorage.getSurveys();
+      interview.survey = surveys.find((s: any) => s._id === interview.surveyId || s.id === interview.surveyId);
+    }
+    
     const isTargetSurvey = interview.survey && (interview.survey._id === '68fd1915d41841da463f0d46' || interview.survey.id === '68fd1915d41841da463f0d46');
     let oldInterviewerID: string | null = null;
     let supervisorID: string | null = null;
@@ -369,7 +399,14 @@ class SyncService {
     }
     
     // Ensure audioUrl is present for CAPI interviews
-    if (!audioUrl && interview.survey?.mode === 'capi') {
+    // Fetch survey if needed
+    if (!interview.survey && interview.surveyId) {
+      const { offlineStorage } = await import('./offlineStorage');
+      const surveys = await offlineStorage.getSurveys();
+      interview.survey = surveys.find((s: any) => s._id === interview.surveyId || s.id === interview.surveyId);
+    }
+    
+        if (!audioUrl && interview.survey?.mode === 'capi') {
       throw new Error('Audio URL is required for CAPI interviews. Audio upload must succeed before completing interview.');
     }
     

@@ -147,25 +147,52 @@ class OfflineStorageService {
    */
   async saveOfflineInterview(interview: OfflineInterview): Promise<void> {
     try {
+      // Remove full survey object to reduce storage size (will be fetched from cache during sync)
+      const interviewToSave = {
+        ...interview,
+        survey: null, // Don't store full survey - fetch from cache during sync using surveyId
+      };
+      
       const interviews = await this.getOfflineInterviews();
       const existingIndex = interviews.findIndex(i => i.id === interview.id);
       
       if (existingIndex >= 0) {
         console.log(`🔄 Updating existing offline interview: ${interview.id} (old status: ${interviews[existingIndex].status}, new status: ${interview.status})`);
-        interviews[existingIndex] = interview;
+        // Remove survey from existing interview too
+        interviews[existingIndex] = {
+          ...interviewToSave,
+          survey: null,
+        };
       } else {
         console.log(`➕ Adding new offline interview: ${interview.id} (status: ${interview.status || 'pending'})`);
         // Ensure status is set to 'pending' if not provided
-        if (!interview.status) {
-          interview.status = 'pending';
+        if (!interviewToSave.status) {
+          interviewToSave.status = 'pending';
         }
-        interviews.push(interview);
+        interviews.push(interviewToSave);
+      }
+      
+      // Check size before saving
+      const dataString = JSON.stringify(interviews);
+      const sizeInMB = dataString.length / (1024 * 1024);
+      console.log(`📊 Offline interviews data size: ${sizeInMB.toFixed(2)} MB (${interviews.length} interviews)`);
+      
+      if (dataString.length > 2000000) { // ~2MB warning
+        console.warn(`⚠️ Offline interviews data is large: ${sizeInMB.toFixed(2)} MB - consider syncing soon`);
       }
       
       await AsyncStorage.setItem(STORAGE_KEYS.OFFLINE_INTERVIEWS, JSON.stringify(interviews));
       console.log('✅ Saved offline interview:', interview.id, `(Total in storage: ${interviews.length}, Status: ${interview.status})`);
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error saving offline interview:', error);
+      
+      // If it's a "Row too big" error, try to save without survey
+      if (error.message && error.message.includes('Row too big')) {
+        console.error('❌ Row too big error - interview data is too large');
+        console.error('❌ This interview cannot be saved. Please sync existing interviews first or reduce interview data size.');
+        throw new Error('Interview data too large to save. Please sync existing interviews first.');
+      }
+      
       throw error;
     }
   }

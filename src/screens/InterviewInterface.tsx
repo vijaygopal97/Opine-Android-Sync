@@ -3604,7 +3604,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       const offlineInterview: OfflineInterview = {
         id: interviewId,
         surveyId: survey._id,
-        survey: survey, // Store full survey object
+        survey: null, // Don't store full survey - will be fetched from cache during sync using surveyId
         sessionId: sessionId || undefined,
         catiQueueId: undefined, // Not used for CAPI
         callId: undefined, // Not used for CAPI
