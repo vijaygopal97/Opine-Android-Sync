@@ -124,9 +124,30 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       console.log('📦 ========== OFFLINE INTERVIEWS DEBUG ==========');
       console.log('📦 Total offline interviews in storage:', allOfflineInterviews.length);
       
-      if (allOfflineInterviews.length > 0) {
+      // Fetch survey objects for each interview (they're stored as null to save space)
+      const interviewsWithSurveys = await Promise.all(
+        (allOfflineInterviews || []).map(async (interview: any) => {
+          // If survey is null or missing, fetch it from cache using surveyId
+          if (!interview.survey && interview.surveyId) {
+            try {
+              const survey = await offlineStorage.getSurveyById(interview.surveyId);
+              if (survey) {
+                interview.survey = survey;
+                console.log(`✅ Fetched survey for interview ${interview.id}: ${survey.surveyName}`);
+              } else {
+                console.warn(`⚠️ Survey not found for interview ${interview.id}, surveyId: ${interview.surveyId}`);
+              }
+            } catch (error) {
+              console.error(`❌ Error fetching survey for interview ${interview.id}:`, error);
+            }
+          }
+          return interview;
+        })
+      );
+      
+      if (interviewsWithSurveys.length > 0) {
         console.log('📦 Offline interviews details:');
-        allOfflineInterviews.forEach((i: any, index: number) => {
+        interviewsWithSurveys.forEach((i: any, index: number) => {
           console.log(`  ${index + 1}. ID: ${i.id}`);
           console.log(`     Status: ${i.status}`);
           console.log(`     Survey: ${i.survey?.surveyName || i.surveyId || 'Unknown'}`);
@@ -140,7 +161,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       }
       
       // Fix incorrectly marked interviews: if status is 'synced' but has error, change to 'failed'
-      const fixedInterviews = (allOfflineInterviews || []).map((interview: any) => {
+      const fixedInterviews = interviewsWithSurveys.map((interview: any) => {
         if (interview.status === 'synced' && interview.error) {
           console.log(`⚠️ Fixing incorrectly marked interview: ${interview.id} - has error "${interview.error}" but marked as synced`);
           interview.status = 'failed';
@@ -288,53 +309,6 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             } catch (error) {
               console.error('Error deleting offline interview:', error);
               showSnackbar('Failed to delete interview', 'error');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleClearAllFailedInterviews = () => {
-    const failedCount = offlineInterviews.filter(
-      (i: any) => i.status === 'failed' || (i.status === 'synced' && i.error)
-    ).length;
-    
-    if (failedCount === 0) {
-      showSnackbar('No failed interviews to clear', 'info');
-      return;
-    }
-    
-    Alert.alert(
-      'Clear All Failed Interviews',
-      `Are you sure you want to delete all ${failedCount} failed offline interview(s)? This action cannot be undone.`,
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Clear All',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const failedInterviewIds = offlineInterviews
-                .filter((i: any) => i.status === 'failed' || (i.status === 'synced' && i.error))
-                .map((i: any) => i.id);
-              
-              for (const interviewId of failedInterviewIds) {
-                await offlineStorage.deleteSyncedInterview(interviewId);
-                console.log('✅ Deleted failed offline interview:', interviewId);
-              }
-              
-              showSnackbar(`Deleted ${failedInterviewIds.length} failed interview(s)`, 'success');
-              // Reload offline interviews and dashboard data
-              await loadOfflineInterviews();
-              await loadPendingInterviewsCount();
-              await loadDashboardData();
-            } catch (error) {
-              console.error('Error clearing failed interviews:', error);
-              showSnackbar('Failed to clear interviews', 'error');
             }
           },
         },
@@ -877,22 +851,6 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
               </Button>
             </View>
           )}
-          {/* Clear All button - moved to separate row to prevent overlap */}
-          {offlineInterviews.length > 0 && (
-            <View style={styles.clearAllContainer}>
-              <Button
-                mode="outlined"
-                onPress={handleClearAllFailedInterviews}
-                textColor="#dc2626"
-                buttonColor="#fff"
-                icon="delete-outline"
-                compact
-                style={styles.clearAllButton}
-              >
-                Clear All Failed
-              </Button>
-            </View>
-          )}
           
           {offlineInterviews.length > 0 ? (
             <>
@@ -1169,11 +1127,6 @@ const styles = StyleSheet.create({
     flex: 1,
     flexWrap: 'wrap',
   },
-  clearAllContainer: {
-    marginTop: 8,
-    marginBottom: 12,
-    alignItems: 'flex-end',
-  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
@@ -1422,9 +1375,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6b7280',
     fontWeight: '600',
-  },
-  clearAllButton: {
-    borderColor: '#dc2626',
   },
   errorText: {
     fontSize: 12,
