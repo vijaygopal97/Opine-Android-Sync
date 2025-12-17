@@ -121,9 +121,101 @@ class BundledDataService {
   }
 
   /**
+   * Extract numeric AC code from full AC code (e.g., "WB051" -> "51")
+   * Removes state prefix and leading zeros
+   */
+  private extractNumericACCode(fullACCode: string, stateCode?: string): string | null {
+    if (!fullACCode || typeof fullACCode !== 'string') return null;
+    
+    // If state code is provided, remove it (e.g., "WB051" -> "051")
+    let numericPart = fullACCode;
+    if (stateCode) {
+      if (numericPart.startsWith(stateCode)) {
+        numericPart = numericPart.substring(stateCode.length);
+      }
+    } else {
+      // Try to detect state code (first 2 letters)
+      const stateCodeMatch = numericPart.match(/^([A-Z]{2})(\d+)$/);
+      if (stateCodeMatch) {
+        numericPart = stateCodeMatch[2];
+      }
+    }
+    
+    // Remove leading zeros (e.g., "051" -> "51", "001" -> "1")
+    const numericCode = numericPart.replace(/^0+/, '') || numericPart;
+    return numericCode;
+  }
+
+  /**
+   * Find AC code from AC name using assemblyConstituencies.json
+   * This is the PRIMARY method - AC codes are reliable, names can vary
+   */
+  async findACCodeByName(state: string, acName: string): Promise<string | null> {
+    try {
+      const acData = await this.loadACData();
+      if (!acData || !acData.states || !acData.states[state]) return null;
+
+      const stateData = acData.states[state];
+      if (!stateData.assemblyConstituencies) return null;
+
+      const normalizedSearchName = String(acName).trim().toLowerCase().replace(/\s+/g, ' ');
+
+      // Search for matching AC name
+      for (const ac of stateData.assemblyConstituencies) {
+        if (!ac.acName) continue;
+
+        const normalizedACName = ac.acName.trim().toLowerCase().replace(/\s+/g, ' ');
+
+        // Exact match
+        if (normalizedACName === normalizedSearchName) {
+          return ac.acCode;
+        }
+
+        // Match without spaces (e.g., "English Bazaar" matches "Englishbazar")
+        const acNameNoSpaces = normalizedACName.replace(/\s+/g, '');
+        const searchNoSpaces = normalizedSearchName.replace(/\s+/g, '');
+        if (acNameNoSpaces === searchNoSpaces) {
+          return ac.acCode;
+        }
+
+        // Partial match
+        if (normalizedACName.includes(normalizedSearchName) ||
+            normalizedSearchName.includes(normalizedACName.replace(/\s*\([^)]*\)\s*/g, '').trim())) {
+          return ac.acCode;
+        }
+
+        // Try without parentheses
+        const acNameWithoutParens = normalizedACName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+        const searchWithoutParens = normalizedSearchName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+        if (acNameWithoutParens === searchWithoutParens) {
+          return ac.acCode;
+        }
+      }
+    } catch (error) {
+      console.error('Error finding AC code by name:', error);
+    }
+    return null;
+  }
+
+  /**
    * Find AC number by AC name in a state (similar to backend logic)
+   * This is a fallback method - primarily uses AC code lookup
    */
   async findACNumberByName(state: string, acName: string): Promise<string | null> {
+    // FIRST: Try to find AC code from assemblyConstituencies.json (most reliable)
+    const fullACCode = await this.findACCodeByName(state, acName);
+    if (fullACCode) {
+      // Extract numeric AC code (e.g., "WB051" -> "51")
+      const acData = await this.loadACData();
+      const stateCode = acData?.states?.[state]?.code;
+      const numericCode = this.extractNumericACCode(fullACCode, stateCode);
+      if (numericCode) {
+        console.log(`🔍 Found AC code for "${acName}": ${fullACCode} -> ${numericCode}`);
+        return numericCode;
+      }
+    }
+
+    // FALLBACK: Try direct name matching in polling_stations.json
     const data = await this.loadPollingStationData();
     if (!data || !data[state]) return null;
 
@@ -140,6 +232,13 @@ class BundledDataService {
 
       // Exact match
       if (normalizedStoredName === normalizedSearchName) {
+        return acNo;
+      }
+
+      // Match without spaces (e.g., "English Bazaar" matches "Englishbazar")
+      const storedNoSpaces = normalizedStoredName.replace(/\s+/g, '');
+      const searchNoSpaces = normalizedSearchName.replace(/\s+/g, '');
+      if (storedNoSpaces === searchNoSpaces) {
         return acNo;
       }
 
@@ -161,6 +260,7 @@ class BundledDataService {
 
   /**
    * Get groups for AC (by name or number) - similar to backend getGroupsForAC
+   * PRIMARY METHOD: Uses AC code lookup from assemblyConstituencies.json
    */
   async getGroupsForAC(state: string, acIdentifier: string): Promise<any> {
     const data = await this.loadPollingStationData();
@@ -168,34 +268,60 @@ class BundledDataService {
 
     if (!acIdentifier || (typeof acIdentifier !== 'string' && typeof acIdentifier !== 'number')) return null;
 
-    // Try to find by number first
+    // STEP 1: Try direct numeric lookup first (if identifier is already a number)
     if (data[state][acIdentifier]) {
+      console.log(`📦 Direct numeric lookup found AC: ${acIdentifier}`);
       return data[state][acIdentifier];
     }
 
-    // Try to find by name
+    // STEP 2: PRIMARY METHOD - Find AC code from assemblyConstituencies.json
+    // This is the most reliable method - AC codes never fail, names can vary
+    try {
+      const fullACCode = await this.findACCodeByName(state, String(acIdentifier));
+      if (fullACCode) {
+        // Extract numeric AC code (e.g., "WB051" -> "51")
+        const acData = await this.loadACData();
+        const stateCode = acData?.states?.[state]?.code;
+        const numericCode = this.extractNumericACCode(fullACCode, stateCode);
+        
+        if (numericCode && data[state][numericCode]) {
+          console.log(`📦 AC code lookup: "${acIdentifier}" -> ${fullACCode} -> ${numericCode} (SUCCESS)`);
+          return data[state][numericCode];
+        } else if (numericCode) {
+          console.warn(`⚠️ AC code lookup found ${numericCode} but not in polling_stations.json`);
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Error in AC code lookup, trying fallback:', error);
+    }
+
+    // STEP 3: FALLBACK - Try to find by name in polling_stations.json
     const acNo = await this.findACNumberByName(state, acIdentifier);
     if (acNo && data[state][acNo]) {
+      console.log(`📦 Name lookup found AC: ${acNo} for "${acIdentifier}"`);
       return data[state][acNo];
     }
 
-    // Last resort: try direct case-insensitive name matching
-    const normalizedSearch = String(acIdentifier).trim().toLowerCase();
+    // STEP 4: Last resort - try direct case-insensitive name matching
+    const normalizedSearch = String(acIdentifier).trim().toLowerCase().replace(/\s+/g, '');
     for (const [acNo, acData] of Object.entries(data[state])) {
       if (!acData.ac_name) continue;
 
-      const normalizedStoredName = acData.ac_name.trim().toLowerCase();
+      const normalizedStoredName = acData.ac_name.trim().toLowerCase().replace(/\s+/g, '');
       if (normalizedStoredName === normalizedSearch) {
+        console.log(`📦 Direct name match found AC: ${acNo} for "${acIdentifier}"`);
         return acData;
       }
 
       // Also try without parentheses
-      const nameWithoutParens = acData.ac_name?.replace(/\s*\([^)]*\)\s*/g, '').trim().toLowerCase();
+      const nameWithoutParens = acData.ac_name?.replace(/\s*\([^)]*\)\s*/g, '').trim().toLowerCase().replace(/\s+/g, '');
       if (nameWithoutParens === normalizedSearch) {
+        console.log(`📦 Name match (no parens) found AC: ${acNo} for "${acIdentifier}"`);
         return acData;
       }
     }
 
+    console.warn(`⚠️ Could not find AC "${acIdentifier}" in state "${state}"`);
     return null;
   }
 
