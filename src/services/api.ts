@@ -273,26 +273,51 @@ class ApiService {
         const survey = surveys.find((s: any) => s._id === surveyId || s.id === surveyId);
         
         // Determine if AC selection is required
+        // CRITICAL: Match backend logic exactly - for target survey "68fd1915d41841da463f0d46",
+        // require AC selection in CAPI mode even if interviewer has no assigned ACs
+        const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
         let requiresACSelection = false;
         let assignedACs: string[] = [];
         
         if (survey) {
           // Check for AC assignment in different assignment types
+          let foundAssignment = false;
+          
           if (survey.assignedInterviewers && survey.assignedInterviewers.length > 0) {
             const assignment = survey.assignedInterviewers.find((a: any) => a.status === 'assigned');
-            if (assignment && assignment.assignedACs && assignment.assignedACs.length > 0) {
-              requiresACSelection = survey.assignACs === true;
-              assignedACs = assignment.assignedACs || [];
+            if (assignment) {
+              foundAssignment = true;
+              if (assignment.assignedACs && assignment.assignedACs.length > 0) {
+                requiresACSelection = survey.assignACs === true;
+                assignedACs = assignment.assignedACs || [];
+              } else if (isTargetSurvey) {
+                // For target survey, require AC selection even if no assigned ACs
+                requiresACSelection = survey.assignACs === true;
+                assignedACs = [];
+              }
             }
           }
           
           // Check CAPI assignments
-          if (survey.capiInterviewers && survey.capiInterviewers.length > 0) {
+          if (!foundAssignment && survey.capiInterviewers && survey.capiInterviewers.length > 0) {
             const assignment = survey.capiInterviewers.find((a: any) => a.status === 'assigned');
-            if (assignment && assignment.assignedACs && assignment.assignedACs.length > 0) {
-              requiresACSelection = survey.assignACs === true;
-              assignedACs = assignment.assignedACs || [];
+            if (assignment) {
+              foundAssignment = true;
+              if (assignment.assignedACs && assignment.assignedACs.length > 0) {
+                requiresACSelection = survey.assignACs === true;
+                assignedACs = assignment.assignedACs || [];
+              } else if (isTargetSurvey) {
+                // For target survey, require AC selection even if no assigned ACs
+                requiresACSelection = survey.assignACs === true;
+                assignedACs = [];
+              }
             }
+          }
+          
+          // If no assignment found but it's target survey, still require AC selection
+          if (!foundAssignment && isTargetSurvey && survey.assignACs === true) {
+            requiresACSelection = true;
+            assignedACs = [];
           }
         }
         
@@ -344,24 +369,49 @@ class ApiService {
         const survey = surveys.find((s: any) => s._id === surveyId || s.id === surveyId);
         
         // Determine if AC selection is required
+        // CRITICAL: Match backend logic exactly - for target survey "68fd1915d41841da463f0d46",
+        // require AC selection in CAPI mode even if interviewer has no assigned ACs
+        const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
         let requiresACSelection = false;
         let assignedACs: string[] = [];
         
         if (survey) {
+          let foundAssignment = false;
+          
           if (survey.assignedInterviewers && survey.assignedInterviewers.length > 0) {
             const assignment = survey.assignedInterviewers.find((a: any) => a.status === 'assigned');
-            if (assignment && assignment.assignedACs && assignment.assignedACs.length > 0) {
-              requiresACSelection = survey.assignACs === true;
-              assignedACs = assignment.assignedACs || [];
+            if (assignment) {
+              foundAssignment = true;
+              if (assignment.assignedACs && assignment.assignedACs.length > 0) {
+                requiresACSelection = survey.assignACs === true;
+                assignedACs = assignment.assignedACs || [];
+              } else if (isTargetSurvey) {
+                // For target survey, require AC selection even if no assigned ACs
+                requiresACSelection = survey.assignACs === true;
+                assignedACs = [];
+              }
             }
           }
           
-          if (survey.capiInterviewers && survey.capiInterviewers.length > 0) {
+          if (!foundAssignment && survey.capiInterviewers && survey.capiInterviewers.length > 0) {
             const assignment = survey.capiInterviewers.find((a: any) => a.status === 'assigned');
-            if (assignment && assignment.assignedACs && assignment.assignedACs.length > 0) {
-              requiresACSelection = survey.assignACs === true;
-              assignedACs = assignment.assignedACs || [];
+            if (assignment) {
+              foundAssignment = true;
+              if (assignment.assignedACs && assignment.assignedACs.length > 0) {
+                requiresACSelection = survey.assignACs === true;
+                assignedACs = assignment.assignedACs || [];
+              } else if (isTargetSurvey) {
+                // For target survey, require AC selection even if no assigned ACs
+                requiresACSelection = survey.assignACs === true;
+                assignedACs = [];
+              }
             }
+          }
+          
+          // If no assignment found but it's target survey, still require AC selection
+          if (!foundAssignment && isTargetSurvey && survey.assignACs === true) {
+            requiresACSelection = true;
+            assignedACs = [];
           }
         }
         
