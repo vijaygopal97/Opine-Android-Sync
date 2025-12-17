@@ -99,6 +99,90 @@ let globalRecording: Audio.Recording | null = null;
 // Lock to prevent concurrent recording starts
 let isStartingRecording = false;
 
+/**
+ * Proactively cache polling groups and stations for ACs
+ * This ensures data is available even if internet is lost during interview
+ */
+async function cachePollingDataForACs(acs: string[], state: string): Promise<void> {
+  if (!acs || acs.length === 0) {
+    console.log('📥 No ACs to cache polling data for');
+    return;
+  }
+  
+  console.log(`📥 Starting proactive cache for ${acs.length} AC(s) in state: ${state}`);
+  const startTime = Date.now();
+  let groupsCached = 0;
+  let stationsCached = 0;
+  
+  try {
+    // Check if online - only cache if online
+    const isOnline = await apiService.isOnline();
+    if (!isOnline) {
+      console.log('📴 Offline - skipping proactive cache (will use existing cache)');
+      return;
+    }
+    
+    // Cache polling groups and stations for each AC
+    for (let i = 0; i < acs.length; i++) {
+      const ac = acs[i];
+      if (!ac) continue;
+      
+      try {
+        // Fetch and cache polling groups for this AC
+        console.log(`📥 [${i + 1}/${acs.length}] Caching groups for AC: ${ac}`);
+        const groupsResult = await apiService.getGroupsByAC(state, ac);
+        
+        if (groupsResult.success && groupsResult.data) {
+          groupsCached++;
+          const groups = groupsResult.data.groups || [];
+          console.log(`✅ Cached groups for ${ac}: ${groups.length} group(s)`);
+          
+          // Cache polling stations for each group
+          for (let j = 0; j < groups.length; j++) {
+            const groupItem = groups[j];
+            let groupName: string | null = null;
+            
+            // Handle both string and object formats
+            if (typeof groupItem === 'string') {
+              groupName = groupItem.trim();
+            } else if (groupItem && typeof groupItem === 'object') {
+              groupName = (groupItem.name || groupItem.groupName || groupItem.group || groupItem.value || '').toString().trim();
+            }
+            
+            if (!groupName || groupName.length === 0) {
+              continue;
+            }
+            
+            try {
+              // Fetch and cache polling stations for this group
+              const stationsResult = await apiService.getPollingStationsByGroup(state, ac, groupName);
+              if (stationsResult.success && stationsResult.data) {
+                stationsCached++;
+                const stationCount = stationsResult.data.stations?.length || 0;
+                console.log(`✅ Cached stations for ${ac} - ${groupName}: ${stationCount} station(s)`);
+              }
+            } catch (stationError) {
+              console.warn(`⚠️ Failed to cache stations for ${ac} - ${groupName}:`, stationError);
+              // Continue with next group
+            }
+          }
+        } else {
+          console.warn(`⚠️ Failed to cache groups for ${ac}:`, groupsResult.message);
+        }
+      } catch (error) {
+        console.error(`❌ Error caching data for AC ${ac}:`, error);
+        // Continue with next AC
+      }
+    }
+    
+    const duration = Date.now() - startTime;
+    console.log(`✅ Proactive cache complete: ${groupsCached} AC groups, ${stationsCached} group stations cached in ${duration}ms`);
+  } catch (error) {
+    console.error('❌ Error in proactive cache:', error);
+    // Don't throw - this is a background operation
+  }
+}
+
 export default function InterviewInterface({ navigation, route }: any) {
   const { survey, responseId, isContinuing, isCatiMode: routeIsCatiMode } = route.params;
   
@@ -1301,6 +1385,14 @@ export default function InterviewInterface({ navigation, route }: any) {
                 if (allACsResponse.success && allACsResponse.data) {
                   setAllACs(allACsResponse.data.acs || []);
                   console.log('✅ Fetched all ACs:', allACsResponse.data.count, 'ACs');
+                  
+                  // CRITICAL: Proactively cache polling groups and stations for all ACs
+                  // This ensures data is available even if internet is lost during interview
+                  console.log('📥 Proactively caching polling data for all ACs...');
+                  cachePollingDataForACs(allACsResponse.data.acs || [], state).catch((err) => {
+                    console.error('⚠️ Error proactively caching polling data:', err);
+                    // Don't block interview - continue even if caching fails
+                  });
                 } else if (allACsResponse.error === 'OFFLINE_NO_CACHE') {
                   console.log('📴 Offline mode - no cached ACs available');
                   // Still show the question, but with empty list (user can try syncing)
@@ -1318,6 +1410,18 @@ export default function InterviewInterface({ navigation, route }: any) {
               }
             } else {
               setAllACs([]);
+              
+              // CRITICAL: Proactively cache polling groups and stations for assigned ACs
+              // This ensures data is available even if internet is lost during interview
+              const assignedACsList = result.response.assignedACs || [];
+              if (assignedACsList.length > 0 && needsACSelection) {
+                const state = survey?.acAssignmentState || result.response.acAssignmentState || 'West Bengal';
+                console.log('📥 Proactively caching polling data for', assignedACsList.length, 'assigned AC(s)...');
+                cachePollingDataForACs(assignedACsList, state).catch((err) => {
+                  console.error('⚠️ Error proactively caching polling data:', err);
+                  // Don't block interview - continue even if caching fails
+                });
+              }
             }
             
             // Show message if offline
@@ -1533,12 +1637,26 @@ export default function InterviewInterface({ navigation, route }: any) {
         } else {
           console.error('❌ Failed to fetch groups:', response.message);
           console.error('❌ Response:', response);
-          // Show user-friendly error message
-          Alert.alert(
-            'Failed to Load Groups',
-            response.message || 'Unable to load groups for the selected AC. Please check your internet connection or try syncing from the dashboard.',
-            [{ text: 'OK' }]
-          );
+          
+          // Check if we're offline - if so, try to use cached data more aggressively
+          const isOnline = await apiService.isOnline();
+          if (!isOnline) {
+            console.log('📴 Offline - checking if data was proactively cached...');
+            // Data should have been proactively cached when interview started
+            // If not available, show helpful message
+            Alert.alert(
+              'Offline Mode',
+              'Groups are not available offline. Please sync survey data from the dashboard when online, or ensure you have internet connection when starting an interview.',
+              [{ text: 'OK' }]
+            );
+          } else {
+            // Online but failed - show error
+            Alert.alert(
+              'Failed to Load Groups',
+              response.message || 'Unable to load groups for the selected AC. Please check your internet connection or try syncing from the dashboard.',
+              [{ text: 'OK' }]
+            );
+          }
           setAvailableGroups([]);
         }
       } catch (error: any) {
@@ -1586,6 +1704,19 @@ export default function InterviewInterface({ navigation, route }: any) {
           setAvailablePollingStations(stations);
         } else {
           console.error('Failed to fetch polling stations:', response.message);
+          
+          // Check if we're offline - if so, try to use cached data more aggressively
+          const isOnline = await apiService.isOnline();
+          if (!isOnline) {
+            console.log('📴 Offline - checking if polling stations were proactively cached...');
+            // Data should have been proactively cached when interview started
+            // If not available, show helpful message
+            Alert.alert(
+              'Offline Mode',
+              'Polling stations are not available offline. Please sync survey data from the dashboard when online, or ensure you have internet connection when starting an interview.',
+              [{ text: 'OK' }]
+            );
+          }
           setAvailablePollingStations([]);
         }
       } catch (error) {
