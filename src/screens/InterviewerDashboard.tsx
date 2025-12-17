@@ -85,24 +85,53 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const loadOfflineInterviews = async () => {
     try {
       const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
-      console.log('📦 All offline interviews:', allOfflineInterviews.length);
-      console.log('📦 Offline interviews details:', allOfflineInterviews.map((i: any) => ({ id: i.id, status: i.status, surveyName: i.survey?.surveyName })));
+      console.log('📦 ========== OFFLINE INTERVIEWS DEBUG ==========');
+      console.log('📦 Total offline interviews in storage:', allOfflineInterviews.length);
       
-      // Show ALL offline interviews (pending, failed, and syncing) - not just pending/failed
-      // This ensures users can see all their offline interviews
+      if (allOfflineInterviews.length > 0) {
+        console.log('📦 Offline interviews details:');
+        allOfflineInterviews.forEach((i: any, index: number) => {
+          console.log(`  ${index + 1}. ID: ${i.id}`);
+          console.log(`     Status: ${i.status}`);
+          console.log(`     Survey: ${i.survey?.surveyName || i.surveyId || 'Unknown'}`);
+          console.log(`     Saved: ${i.startTime ? new Date(i.startTime).toLocaleString() : 'N/A'}`);
+          console.log(`     Completed: ${i.metadata?.isCompleted ? 'Yes' : 'No'}`);
+          console.log(`     Sync Attempts: ${i.syncAttempts || 0}`);
+          if (i.error) console.log(`     Error: ${i.error}`);
+        });
+      } else {
+        console.log('📦 No offline interviews found in local storage');
+      }
+      
+      // Show ALL offline interviews EXCEPT those with status 'synced' (they should have been deleted)
+      // Include: pending, failed, syncing, and any interviews without a status (legacy)
       const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
-        (interview: any) => interview.status === 'pending' || interview.status === 'failed' || interview.status === 'syncing'
+        (interview: any) => {
+          const status = interview.status;
+          // Include if status is pending, failed, syncing, or undefined/null (legacy interviews)
+          const shouldInclude = !status || status === 'pending' || status === 'failed' || status === 'syncing';
+          if (!shouldInclude && status === 'synced') {
+            console.log(`⚠️ Found synced interview that should have been deleted: ${interview.id}`);
+          }
+          return shouldInclude;
+        }
       );
       
-      console.log('📦 Filtered offline interviews (pending/failed/syncing):', pendingOfflineInterviews.length);
+      console.log('📦 Filtered offline interviews (excluding synced):', pendingOfflineInterviews.length);
+      console.log('📦 ============================================');
+      
       setOfflineInterviews(pendingOfflineInterviews);
       // Also update pending count (only for pending/failed, not syncing)
       const pendingCount = (allOfflineInterviews || []).filter(
-        (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+        (interview: any) => {
+          const status = interview.status;
+          return !status || status === 'pending' || status === 'failed';
+        }
       ).length;
       setPendingInterviewsCount(pendingCount);
+      console.log('📊 Pending interviews count:', pendingCount);
     } catch (error) {
-      console.error('Error loading offline interviews:', error);
+      console.error('❌ Error loading offline interviews:', error);
     }
   };
 
