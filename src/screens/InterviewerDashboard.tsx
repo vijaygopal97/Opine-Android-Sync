@@ -105,13 +105,17 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       
       // Show ALL offline interviews EXCEPT those with status 'synced' (they should have been deleted)
       // Include: pending, failed, syncing, and any interviews without a status (legacy)
+      // CRITICAL: Also show interviews with 'synced' status if they still exist (they shouldn't, but if they do, user needs to see them)
       const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
         (interview: any) => {
           const status = interview.status;
-          // Include if status is pending, failed, syncing, or undefined/null (legacy interviews)
-          const shouldInclude = !status || status === 'pending' || status === 'failed' || status === 'syncing';
-          if (!shouldInclude && status === 'synced') {
-            console.log(`⚠️ Found synced interview that should have been deleted: ${interview.id}`);
+          // Include if status is pending, failed, syncing, undefined/null (legacy), OR synced (shouldn't exist but show if it does)
+          // Actually, let's show ALL interviews except those that were successfully synced AND deleted
+          // If an interview has status 'synced' but still exists, it means deletion failed - show it so user can retry
+          const shouldInclude = !status || status === 'pending' || status === 'failed' || status === 'syncing' || status === 'synced';
+          if (status === 'synced') {
+            console.log(`⚠️ Found interview with 'synced' status that still exists (deletion may have failed): ${interview.id}`);
+            console.log(`⚠️ This interview should have been deleted but wasn't - showing it for user visibility`);
           }
           return shouldInclude;
         }
