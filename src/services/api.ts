@@ -1078,72 +1078,13 @@ class ApiService {
         return { success: true, data: cachedData };
       }
       
-      // If force offline mode is enabled, don't try online fetch
-      if (this.forceOfflineMode) {
-        console.log('🔴 Force offline mode - no bundled or cached data found for getGroupsByAC');
-        return { success: false, message: 'Force offline mode - no data available' };
-      }
-
-      // Check if online
-      const isOnline = await this.isOnline();
-      if (!isOnline) {
-        console.log('📴 Offline - no cached polling groups found for:', state, acIdentifier, '(normalized:', normalizedAC, ')');
-        // Try one more time with all cached groups to see what's available
-        if (cacheForRead) {
-          try {
-            const allGroups = await cacheForRead.getAllPollingGroups();
-            const availableACs = Object.keys(allGroups)
-              .filter(key => key.startsWith(`${state}::`))
-              .map(key => key.replace(`${state}::`, ''));
-            if (availableACs.length > 0) {
-              console.log('📋 Available cached ACs for', state, ':', availableACs.join(', '));
-            }
-          } catch (e) {
-            // Ignore
-          }
-        }
-        return {
-          success: false,
-          message: 'No internet connection and no cached data available',
-        };
-      }
-
-      // Fetch from API using normalized AC name
-      const headers = await this.getHeaders();
-      let response;
-      try {
-        const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(normalizedAC)}`;
-        response = await axios.get(url, { headers });
-      } catch (firstError: any) {
-        // If normalized name fails, try original name as fallback
-        if (normalizedAC !== acIdentifier && firstError.response?.status === 404) {
-          console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acIdentifier}"`);
-      const url = `${this.baseURL}/api/polling-stations/groups/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}`;
-          response = await axios.get(url, { headers });
-        } else {
-          throw firstError;
-        }
-      }
-      
-      // Cache the data using both AC code (if available) and normalized name for lookup flexibility
-      const cacheForSave = await this.getOfflineCache();
-      if (cacheForSave && response.data.success && response.data.data) {
-        try {
-          const groupsData = response.data.data;
-          // Save with normalized AC name
-          await cacheForSave.savePollingGroups(state, normalizedAC, groupsData);
-          
-          // Also save with AC code (ac_no) if available for direct code-based lookup
-          if (groupsData.ac_no) {
-            await cacheForSave.savePollingGroups(state, groupsData.ac_no.toString(), groupsData);
-            console.log(`📦 Cached groups with AC code: ${groupsData.ac_no} (name: ${normalizedAC})`);
-          }
-        } catch (cacheError) {
-          // Cache save failed, continue
-        }
-      }
-      
-      return response.data;
+      // ALWAYS use bundled data - never make API calls for groups/polling stations
+      // Bundled data is always available and up-to-date
+      console.log('📦 Bundled data not found, but no API call needed - data should be in bundled files');
+      return {
+        success: false,
+        message: 'Groups not found in bundled data. Please ensure polling_stations.json is up to date.',
+      };
     } catch (error: any) {
       console.error('Get groups by AC error:', error);
       console.error('Error response:', error.response?.data);
@@ -1295,59 +1236,13 @@ class ApiService {
         return { success: true, data: cachedData };
       }
       
-      // If force offline mode is enabled, don't try online fetch
-      if (this.forceOfflineMode) {
-        console.log('🔴 Force offline mode - no bundled or cached data found for getPollingStationsByGroup');
-        return { success: false, message: 'Force offline mode - no data available' };
-      }
-
-      // Check if online
-      const isOnline = await this.isOnline();
-      if (!isOnline) {
-        console.log('📴 Offline - no cached polling stations found for:', state, acIdentifier, groupName, '(normalized:', normalizedAC, ')');
-        return {
-          success: false,
-          message: 'No internet connection and no cached data available',
-        };
-      }
-
-      // Fetch from API using normalized AC name
-      const headers = await this.getHeaders();
-      let response;
-      try {
-        const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(normalizedAC)}/${encodeURIComponent(groupName)}`;
-        response = await axios.get(url, { headers });
-      } catch (firstError: any) {
-        // If normalized name fails, try original name as fallback
-        if (normalizedAC !== acIdentifier && firstError.response?.status === 404) {
-          console.log(`⚠️ Normalized AC "${normalizedAC}" not found, trying original "${acIdentifier}"`);
-      const url = `${this.baseURL}/api/polling-stations/stations/${encodeURIComponent(state)}/${encodeURIComponent(acIdentifier)}/${encodeURIComponent(groupName)}`;
-          response = await axios.get(url, { headers });
-        } else {
-          throw firstError;
-        }
-      }
-      
-      // Cache the data using both AC code (if available) and normalized name
-      const cacheForSave = await this.getOfflineCache();
-      if (cacheForSave && response.data.success && response.data.data) {
-        try {
-          const stationsData = response.data.data;
-          // Save with normalized AC name
-          await cacheForSave.savePollingStations(state, normalizedAC, groupName, stationsData);
-          
-          // Also try to get AC code from cached groups data for this AC
-          const cachedGroups = await cacheForSave.getPollingGroups(state, normalizedAC);
-          if (cachedGroups && (cachedGroups as any).ac_no) {
-            await cacheForSave.savePollingStations(state, (cachedGroups as any).ac_no.toString(), groupName, stationsData);
-            console.log(`📦 Cached stations with AC code: ${(cachedGroups as any).ac_no} (name: ${normalizedAC})`);
-          }
-        } catch (cacheError) {
-          // Cache save failed, continue
-        }
-      }
-      
-      return response.data;
+      // ALWAYS use bundled data - never make API calls for groups/polling stations
+      // Bundled data is always available and up-to-date
+      console.log('📦 Bundled data not found, but no API call needed - data should be in bundled files');
+      return {
+        success: false,
+        message: 'Polling stations not found in bundled data. Please ensure polling_stations.json is up to date.',
+      };
     } catch (error: any) {
       console.error('Get polling stations by group error:', error);
       console.error('Error response:', error.response?.data);
