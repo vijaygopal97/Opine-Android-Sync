@@ -103,33 +103,49 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         console.log('📦 No offline interviews found in local storage');
       }
       
-      // Show ALL offline interviews EXCEPT those with status 'synced' (they should have been deleted)
-      // Include: pending, failed, syncing, and any interviews without a status (legacy)
-      // CRITICAL: Also show interviews with 'synced' status if they still exist (they shouldn't, but if they do, user needs to see them)
-      const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
+      // Fix incorrectly marked interviews: if status is 'synced' but has error, change to 'failed'
+      const fixedInterviews = (allOfflineInterviews || []).map((interview: any) => {
+        if (interview.status === 'synced' && interview.error) {
+          console.log(`⚠️ Fixing incorrectly marked interview: ${interview.id} - has error "${interview.error}" but marked as synced`);
+          interview.status = 'failed';
+          // Save the fixed status
+          offlineStorage.saveOfflineInterview(interview).catch(err => {
+            console.error('Error fixing interview status:', err);
+          });
+        }
+        return interview;
+      });
+      
+      // Show ALL offline interviews EXCEPT those that are truly synced (no errors)
+      // Include: pending, failed, syncing, and synced ones with errors (they need retry)
+      const pendingOfflineInterviews = fixedInterviews.filter(
         (interview: any) => {
           const status = interview.status;
-          // Include if status is pending, failed, syncing, undefined/null (legacy), OR synced (shouldn't exist but show if it does)
-          // Actually, let's show ALL interviews except those that were successfully synced AND deleted
-          // If an interview has status 'synced' but still exists, it means deletion failed - show it so user can retry
-          const shouldInclude = !status || status === 'pending' || status === 'failed' || status === 'syncing' || status === 'synced';
-          if (status === 'synced') {
-            console.log(`⚠️ Found interview with 'synced' status that still exists (deletion may have failed): ${interview.id}`);
-            console.log(`⚠️ This interview should have been deleted but wasn't - showing it for user visibility`);
+          // Include if status is pending, failed, syncing, undefined/null (legacy), OR synced with error
+          const shouldInclude = !status || 
+                               status === 'pending' || 
+                               status === 'failed' || 
+                               status === 'syncing' || 
+                               (status === 'synced' && interview.error);
+          if (status === 'synced' && interview.error) {
+            console.log(`⚠️ Found interview with 'synced' status but has error - will show for retry: ${interview.id}`);
           }
           return shouldInclude;
         }
       );
       
-      console.log('📦 Filtered offline interviews (excluding synced):', pendingOfflineInterviews.length);
+      console.log('📦 Filtered offline interviews (including incorrectly synced):', pendingOfflineInterviews.length);
       console.log('📦 ============================================');
       
       setOfflineInterviews(pendingOfflineInterviews);
-      // Also update pending count (only for pending/failed, not syncing)
-      const pendingCount = (allOfflineInterviews || []).filter(
+      // Also update pending count (include synced ones with errors as they need retry)
+      const pendingCount = fixedInterviews.filter(
         (interview: any) => {
           const status = interview.status;
-          return !status || status === 'pending' || status === 'failed';
+          return !status || 
+                 status === 'pending' || 
+                 status === 'failed' ||
+                 (status === 'synced' && interview.error);
         }
       ).length;
       setPendingInterviewsCount(pendingCount);
@@ -271,17 +287,42 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         setMyInterviews([]);
       }
       
-      // Always load offline interviews - show pending, failed, and syncing ones (not synced)
+      // Always load offline interviews - show pending, failed, syncing, AND incorrectly marked synced ones
       const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
       console.log('🌐 Online mode - All offline interviews:', allOfflineInterviews.length);
-      const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
-        (interview: any) => interview.status === 'pending' || interview.status === 'failed' || interview.status === 'syncing'
+      
+      // Fix incorrectly marked interviews: if status is 'synced' but has error, change to 'failed'
+      const fixedInterviews = (allOfflineInterviews || []).map((interview: any) => {
+        if (interview.status === 'synced' && interview.error) {
+          console.log(`⚠️ Fixing incorrectly marked interview: ${interview.id} - has error "${interview.error}" but marked as synced`);
+          interview.status = 'failed';
+          // Save the fixed status
+          offlineStorage.saveOfflineInterview(interview).catch(err => {
+            console.error('Error fixing interview status:', err);
+          });
+        }
+        return interview;
+      });
+      
+      // Show all interviews except those that are truly synced (no errors)
+      const pendingOfflineInterviews = fixedInterviews.filter(
+        (interview: any) => {
+          // Include if status is pending, failed, syncing, or synced with error
+          return interview.status === 'pending' || 
+                 interview.status === 'failed' || 
+                 interview.status === 'syncing' ||
+                 (interview.status === 'synced' && interview.error); // Include synced ones with errors
+        }
       );
       console.log('🌐 Online mode - Filtered interviews:', pendingOfflineInterviews.length);
       setOfflineInterviews(pendingOfflineInterviews);
-      // Update pending count
-      const pendingCount = (allOfflineInterviews || []).filter(
-        (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+      // Update pending count (include synced ones with errors as they need retry)
+      const pendingCount = fixedInterviews.filter(
+        (interview: any) => {
+          return interview.status === 'pending' || 
+                 interview.status === 'failed' ||
+                 (interview.status === 'synced' && interview.error);
+        }
       ).length;
       setPendingInterviewsCount(pendingCount);
     } catch (error) {
