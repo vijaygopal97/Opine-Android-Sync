@@ -148,8 +148,45 @@ class OfflineDataCacheService {
   async getPollingGroups(state: string, acIdentifier: string): Promise<PollingGroup | null> {
     try {
       const allGroups = await this.getAllPollingGroups();
-      const key = `${state}::${acIdentifier}`;
-      return allGroups[key] || null;
+      
+      // Try exact match first
+      let key = `${state}::${acIdentifier}`;
+      let result = allGroups[key];
+      if (result) {
+        return result;
+      }
+      
+      // If not found, try to find by AC code if acIdentifier is an AC name
+      // The cache might be stored with AC code as key, but we're searching by name
+      // Check if any cached entry has matching ac_name
+      for (const [cachedKey, cachedData] of Object.entries(allGroups)) {
+        if (cachedKey.startsWith(`${state}::`)) {
+          const cachedACIdentifier = cachedKey.replace(`${state}::`, '');
+          const cachedACName = (cachedData as any).ac_name;
+          
+          // Check if the cached AC name matches our search identifier
+          if (cachedACName && (
+            cachedACName.toLowerCase() === acIdentifier.toLowerCase() ||
+            cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim() === acIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim()
+          )) {
+            console.log(`📦 Found cached groups by AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
+            return cachedData as PollingGroup;
+          }
+          
+          // Also check if cached key is AC code and we can match by name
+          // Try to match if cachedACIdentifier is numeric (AC code) and we have ac_name match
+          if (/^\d+$/.test(cachedACIdentifier) && cachedACName) {
+            const normalizedCachedName = cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim();
+            const normalizedSearchName = acIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim();
+            if (normalizedCachedName === normalizedSearchName) {
+              console.log(`📦 Found cached groups by AC code match: "${acIdentifier}" -> code "${cachedACIdentifier}" (name: "${cachedACName}")`);
+              return cachedData as PollingGroup;
+            }
+          }
+        }
+      }
+      
+      return null;
     } catch (error) {
       console.error('Error getting polling groups:', error);
       return null;
