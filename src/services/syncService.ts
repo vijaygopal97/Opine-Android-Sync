@@ -492,9 +492,23 @@ class SyncService {
   /**
    * Build final responses array from interview responses
    */
-  private buildFinalResponses(interview: OfflineInterview): any[] {
+  private async buildFinalResponses(interview: OfflineInterview): Promise<any[]> {
     const finalResponses: any[] = [];
-    const survey = interview.survey;
+    
+    // Fetch survey from cache if not stored in interview
+    let survey = interview.survey;
+    if (!survey && interview.surveyId) {
+      const { offlineStorage } = await import('./offlineStorage');
+      const surveys = await offlineStorage.getSurveys();
+      survey = surveys.find((s: any) => s._id === interview.surveyId || s.id === interview.surveyId);
+      if (!survey) {
+        throw new Error(`Survey ${interview.surveyId} not found in cache for buildFinalResponses`);
+      }
+    }
+    
+    if (!survey) {
+      throw new Error('Survey is required to build final responses');
+    }
 
     // Get all questions from survey
     const allQuestions: any[] = [];
