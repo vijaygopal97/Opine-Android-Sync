@@ -1383,19 +1383,40 @@ export default function InterviewInterface({ navigation, route }: any) {
               try {
                 const allACsResponse = await apiService.getAllACsForState(state);
                 if (allACsResponse.success && allACsResponse.data) {
-                  setAllACs(allACsResponse.data.acs || []);
-                  console.log('✅ Fetched all ACs:', allACsResponse.data.count, 'ACs');
+                  const fetchedACs = allACsResponse.data.acs || [];
+                  const acCount = allACsResponse.data.count || fetchedACs.length;
                   
-                  // CRITICAL: Proactively cache polling groups and stations for all ACs
-                  // This ensures data is available even if internet is lost during interview
-                  console.log('📥 Proactively caching polling data for all ACs...');
-                  cachePollingDataForACs(allACsResponse.data.acs || [], state).catch((err) => {
-                    console.error('⚠️ Error proactively caching polling data:', err);
-                    // Don't block interview - continue even if caching fails
-                  });
+                  // CRITICAL: Validate that we got complete master data, not contaminated cache
+                  // West Bengal should have ~294 ACs, reject if we get suspiciously few
+                  const minExpectedACs = state === 'West Bengal' ? 200 : 50;
+                  if (acCount < minExpectedACs) {
+                    console.error('❌ Suspicious AC count:', acCount, '(expected at least', minExpectedACs, ')');
+                    console.error('❌ This might be contaminated cache from another user - rejecting');
+                    Alert.alert(
+                      'Incomplete Data',
+                      'The cached AC list appears incomplete. Please ensure you have internet connection when starting the interview to fetch complete data.',
+                      [{ text: 'OK' }]
+                    );
+                    setAllACs([]);
+                  } else {
+                    console.log('✅ Fetched all ACs:', acCount, 'ACs (validated complete master data)');
+                    setAllACs(fetchedACs);
+                    
+                    // CRITICAL: Proactively cache polling groups and stations for all ACs
+                    // This ensures data is available even if internet is lost during interview
+                    console.log('📥 Proactively caching polling data for all ACs...');
+                    cachePollingDataForACs(fetchedACs, state).catch((err) => {
+                      console.error('⚠️ Error proactively caching polling data:', err);
+                      // Don't block interview - continue even if caching fails
+                    });
+                  }
                 } else if (allACsResponse.error === 'OFFLINE_NO_CACHE') {
-                  console.log('📴 Offline mode - no cached ACs available');
-                  // Still show the question, but with empty list (user can try syncing)
+                  console.log('📴 Offline mode - no valid cached ACs available');
+                  Alert.alert(
+                    'Offline Mode',
+                    'Complete AC list is not available offline. Please sync survey details from the dashboard when online, or ensure you have internet connection when starting the interview.',
+                    [{ text: 'OK' }]
+                  );
                   setAllACs([]);
                 } else {
                   console.error('Failed to fetch all ACs:', allACsResponse);
@@ -1403,7 +1424,11 @@ export default function InterviewInterface({ navigation, route }: any) {
                 }
               } catch (error) {
                 console.error('Error fetching all ACs:', error);
-                // Even on error, show the question (might work offline with cached data)
+                Alert.alert(
+                  'Error Loading ACs',
+                  'Failed to load Assembly Constituencies. Please check your internet connection and try again.',
+                  [{ text: 'OK' }]
+                );
                 setAllACs([]);
               } finally {
                 setLoadingAllACs(false);

@@ -1580,13 +1580,42 @@ class ApiService {
   // Get all Assembly Constituencies for a state
   async getAllACsForState(state: string): Promise<any> {
     try {
-      // Check offline cache first
+      // Check if online first - if online, always fetch fresh from API to ensure we have ALL ACs
+      const isOnline = await this.isOnline();
+      
+      if (isOnline) {
+        // Always fetch from API when online to ensure we have complete, up-to-date data
+        console.log('🌐 Online - fetching all ACs for state from API:', state);
+        const headers = await this.getHeaders();
+        const url = `${this.baseURL}/api/master-data/acs/${encodeURIComponent(state)}`;
+        const response = await axios.get(url, { headers });
+        
+        // Cache the complete data
+        const cacheForSave = await this.getOfflineCache();
+        if (cacheForSave && response.data.success && response.data.data) {
+          try {
+            const acsToCache = response.data.data.acs || [];
+            await cacheForSave.saveAllACsForState(state, acsToCache);
+            console.log('✅ Cached', acsToCache.length, 'ACs for state:', state, '(complete master data)');
+          } catch (cacheError) {
+            console.error('⚠️ Cache save failed:', cacheError);
+            // Continue - cache save failure is not critical
+          }
+        }
+        
+        return response.data;
+      }
+      
+      // Offline mode - check cache
       const cacheForRead = await this.getOfflineCache();
       if (cacheForRead) {
         try {
           const cachedACs = await cacheForRead.getAllACsForState(state);
-          if (cachedACs && cachedACs.length > 0) {
-            console.log('📦 Using cached ACs for state:', state, cachedACs.length, 'ACs');
+          // CRITICAL: Only use cache if it has a reasonable number of ACs (West Bengal has ~294 ACs)
+          // If cache has very few ACs (like 3), it's likely incomplete/contaminated data
+          const minExpectedACs = state === 'West Bengal' ? 200 : 50; // Minimum threshold
+          if (cachedACs && cachedACs.length >= minExpectedACs) {
+            console.log('📦 Using cached ACs for state:', state, cachedACs.length, 'ACs (complete cache)');
             return {
               success: true,
               data: {
@@ -1595,39 +1624,31 @@ class ApiService {
                 count: cachedACs.length
               }
             };
+          } else if (cachedACs && cachedACs.length > 0) {
+            // Cache exists but has too few ACs - likely contaminated/incomplete
+            console.warn('⚠️ Cached ACs for state', state, 'has only', cachedACs.length, 'ACs (expected at least', minExpectedACs, ')');
+            console.warn('⚠️ This cache appears incomplete/contaminated - rejecting and returning empty');
+            // Clear the contaminated cache by saving empty array
+            try {
+              await cacheForRead.saveAllACsForState(state, []);
+              console.log('✅ Cleared contaminated cache for state:', state);
+            } catch (clearError) {
+              console.error('❌ Error clearing contaminated cache:', clearError);
+            }
           }
         } catch (cacheError) {
-          // Cache read failed, continue to API
+          console.error('❌ Cache read error:', cacheError);
+          // Cache read failed, continue to return error
         }
       }
 
-      // Check if online
-      const isOnline = await this.isOnline();
-      if (!isOnline) {
-        console.log('📴 Offline - no cached ACs for state:', state);
-        return {
-          success: false,
-          message: 'No internet connection and no cached data available',
-          error: 'OFFLINE_NO_CACHE'
-        };
-      }
-
-      // Fetch from API
-      const headers = await this.getHeaders();
-      const url = `${this.baseURL}/api/master-data/acs/${encodeURIComponent(state)}`;
-      const response = await axios.get(url, { headers });
-      
-      // Cache the data
-      const cacheForSave = await this.getOfflineCache();
-      if (cacheForSave && response.data.success && response.data.data) {
-        try {
-          await cacheForSave.saveAllACsForState(state, response.data.data.acs || []);
-        } catch (cacheError) {
-          // Cache save failed, continue
-        }
-      }
-      
-      return response.data;
+      // Offline and no valid cache
+      console.log('📴 Offline - no valid cached ACs for state:', state);
+      return {
+        success: false,
+        message: 'No internet connection and no valid cached data available. Please sync survey details when online to cache all ACs.',
+        error: 'OFFLINE_NO_CACHE'
+      };
     } catch (error: any) {
       console.error('Error fetching all ACs for state:', error);
       throw error;
