@@ -3620,6 +3620,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         id: interviewId,
         surveyId: survey._id,
         survey: null, // Don't store full survey - will be fetched from cache during sync using surveyId
+        surveyName: survey.surveyName, // Store survey name for display
         sessionId: sessionId || undefined,
         catiQueueId: undefined, // Not used for CAPI
         callId: undefined, // Not used for CAPI

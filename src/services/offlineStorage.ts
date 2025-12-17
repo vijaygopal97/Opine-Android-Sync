@@ -13,6 +13,7 @@ export interface OfflineInterview {
   id: string; // Local ID
   surveyId: string;
   survey: any; // Full survey object
+  surveyName?: string; // Store survey name separately for display (lightweight)
   sessionId?: string; // Server session ID if available
   catiQueueId?: string; // For CATI interviews
   callId?: string; // For CATI interviews
@@ -148,9 +149,12 @@ class OfflineStorageService {
   async saveOfflineInterview(interview: OfflineInterview): Promise<void> {
     try {
       // Remove full survey object to reduce storage size (will be fetched from cache during sync)
+      // But keep surveyName for display purposes
       const interviewToSave = {
         ...interview,
         survey: null, // Don't store full survey - fetch from cache during sync using surveyId
+        // Keep surveyName if it exists (for display)
+        surveyName: interview.surveyName || interview.survey?.surveyName || undefined,
       };
       
       const interviews = await this.getOfflineInterviews();

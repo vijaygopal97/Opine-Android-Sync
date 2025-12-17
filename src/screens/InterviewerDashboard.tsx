@@ -124,21 +124,19 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       console.log('📦 ========== OFFLINE INTERVIEWS DEBUG ==========');
       console.log('📦 Total offline interviews in storage:', allOfflineInterviews.length);
       
-      // Fetch survey objects for each interview (they're stored as null to save space)
+      // Populate surveyName for interviews that don't have it (for existing interviews)
       const interviewsWithSurveys = await Promise.all(
         (allOfflineInterviews || []).map(async (interview: any) => {
-          // If survey is null or missing, fetch it from cache using surveyId
-          if (!interview.survey && interview.surveyId) {
+          // If surveyName is missing, try to fetch it from survey cache
+          if (!interview.surveyName && interview.surveyId) {
             try {
               const survey = await offlineStorage.getSurveyById(interview.surveyId);
-              if (survey) {
-                interview.survey = survey;
-                console.log(`✅ Fetched survey for interview ${interview.id}: ${survey.surveyName}`);
-              } else {
-                console.warn(`⚠️ Survey not found for interview ${interview.id}, surveyId: ${interview.surveyId}`);
+              if (survey && survey.surveyName) {
+                interview.surveyName = survey.surveyName;
+                console.log(`✅ Populated surveyName for interview ${interview.id}: ${survey.surveyName}`);
               }
             } catch (error) {
-              console.error(`❌ Error fetching survey for interview ${interview.id}:`, error);
+              console.error(`❌ Error fetching survey name for interview ${interview.id}:`, error);
             }
           }
           return interview;
@@ -860,7 +858,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                   <View style={styles.interviewHeader}>
                     <View style={styles.interviewTitleContainer}>
                       <Text style={styles.interviewTitle} numberOfLines={2}>
-                        {interview.survey?.surveyName || 'Unknown Survey'}
+                        {interview.surveyName || interview.survey?.surveyName || 'Unknown Survey'}
                       </Text>
                     </View>
                   </View>
