@@ -5,6 +5,8 @@ import {
   ScrollView,
   Dimensions,
   RefreshControl,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -228,6 +230,84 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     }
   };
 
+  const handleDeleteOfflineInterview = async (interviewId: string) => {
+    Alert.alert(
+      'Delete Offline Interview',
+      'Are you sure you want to delete this offline interview? This action cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await offlineStorage.deleteSyncedInterview(interviewId);
+              console.log('✅ Deleted offline interview:', interviewId);
+              showSnackbar('Offline interview deleted', 'success');
+              // Reload offline interviews and dashboard data
+              await loadOfflineInterviews();
+              await loadPendingInterviewsCount();
+              await loadDashboardData();
+            } catch (error) {
+              console.error('Error deleting offline interview:', error);
+              showSnackbar('Failed to delete interview', 'error');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearAllFailedInterviews = () => {
+    const failedCount = offlineInterviews.filter(
+      (i: any) => i.status === 'failed' || (i.status === 'synced' && i.error)
+    ).length;
+    
+    if (failedCount === 0) {
+      showSnackbar('No failed interviews to clear', 'info');
+      return;
+    }
+    
+    Alert.alert(
+      'Clear All Failed Interviews',
+      `Are you sure you want to delete all ${failedCount} failed offline interview(s)? This action cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const failedInterviewIds = offlineInterviews
+                .filter((i: any) => i.status === 'failed' || (i.status === 'synced' && i.error))
+                .map((i: any) => i.id);
+              
+              for (const interviewId of failedInterviewIds) {
+                await offlineStorage.deleteSyncedInterview(interviewId);
+                console.log('✅ Deleted failed offline interview:', interviewId);
+              }
+              
+              showSnackbar(`Deleted ${failedInterviewIds.length} failed interview(s)`, 'success');
+              // Reload offline interviews and dashboard data
+              await loadOfflineInterviews();
+              await loadPendingInterviewsCount();
+              await loadDashboardData();
+            } catch (error) {
+              console.error('Error clearing failed interviews:', error);
+              showSnackbar('Failed to clear interviews', 'error');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const loadDashboardData = async () => {
     setIsLoading(true);
     try {
@@ -279,11 +359,24 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 
       // Fetch interviews from API
       const interviewsResult = await apiService.getMyInterviews();
+      console.log('📊 getMyInterviews API response:', {
+        success: interviewsResult.success,
+        count: interviewsResult.interviews?.length || 0,
+        interviews: interviewsResult.interviews?.map((i: any) => ({
+          id: i._id || i.id,
+          surveyName: i.survey?.surveyName,
+          status: i.status,
+          startTime: i.startTime
+        }))
+      });
 
       if (interviewsResult.success) {
-        setMyInterviews(interviewsResult.interviews || []);
+        const interviews = interviewsResult.interviews || [];
+        console.log('📊 Setting myInterviews count:', interviews.length);
+        setMyInterviews(interviews);
       } else {
         // Don't show error, just leave empty
+        console.log('⚠️ Failed to fetch interviews from API, setting empty array');
         setMyInterviews([]);
       }
       
@@ -716,6 +809,17 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                 </View>
               )}
             </View>
+            {offlineInterviews.length > 0 && (
+              <Button
+                mode="text"
+                onPress={handleClearAllFailedInterviews}
+                textColor="#dc2626"
+                compact
+                style={styles.clearAllButton}
+              >
+                Clear All
+              </Button>
+            )}
           </View>
           
           {offlineInterviews.length > 0 ? (
@@ -725,16 +829,27 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                 <Card.Content>
                   <View style={styles.interviewHeader}>
                     <Text style={styles.interviewTitle}>{interview.survey?.surveyName || 'Unknown Survey'}</Text>
-                    <View style={[styles.statusBadge, { 
-                      backgroundColor: interview.status === 'synced' ? '#059669' : 
-                                       interview.status === 'syncing' ? '#f59e0b' : 
-                                       interview.status === 'failed' ? '#dc2626' : '#6b7280'
-                    }]}>
-                      <Text style={styles.statusText}>
-                        {interview.status === 'synced' ? 'Synced' : 
-                         interview.status === 'syncing' ? 'Syncing' : 
-                         interview.status === 'failed' ? 'Failed' : 'Pending'}
-                      </Text>
+                    <View style={styles.interviewHeaderRight}>
+                      <View style={[styles.statusBadge, { 
+                        backgroundColor: interview.status === 'synced' ? '#059669' : 
+                                         interview.status === 'syncing' ? '#f59e0b' : 
+                                         interview.status === 'failed' ? '#dc2626' : '#6b7280'
+                      }]}>
+                        <Text style={styles.statusText}>
+                          {interview.status === 'synced' ? 'Synced' : 
+                           interview.status === 'syncing' ? 'Syncing' : 
+                           interview.status === 'failed' ? 'Failed' : 'Pending'}
+                        </Text>
+                      </View>
+                      {/* Delete button for failed/synced interviews with errors */}
+                      {(interview.status === 'failed' || (interview.status === 'synced' && interview.error)) && (
+                        <TouchableOpacity
+                          onPress={() => handleDeleteOfflineInterview(interview.id)}
+                          style={styles.deleteButton}
+                        >
+                          <Ionicons name="trash-outline" size={20} color="#dc2626" />
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </View>
                   <View style={styles.interviewMeta}>
@@ -1049,6 +1164,15 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 8,
   },
+  interviewHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  deleteButton: {
+    padding: 4,
+    marginLeft: 4,
+  },
   interviewTitle: {
     fontSize: 16,
     fontWeight: '600',
@@ -1184,6 +1308,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6b7280',
     fontWeight: '600',
+  },
+  clearAllButton: {
+    marginLeft: 'auto',
   },
   errorText: {
     fontSize: 12,
