@@ -728,20 +728,20 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         )}
       </ScrollView>
 
-      {/* Sync Offline Interviews Button */}
-      {pendingInterviewsCount > 0 && (
+      {/* Sync Offline Interviews Button - Show when there are pending interviews OR when offline interviews exist */}
+      {(pendingInterviewsCount > 0 || offlineInterviews.length > 0) && (
         <View style={[styles.syncContainer, { paddingBottom: Math.max(16, insets.bottom) }]}>
           <Button
             mode="contained"
             onPress={handleSyncOfflineInterviews}
             loading={isSyncing}
-            disabled={isSyncing || isOffline}
-            style={[styles.syncButton, isOffline && styles.disabledButton]}
+            disabled={isSyncing || isOffline || offlineInterviews.length === 0}
+            style={[styles.syncButton, (isOffline || offlineInterviews.length === 0) && styles.disabledButton]}
             icon="sync"
-            buttonColor={isOffline ? "#cccccc" : "#059669"}
-            textColor={isOffline ? "#666666" : "#ffffff"}
+            buttonColor={(isOffline || offlineInterviews.length === 0) ? "#cccccc" : "#059669"}
+            textColor={(isOffline || offlineInterviews.length === 0) ? "#666666" : "#ffffff"}
           >
-            Sync Offline Interviews ({pendingInterviewsCount})
+            {isSyncing ? 'Syncing...' : `Sync Offline Interviews${pendingInterviewsCount > 0 ? ` (${pendingInterviewsCount})` : ''}`}
           </Button>
         </View>
       )}
