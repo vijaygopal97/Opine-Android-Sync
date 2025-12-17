@@ -65,18 +65,20 @@ class BundledDataService {
         // Since require() might not work for large files, we'll use a fetch approach
         // But first, let's try require() - if it fails, we'll use an alternative
         
-        // For now, we'll use a dynamic import approach
-        // The JSON files will be copied to the assets or we'll use a different approach
         console.log('📦 Loading bundled polling station data...');
         
-        // Try to load from bundled assets
-        // In Expo, we can use Asset.fromModule() or require()
-        // For large files, we might need to split them or use a different approach
-        
-        // For React Native, we'll use require() which should work for JSON files
-        const pollingStations = require('../data/polling_stations.json');
-        this.pollingStationData = pollingStations as PollingStationData;
-        console.log('✅ Loaded bundled polling station data');
+        // In React Native/Expo, require() works for JSON files
+        // The file is bundled with the app, so it's always available
+        try {
+          const pollingStations = require('../data/polling_stations.json');
+          this.pollingStationData = pollingStations as PollingStationData;
+          console.log('✅ Loaded bundled polling station data');
+        } catch (requireError) {
+          // If require() fails (e.g., in some bundlers), try alternative approach
+          console.warn('⚠️ require() failed, trying alternative loading method...');
+          // For now, we'll throw the error - the app should handle it gracefully
+          throw requireError;
+        }
       } catch (error) {
         console.error('❌ Error loading bundled polling station data:', error);
         // Return empty object as fallback
@@ -98,11 +100,13 @@ class BundledDataService {
 
     try {
       console.log('📦 Loading bundled AC data...');
+      // In React Native/Expo, require() works for JSON files
       const acData = require('../data/assemblyConstituencies.json');
       this.acData = acData as ACData;
       console.log('✅ Loaded bundled AC data');
     } catch (error) {
       console.error('❌ Error loading bundled AC data:', error);
+      // Return empty structure as fallback
       this.acData = { states: {} } as ACData;
     }
 
@@ -224,6 +228,51 @@ class BundledDataService {
       return {
         success: false,
         message: error.message || 'Failed to get groups from bundled data'
+      };
+    }
+  }
+
+  /**
+   * Get all ACs for a state from bundled assemblyConstituencies.json
+   */
+  async getAllACsForState(state: string): Promise<{ success: boolean; data?: any[]; message?: string }> {
+    try {
+      const acData = await this.loadACData();
+      if (!acData || !acData.states) {
+        return {
+          success: false,
+          message: 'AC data not available'
+        };
+      }
+
+      // Find the state in the data
+      const stateData = acData.states[state];
+      if (!stateData || !stateData.assemblyConstituencies) {
+        return {
+          success: false,
+          message: `State "${state}" not found in bundled AC data`
+        };
+      }
+
+      // Convert to the format expected by the app
+      const acs = stateData.assemblyConstituencies.map((ac: any) => ({
+        acCode: ac.acCode,
+        acName: ac.acName,
+        displayText: `${ac.acCode} - ${ac.acName}`,
+        searchText: `${ac.acCode} ${ac.acName}`.toLowerCase()
+      }));
+
+      console.log(`📦 Loaded ${acs.length} ACs for state "${state}" from bundled data`);
+
+      return {
+        success: true,
+        data: acs
+      };
+    } catch (error: any) {
+      console.error('Error getting ACs from bundled data:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to get ACs from bundled data'
       };
     }
   }

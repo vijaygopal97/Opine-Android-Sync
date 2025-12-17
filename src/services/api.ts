@@ -1844,7 +1844,33 @@ class ApiService {
   // Get all Assembly Constituencies for a state
   async getAllACsForState(state: string): Promise<any> {
     try {
-      // Check if online first - if online, always fetch fresh from API to ensure we have ALL ACs
+      // FIRST: Try bundled data (always available, no network needed)
+      try {
+        const { bundledDataService } = await import('./bundledDataService');
+        const bundledResult = await bundledDataService.getAllACsForState(state);
+        if (bundledResult.success && bundledResult.data) {
+          console.log(`📦 Using bundled ACs for state "${state}": ${bundledResult.data.length} ACs`);
+          
+          // Also cache it for faster future lookups
+          const cacheForSave = await this.getOfflineCache();
+          if (cacheForSave && bundledResult.data) {
+            try {
+              await cacheForSave.saveAllACsForState(state, bundledResult.data);
+            } catch (cacheError) {
+              // Cache save failed, but that's okay - we have bundled data
+            }
+          }
+          
+          return {
+            success: true,
+            data: bundledResult.data
+          };
+        }
+      } catch (bundledError) {
+        console.warn('⚠️ Error loading bundled AC data, trying cache/API:', bundledError);
+      }
+      
+      // SECOND: Check if online - if online, fetch fresh from API to ensure we have ALL ACs
       const isOnline = await this.isOnline();
       
       if (isOnline) {
