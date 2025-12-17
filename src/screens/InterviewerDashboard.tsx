@@ -48,42 +48,44 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isSyncingSurveys, setIsSyncingSurveys] = useState(false);
-  const [forceOfflineMode, setForceOfflineMode] = useState(false);
+  // COMMENTED OUT: Force Offline Mode - Can be re-enabled for debugging
+  // const [forceOfflineMode, setForceOfflineMode] = useState(false);
   
   // Get safe area insets for bottom navigation
   const insets = useSafeAreaInsets();
 
-  // Load force offline mode state
-  useEffect(() => {
-    const loadForceOfflineMode = async () => {
-      try {
-        const stored = await AsyncStorage.getItem('forceOfflineMode');
-        const enabled = stored === 'true';
-        setForceOfflineMode(enabled);
-        apiService.setForceOfflineMode(enabled);
-      } catch (error) {
-        console.error('Error loading force offline mode:', error);
-      }
-    };
-    loadForceOfflineMode();
-  }, []);
+  // COMMENTED OUT: Load force offline mode state
+  // useEffect(() => {
+  //   const loadForceOfflineMode = async () => {
+  //     try {
+  //       const stored = await AsyncStorage.getItem('forceOfflineMode');
+  //       const enabled = stored === 'true';
+  //       setForceOfflineMode(enabled);
+  //       apiService.setForceOfflineMode(enabled);
+  //     } catch (error) {
+  //       console.error('Error loading force offline mode:', error);
+  //     }
+  //   };
+  //   loadForceOfflineMode();
+  // }, []);
 
-  const toggleForceOfflineMode = async () => {
-    const newValue = !forceOfflineMode;
-    setForceOfflineMode(newValue);
-    apiService.setForceOfflineMode(newValue);
-    try {
-      await AsyncStorage.setItem('forceOfflineMode', String(newValue));
-      showSnackbar(
-        newValue 
-          ? '🔴 Force Offline Mode ENABLED - All API calls will be blocked' 
-          : '🟢 Force Offline Mode DISABLED - Normal mode restored',
-        newValue ? 'info' : 'success'
-      );
-    } catch (error) {
-      console.error('Error saving force offline mode:', error);
-    }
-  };
+  // COMMENTED OUT: Toggle force offline mode function
+  // const toggleForceOfflineMode = async () => {
+  //   const newValue = !forceOfflineMode;
+  //   setForceOfflineMode(newValue);
+  //   apiService.setForceOfflineMode(newValue);
+  //   try {
+  //     await AsyncStorage.setItem('forceOfflineMode', String(newValue));
+  //     showSnackbar(
+  //       newValue 
+  //         ? '🔴 Force Offline Mode ENABLED - All API calls will be blocked' 
+  //         : '🟢 Force Offline Mode DISABLED - Normal mode restored',
+  //       newValue ? 'info' : 'success'
+  //     );
+  //   } catch (error) {
+  //     console.error('Error saving force offline mode:', error);
+  //   }
+  // };
   
   // Calculate interview stats
   const interviewStats = useMemo(() => {
@@ -531,8 +533,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
-      {/* Force Offline Mode Toggle Button */}
-      <View style={styles.offlineToggleContainer}>
+      {/* COMMENTED OUT: Force Offline Mode Toggle Button - Can be re-enabled for debugging */}
+      {/* <View style={styles.offlineToggleContainer}>
         <TouchableOpacity
           style={[styles.offlineToggleButton, forceOfflineMode && styles.offlineToggleButtonActive]}
           onPress={toggleForceOfflineMode}
@@ -546,7 +548,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             {forceOfflineMode ? "🔴 Force Offline" : "🟢 Online Mode"}
           </Text>
         </TouchableOpacity>
-      </View>
+      </View> */}
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
         start={{ x: 0, y: 0 }}
@@ -982,38 +984,39 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 }
 
 const styles = StyleSheet.create({
-  offlineToggleContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 4,
-    backgroundColor: '#f5f5f5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  offlineToggleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  offlineToggleButtonActive: {
-    backgroundColor: '#dc2626',
-    borderColor: '#b91c1c',
-  },
-  offlineToggleText: {
-    marginLeft: 8,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
-  },
-  offlineToggleTextActive: {
-    color: '#fff',
-  },
+  // COMMENTED OUT: Force Offline Mode styles - Can be re-enabled for debugging
+  // offlineToggleContainer: {
+  //   paddingHorizontal: 16,
+  //   paddingTop: 8,
+  //   paddingBottom: 4,
+  //   backgroundColor: '#f5f5f5',
+  //   borderBottomWidth: 1,
+  //   borderBottomColor: '#e0e0e0',
+  // },
+  // offlineToggleButton: {
+  //   flexDirection: 'row',
+  //   alignItems: 'center',
+  //   justifyContent: 'center',
+  //   paddingVertical: 8,
+  //   paddingHorizontal: 16,
+  //   backgroundColor: '#fff',
+  //   borderRadius: 8,
+  //   borderWidth: 1,
+  //   borderColor: '#ddd',
+  // },
+  // offlineToggleButtonActive: {
+  //   backgroundColor: '#dc2626',
+  //   borderColor: '#b91c1c',
+  // },
+  // offlineToggleText: {
+  //   marginLeft: 8,
+  //   fontSize: 14,
+  //   fontWeight: '600',
+  //   color: '#666',
+  // },
+  // offlineToggleTextActive: {
+  //   color: '#fff',
+  // },
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
