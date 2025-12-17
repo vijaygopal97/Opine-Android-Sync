@@ -65,6 +65,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       loadPendingInterviewsCount();
+      // Also reload offline interviews when screen comes into focus
+      loadOfflineInterviews();
     });
     return unsubscribe;
   }, [navigation]);
@@ -78,13 +80,19 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     }
   };
 
-  // Refresh pending count when screen comes into focus
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      loadPendingInterviewsCount();
-    });
-    return unsubscribe;
-  }, [navigation]);
+  const loadOfflineInterviews = async () => {
+    try {
+      const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
+      const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
+        (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+      );
+      setOfflineInterviews(pendingOfflineInterviews);
+      // Also update pending count
+      setPendingInterviewsCount(pendingOfflineInterviews.length);
+    } catch (error) {
+      console.error('Error loading offline interviews:', error);
+    }
+  };
 
   const handleSyncSurveyDetails = async () => {
     if (isSyncingSurveys) return;
@@ -137,15 +145,19 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       
       if (result.success && result.syncedCount > 0) {
         showSnackbar(`Successfully synced ${result.syncedCount} interview(s)`, 'success');
+        await loadOfflineInterviews(); // Reload offline interviews to update the list
         await loadPendingInterviewsCount();
         await loadDashboardData(); // Refresh dashboard data
       } else if (result.failedCount > 0) {
         showSnackbar(`Synced ${result.syncedCount}, failed ${result.failedCount}. Check details.`, 'error');
+        await loadOfflineInterviews(); // Reload offline interviews to show updated status
         await loadPendingInterviewsCount();
       } else if (result.syncedCount === 0 && result.failedCount === 0) {
         showSnackbar('No pending interviews to sync', 'info');
+        await loadOfflineInterviews(); // Still reload to ensure UI is up to date
       } else {
         showSnackbar('Sync failed. Please check your internet connection.', 'error');
+        await loadOfflineInterviews(); // Reload to show any status changes
       }
     } catch (error: any) {
       console.error('Error syncing offline interviews:', error);
@@ -585,12 +597,16 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         </View>
         )} */}
         
-        {/* Offline Interviews Section */}
+        {/* Offline Interviews Section - Show when there are offline interviews that need syncing */}
         {offlineInterviews.length > 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Offline Saved Interviews</Text>
-              <Text style={styles.offlineBadge}>📴 Offline</Text>
+              <View style={styles.sectionTitleContainer}>
+                <Text style={styles.sectionTitle}>Offline Saved Interviews</Text>
+                <View style={styles.offlineBadgeContainer}>
+                  <Text style={styles.offlineBadge}>📴 {offlineInterviews.length} Pending</Text>
+                </View>
+              </View>
             </View>
             
             {offlineInterviews.slice(0, 5).map((interview) => (
@@ -818,10 +834,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  sectionTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#1f2937',
+    marginRight: 12,
+  },
+  offlineBadgeContainer: {
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fde68a',
   },
   surveyCard: {
     marginBottom: 16,
