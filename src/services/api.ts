@@ -1153,7 +1153,8 @@ class ApiService {
       if (typeof acIdentifier === 'string') {
         acIdentifierStr = acIdentifier;
       } else if (acIdentifier && typeof acIdentifier === 'object') {
-        acIdentifierStr = acIdentifier.acName || acIdentifier.acCode || acIdentifier.name || acIdentifier.displayText || JSON.stringify(acIdentifier);
+        const acObj = acIdentifier as any;
+        acIdentifierStr = acObj.acName || acObj.acCode || acObj.name || acObj.displayText || JSON.stringify(acIdentifier);
         console.error('⚠️ AC Identifier was an object, extracted:', acIdentifierStr);
       } else {
         acIdentifierStr = String(acIdentifier || 'unknown');
