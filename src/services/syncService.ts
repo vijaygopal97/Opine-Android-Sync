@@ -424,15 +424,21 @@ class SyncService {
 
     // CRITICAL: Verify that the interview was actually created on the server
     // Only consider sync successful if we have confirmation (response ID)
-    if (!result.response || (!result.response._id && !result.response.id)) {
+    // The API returns responseId (UUID) or mongoId (MongoDB ObjectId), check for both
+    const responseId = result.response?._id || 
+                       result.response?.id || 
+                       result.response?.mongoId || 
+                       result.response?.responseId;
+    
+    if (!result.response || !responseId) {
       const errorMsg = 'Interview completion returned success but no response ID - sync may have failed';
       console.error(`❌ ${errorMsg}`);
-      console.error(`❌ Response data:`, result);
+      console.error(`❌ Response data:`, JSON.stringify(result, null, 2));
       throw new Error(errorMsg);
     }
 
     console.log(`✅ Interview completed successfully with sessionId: ${sessionId}`);
-    console.log(`✅ Interview response ID: ${result.response._id || result.response.id}`);
+    console.log(`✅ Interview response ID: ${responseId}`);
     
     // Log audio status - audioUrl is guaranteed to be present at this point
     console.log('✅ Interview synced WITH audio:', audioUrl);
