@@ -630,18 +630,22 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         </View>
         )} */}
         
-        {/* Offline Interviews Section - Show when there are offline interviews that need syncing */}
-        {offlineInterviews.length > 0 ? (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionTitleContainer}>
-                <Text style={styles.sectionTitle}>Offline Saved Interviews</Text>
+        {/* Offline Interviews Section - Always show this section if there are offline interviews */}
+        {/* This section allows users to sync their offline saved interviews to the server */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionTitleContainer}>
+              <Text style={styles.sectionTitle}>Offline Saved Interviews</Text>
+              {offlineInterviews.length > 0 && (
                 <View style={styles.offlineBadgeContainer}>
                   <Text style={styles.offlineBadge}>📴 {offlineInterviews.length} {offlineInterviews.length === 1 ? 'Interview' : 'Interviews'}</Text>
                 </View>
-              </View>
+              )}
             </View>
-            
+          </View>
+          
+          {offlineInterviews.length > 0 ? (
+            <>
             {offlineInterviews.slice(0, 5).map((interview) => (
               <Card key={interview.id} style={styles.interviewCard}>
                 <Card.Content>
@@ -699,8 +703,17 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             {offlineInterviews.length > 5 && (
               <Text style={styles.moreText}>+ {offlineInterviews.length - 5} more offline interviews</Text>
             )}
-          </View>
-        )}
+            </>
+          ) : (
+            // Show empty state if there are no offline interviews
+            <Card style={styles.emptyCard}>
+              <Card.Content style={styles.emptyContent}>
+                <Text style={styles.emptyText}>No Offline Interviews</Text>
+                <Text style={styles.emptySubtext}>Interviews conducted offline will appear here for syncing to the server</Text>
+              </Card.Content>
+            </Card>
+          )}
+        </View>
         
         {/* Show message when offline and no interviews available */}
         {isOffline && myInterviews.length === 0 && offlineInterviews.length === 0 && (
