@@ -860,6 +860,23 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
               )}
             </View>
           </View>
+          {/* Sync Offline Interviews Button - Positioned above the section */}
+          {(pendingInterviewsCount > 0 || offlineInterviews.length > 0) && (
+            <View style={styles.syncButtonContainer}>
+              <Button
+                mode="contained"
+                onPress={handleSyncOfflineInterviews}
+                loading={isSyncing}
+                disabled={isSyncing || isOffline || offlineInterviews.length === 0}
+                style={[styles.syncButton, (isOffline || offlineInterviews.length === 0) && styles.disabledButton]}
+                icon="sync"
+                buttonColor={(isOffline || offlineInterviews.length === 0) ? "#cccccc" : "#059669"}
+                textColor={(isOffline || offlineInterviews.length === 0) ? "#666666" : "#ffffff"}
+              >
+                {isSyncing ? 'Syncing...' : `Sync Offline Interviews${pendingInterviewsCount > 0 ? ` (${pendingInterviewsCount})` : ''}`}
+              </Button>
+            </View>
+          )}
           {/* Clear All button - moved to separate row to prevent overlap */}
           {offlineInterviews.length > 0 && (
             <View style={styles.clearAllContainer}>
@@ -979,27 +996,6 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
           </View>
         )}
       </ScrollView>
-
-      {/* Sync Offline Interviews Button - Show when there are pending interviews OR when offline interviews exist */}
-      {/* Position above FAB button with proper safe area insets */}
-      {(pendingInterviewsCount > 0 || offlineInterviews.length > 0) && (
-        <View style={[styles.syncContainer, { 
-          paddingBottom: Math.max(16, insets.bottom) + 15 // Minimal space above FAB button
-        }]}>
-          <Button
-            mode="contained"
-            onPress={handleSyncOfflineInterviews}
-            loading={isSyncing}
-            disabled={isSyncing || isOffline || offlineInterviews.length === 0}
-            style={[styles.syncButton, (isOffline || offlineInterviews.length === 0) && styles.disabledButton]}
-            icon="sync"
-            buttonColor={(isOffline || offlineInterviews.length === 0) ? "#cccccc" : "#059669"}
-            textColor={(isOffline || offlineInterviews.length === 0) ? "#666666" : "#ffffff"}
-          >
-            {isSyncing ? 'Syncing...' : `Sync Offline Interviews${pendingInterviewsCount > 0 ? ` (${pendingInterviewsCount})` : ''}`}
-          </Button>
-        </View>
-      )}
 
       <FAB
         icon="plus"
@@ -1411,17 +1407,10 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginBottom: 2,
   },
-  syncContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 0, // Will be set dynamically with safe area insets
-    backgroundColor: '#ffffff',
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+  syncButtonContainer: {
+    marginTop: 8,
+    marginBottom: 16,
+    paddingHorizontal: 0,
   },
   syncButton: {
     backgroundColor: '#059669',
