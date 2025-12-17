@@ -1179,6 +1179,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     borderRadius: 12,
+    overflow: 'hidden', // Prevent content from overflowing card boundaries
   },
   interviewHeader: {
     flexDirection: 'row',
@@ -1208,7 +1209,9 @@ const styles = StyleSheet.create({
   statusBadgeContainer: {
     marginTop: 8,
     marginBottom: 8,
-    alignSelf: 'flex-start', // Align to left, won't overflow
+    width: '100%', // Take full width of container
+    flexDirection: 'row', // Ensure proper layout
+    flexWrap: 'wrap', // Allow wrapping if needed
   },
   interviewDate: {
     fontSize: 12,
@@ -1219,13 +1222,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 12,
-    alignSelf: 'flex-start', // Prevent overflow
+    alignSelf: 'flex-start', // Align to left, prevent overflow
+    maxWidth: '100%', // Ensure it doesn't exceed container width
+    overflow: 'hidden', // Prevent badge content from overflowing
   },
   statusText: {
     fontSize: 10,
     fontWeight: '600',
     color: '#ffffff',
     textTransform: 'uppercase',
+    flexShrink: 1, // Allow text to shrink if needed
   },
   emptyCard: {
     elevation: 1,
