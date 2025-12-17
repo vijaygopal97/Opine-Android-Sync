@@ -760,75 +760,14 @@ class OfflineDataCacheService {
           }
         }
         
-        console.log(`📥 Will cache polling data for ${acNamesToCache.length} ACs (subset of all ACs)`);
-        
-        // Cache polling groups/stations for these ACs (reuse the same logic as assigned ACs)
-        const normalizedACs = acNamesToCache;
-        for (let i = 0; i < normalizedACs.length; i++) {
-          const normalizedAC = normalizedACs[i];
-          try {
-            console.log(`📥 [${i + 1}/${normalizedACs.length}] Caching groups for AC: ${normalizedAC}`);
-            const result = await apiService.getGroupsByAC(state, normalizedAC);
-            if (result.success && result.data) {
-              await this.savePollingGroups(state, normalizedAC, result.data);
-              console.log(`✅ Cached polling groups for: ${normalizedAC}`);
-              
-              // Cache polling stations for each group (limit to prevent performance issues)
-              const groups = result.data.groups || [];
-              const groupsToCache = groups.slice(0, 10); // Limit to first 10 groups per AC
-              console.log(`📥 Found ${groups.length} group(s) for ${normalizedAC}, caching stations for first ${groupsToCache.length}...`);
-              
-              for (let j = 0; j < groupsToCache.length; j++) {
-                const groupItem = groupsToCache[j];
-                let groupName: string | null = null;
-                
-                if (typeof groupItem === 'string') {
-                  groupName = groupItem.trim();
-                } else if (groupItem && typeof groupItem === 'object') {
-                  groupName = (groupItem.name || groupItem.groupName || groupItem.group || groupItem.value || '').toString().trim();
-                }
-                
-                if (!groupName || groupName.length === 0) {
-                  continue;
-                }
-                
-                try {
-                  const stationsResult = await apiService.getPollingStationsByGroup(state, normalizedAC, groupName);
-                  if (stationsResult.success && stationsResult.data) {
-                    await this.savePollingStations(state, normalizedAC, groupName, stationsResult.data);
-                    console.log(`✅ Cached polling stations for: ${normalizedAC} - ${groupName}`);
-                  }
-                } catch (stationsError) {
-                  // Skip 404 errors (AC not found in polling station data)
-                  if (stationsError?.response?.status !== 404) {
-                    console.warn(`⚠️ Failed to cache stations for ${normalizedAC} - ${groupName}:`, stationsError);
-                  }
-                }
-              }
-            } else {
-              // Skip 404 errors silently (AC not found in polling station data)
-              if (result.message && !result.message.includes('not found')) {
-                console.warn(`⚠️ Failed to cache groups for ${normalizedAC}:`, result.message);
-              }
-            }
-          } catch (error: any) {
-            // Skip 404 errors silently
-            if (error?.response?.status !== 404) {
-              console.error(`❌ Error caching data for AC ${normalizedAC}:`, error);
-            }
-          }
-          
-          // Add delay every 10 ACs to prevent overwhelming the API
-          if ((i + 1) % 10 === 0 && i < normalizedACs.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 200)); // 200ms delay
-          }
-        }
-        
-        console.log('✅ Survey sync complete: All ACs cached, polling data cached for subset of ACs.');
+        // SKIP: Polling data is bundled - no need to download
+        console.log('📦 Polling data is bundled in app - skipping download');
       } else {
-        console.log('⚠️ No ACs found in cache. Cannot cache polling data. Please ensure ACs are cached first.');
+        console.log('📦 Polling data is bundled in app - no download needed');
       }
-      return;
+    } else {
+      // SKIP: Polling data is bundled - no need to download for assigned ACs either
+      console.log('📦 Polling data is bundled in app - skipping download for assigned ACs');
     }
     
     // SKIP: Polling groups and stations are now bundled in the app
