@@ -1624,12 +1624,15 @@ class ApiService {
       const cacheForRead = await this.getOfflineCache();
       if (cacheForRead) {
         try {
+          // First, try to get validated cache (with completeness check)
           const cachedACs = await cacheForRead.getAllACsForState(state);
-          // CRITICAL: Only use cache if it has a reasonable number of ACs (West Bengal has ~294 ACs)
-          // If cache has very few ACs (like 3), it's likely incomplete/contaminated data
-          const minExpectedACs = state === 'West Bengal' ? 200 : 50; // Minimum threshold
+          const minExpectedACs = state === 'West Bengal' ? 200 : 50;
+          
+          console.log('📴 Offline mode - checking cache for state:', state);
+          console.log('📴 Cached ACs count:', cachedACs?.length || 0);
+          
           if (cachedACs && cachedACs.length >= minExpectedACs) {
-            console.log('📦 Using cached ACs for state:', state, cachedACs.length, 'ACs (complete cache)');
+            console.log('✅ Offline cache validated - returning', cachedACs.length, 'ACs');
             return {
               success: true,
               data: {
@@ -1641,27 +1644,56 @@ class ApiService {
           } else if (cachedACs && cachedACs.length > 0) {
             // Cache exists but has too few ACs - likely contaminated/incomplete
             console.warn('⚠️ Cached ACs for state', state, 'has only', cachedACs.length, 'ACs (expected at least', minExpectedACs, ')');
-            console.warn('⚠️ This cache appears incomplete/contaminated - will reject');
-            // Don't clear cache here - let user sync again to fix it
-            // Return error so UI can show helpful message
+            console.warn('⚠️ This cache appears incomplete/contaminated');
+            
+            // CRITICAL: Try to read raw cache data directly (bypass validation) to see what's actually stored
+            try {
+              const rawCacheData = await cacheForRead.getAllACsForAllStates();
+              const rawStateData = rawCacheData[state];
+              if (rawStateData && rawStateData.acs && rawStateData.acs.length > 0) {
+                console.log('🔍 Raw cache has', rawStateData.acs.length, 'ACs for state:', state);
+                console.log('🔍 Sample ACs from raw cache:', rawStateData.acs.slice(0, 5).map((ac: any) => ac.acName || ac));
+                
+                // If raw cache has more ACs than validated cache, there's a validation issue
+                if (rawStateData.acs.length !== cachedACs.length) {
+                  console.error('❌ Cache validation mismatch: raw cache has', rawStateData.acs.length, 'but validated returned', cachedACs.length);
+                }
+              }
+            } catch (rawError) {
+              console.error('❌ Error reading raw cache:', rawError);
+            }
+            
+            // Clear the contaminated cache
+            await cacheForRead.clearACsForState(state);
+            return {
+              success: false,
+              message: `Cached AC list is incomplete (${cachedACs.length} ACs found, expected at least ${minExpectedACs}). Please sync survey details when online to cache complete data.`,
+              error: 'OFFLINE_INCOMPLETE_CACHE'
+            };
           } else {
-            console.log('📴 No cached ACs found for state:', state);
+            console.warn('⚠️ No cached ACs found for state:', state);
+            return {
+              success: false,
+              message: 'No internet connection and no cached data available. Please sync survey details when online to cache all ACs.',
+              error: 'OFFLINE_NO_CACHE'
+            };
           }
         } catch (cacheError) {
           console.error('❌ Cache read error:', cacheError);
-          // Cache read failed, continue to return error
+          return {
+            success: false,
+            message: 'Error reading cached AC data. Please sync survey details when online.',
+            error: 'OFFLINE_CACHE_ERROR'
+          };
         }
       } else {
         console.log('📴 Offline cache service not available');
+        return {
+          success: false,
+          message: 'No internet connection and no valid cached data available. Please sync survey details when online to cache all ACs.',
+          error: 'OFFLINE_NO_CACHE'
+        };
       }
-
-      // Offline and no valid cache
-      console.log('📴 Offline - no valid cached ACs for state:', state);
-      return {
-        success: false,
-        message: 'No internet connection and no valid cached data available. Please sync survey details when online to cache all ACs.',
-        error: 'OFFLINE_NO_CACHE'
-      };
     } catch (error: any) {
       console.error('Error fetching all ACs for state:', error);
       throw error;

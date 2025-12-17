@@ -255,13 +255,27 @@ class OfflineDataCacheService {
    */
   async saveAllACsForState(state: string, acs: any[]): Promise<void> {
     try {
+      console.log(`💾 Saving ${acs.length} ACs for state: ${state}`);
+      console.log(`💾 Sample ACs being saved:`, acs.slice(0, 5).map((ac: any) => ac.acName || ac));
+      
       const allACsData = await this.getAllACsForAllStates();
       allACsData[state] = {
         acs: acs,
         cachedAt: new Date().toISOString(),
       };
       await AsyncStorage.setItem(STORAGE_KEYS.ALL_ACS_FOR_STATE, JSON.stringify(allACsData));
-      console.log('✅ Cached', acs.length, 'ACs for state:', state);
+      
+      // Verify it was saved correctly
+      const verifyData = await this.getAllACsForAllStates();
+      const verifyStateData = verifyData[state];
+      if (verifyStateData && verifyStateData.acs) {
+        console.log(`✅ Verified saved ${verifyStateData.acs.length} ACs for state: ${state}`);
+        if (verifyStateData.acs.length !== acs.length) {
+          console.error(`❌ AC count mismatch: saved ${acs.length}, but read back ${verifyStateData.acs.length}`);
+        }
+      } else {
+        console.error(`❌ Failed to verify saved ACs for state: ${state}`);
+      }
     } catch (error) {
       console.error('Error saving all ACs for state:', error);
       throw error;
@@ -304,11 +318,14 @@ class OfflineDataCacheService {
 
   /**
    * Get all ACs data for all states
+   * Made public so InterviewInterface can access it directly for fallback
    */
-  private async getAllACsForAllStates(): Promise<Record<string, { acs: any[], cachedAt: string }>> {
+  async getAllACsForAllStates(): Promise<Record<string, { acs: any[], cachedAt: string }>> {
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.ALL_ACS_FOR_STATE);
-      return data ? JSON.parse(data) : {};
+      const parsed = data ? JSON.parse(data) : {};
+      console.log('📦 getAllACsForAllStates - states in cache:', Object.keys(parsed));
+      return parsed;
     } catch (error) {
       console.error('Error getting all ACs for all states:', error);
       return {};

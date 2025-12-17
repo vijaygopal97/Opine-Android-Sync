@@ -1442,16 +1442,42 @@ export default function InterviewInterface({ navigation, route }: any) {
                     // This prevents performance issues and infinite error loops
                     console.log('📥 Skipping proactive cache for all ACs (will cache on-demand when AC is selected)');
                   }
-                } else if (allACsResponse.error === 'OFFLINE_NO_CACHE') {
-                  console.log('📴 Offline mode - no valid cached ACs available');
-                  // Cache validation is already done in getAllACsForState
-                  // If we get here, cache was either empty or incomplete and was cleared
-                  Alert.alert(
-                    'Offline Mode',
-                    'Complete AC list is not available offline. Please sync survey details from the dashboard when online to cache all ACs, or ensure you have internet connection when starting the interview.',
-                    [{ text: 'OK' }]
-                  );
-                  setAllACs([]);
+                } else if (allACsResponse.error === 'OFFLINE_NO_CACHE' || allACsResponse.error === 'OFFLINE_INCOMPLETE_CACHE' || allACsResponse.error === 'OFFLINE_CACHE_ERROR') {
+                  console.log('📴 Offline mode - cache issue:', allACsResponse.error);
+                  console.log('📴 Error message:', allACsResponse.message);
+                  
+                  // Try to load directly from cache as fallback (bypass validation)
+                  try {
+                    const { offlineDataCache } = await import('../services/offlineDataCache');
+                    const allACsData = await offlineDataCache.getAllACsForAllStates();
+                    const stateData = allACsData[state];
+                    
+                    if (stateData && stateData.acs && stateData.acs.length > 0) {
+                      console.log('📦 Found', stateData.acs.length, 'ACs in cache (using as fallback despite validation failure)');
+                      setAllACs(stateData.acs);
+                      Alert.alert(
+                        'Offline Mode - Limited Data',
+                        `Loaded ${stateData.acs.length} ACs from cache. Some ACs may be missing. Please sync survey details when online for complete data.`,
+                        [{ text: 'OK' }]
+                      );
+                    } else {
+                      console.log('📴 No ACs found in cache at all');
+                      Alert.alert(
+                        'Offline Mode',
+                        allACsResponse.message || 'Complete AC list is not available offline. Please sync survey details from the dashboard when online to cache all ACs, or ensure you have internet connection when starting the interview.',
+                        [{ text: 'OK' }]
+                      );
+                      setAllACs([]);
+                    }
+                  } catch (fallbackError) {
+                    console.error('❌ Error loading fallback cache:', fallbackError);
+                    Alert.alert(
+                      'Offline Mode',
+                      allACsResponse.message || 'Complete AC list is not available offline. Please sync survey details from the dashboard when online to cache all ACs.',
+                      [{ text: 'OK' }]
+                    );
+                    setAllACs([]);
+                  }
                 } else {
                   console.error('Failed to fetch all ACs:', allACsResponse);
                   setAllACs([]);
