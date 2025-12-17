@@ -5388,6 +5388,22 @@ export default function InterviewInterface({ navigation, route }: any) {
       }
     }
     
+    // CRITICAL: Handle ac_searchable_dropdown FIRST before any other cases
+    // This ensures it's always rendered correctly, even if question.type is somehow wrong
+    if (question.id === 'ac-selection' || question.isACSelection) {
+      console.log('🔍 Rendering AC selection question - type:', question.type, 'isSearchable:', question.isSearchable, 'hasAssignedACs:', hasAssignedACs);
+      
+      // Force ac_searchable_dropdown if no assigned ACs, regardless of question.type
+      if (!hasAssignedACs && question.type !== 'ac_searchable_dropdown') {
+        console.warn('⚠️ AC question type mismatch - forcing ac_searchable_dropdown (type was:', question.type, ')');
+        // Render as dropdown directly
+        return renderACSearchableDropdown(question);
+      } else if (hasAssignedACs && question.type === 'ac_searchable_dropdown') {
+        console.warn('⚠️ AC question type mismatch - should be single_choice but is ac_searchable_dropdown');
+        // Fall through to single_choice rendering
+      }
+    }
+    
     switch (question.type) {
       case 'ac_searchable_dropdown':
         return renderACSearchableDropdown(question);
