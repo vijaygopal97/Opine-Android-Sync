@@ -542,9 +542,15 @@ export default function InterviewInterface({ navigation, route }: any) {
       // Determine which ACs to show: assigned ACs if available, otherwise all ACs
       const acsToShow = hasAssignedACs ? assignedACs : allACs.map(ac => ac.acName);
       
+      // CRITICAL: Force ac_searchable_dropdown type when no assigned ACs, regardless of allACs length
+      // This ensures dropdown is always shown (not checkboxes) when user has no assigned ACs
+      const questionType = hasAssignedACs ? 'single_choice' : 'ac_searchable_dropdown';
+      
+      console.log('🔍 Creating AC question - hasAssignedACs:', hasAssignedACs, 'questionType:', questionType, 'allACs.length:', allACs.length);
+      
       const acQuestion = {
         id: 'ac-selection',
-        type: hasAssignedACs ? 'single_choice' : 'ac_searchable_dropdown', // Use searchable dropdown if no assigned ACs
+        type: questionType, // Use searchable dropdown if no assigned ACs
         text: 'Select Assembly Constituency',
         description: 'Please select the Assembly Constituency where you are conducting this interview.',
         required: true,
@@ -555,14 +561,14 @@ export default function InterviewInterface({ navigation, route }: any) {
               text: ac,
               value: ac
             }))
-          : allACs.map(ac => ({
+          : (allACs.length > 0 ? allACs.map(ac => ({
               id: `ac-${ac.acCode}`,
               text: ac.acName,
               value: ac.acName,
               acCode: ac.acCode,
               displayText: ac.displayText,
               searchText: ac.searchText
-            })),
+            })) : []), // Empty array if allACs not loaded yet
         sectionIndex: -1, // Special section for AC selection
         questionIndex: -1,
         sectionId: 'ac-selection',
@@ -571,6 +577,8 @@ export default function InterviewInterface({ navigation, route }: any) {
         isSearchable: !hasAssignedACs, // Mark as searchable if no assigned ACs
         allACs: !hasAssignedACs ? allACs : [] // Include all ACs data for searchable dropdown
       };
+      
+      console.log('🔍 AC Question created - type:', acQuestion.type, 'options.length:', acQuestion.options.length, 'allACs.length:', acQuestion.allACs.length);
       questions.push(acQuestion);
       
       // Add Polling Station selection question after AC selection (if AC is selected)
@@ -4964,6 +4972,147 @@ export default function InterviewInterface({ navigation, route }: any) {
   }, [currentQuestionIndex]);
 
   // Render question based on type
+  // Helper function to render AC searchable dropdown (extracted for reuse)
+  const renderACSearchableDropdown = (question: any) => {
+    // Use allACs state directly if question.allACs is empty (for offline support)
+    const acsToUse = (question.allACs && question.allACs.length > 0) ? question.allACs : allACs;
+    const filteredACs = acsToUse && acSearchTerm
+      ? acsToUse.filter((ac: any) => {
+          const searchLower = acSearchTerm.toLowerCase();
+          const searchText = ac.searchText || `${ac.acCode || ''} ${ac.acName || ''}`.toLowerCase();
+          const acName = (ac.acName || '').toLowerCase();
+          const acCode = (ac.acCode || '').toLowerCase();
+          return searchText.includes(searchLower) || acName.includes(searchLower) || acCode.includes(searchLower);
+        })
+      : (acsToUse || []);
+    
+    console.log('🔍 AC Dropdown Render - allACs state:', allACs.length, 'question.allACs:', question.allACs?.length || 0, 'acsToUse:', acsToUse.length, 'filteredACs:', filteredACs.length);
+    
+    return (
+      <View style={styles.pollingStationContainer}>
+        <View style={[styles.pollingStationSection, showACDropdown && { zIndex: 1001 }]}>
+          <Text style={styles.pollingStationLabel}>Select Assembly Constituency *</Text>
+          {loadingAllACs ? (
+            <View style={{ alignItems: 'center', padding: 20 }}>
+              <ActivityIndicator size="small" color="#2563eb" />
+              <Text style={{ marginTop: 10, color: '#666' }}>Loading ACs...</Text>
+            </View>
+          ) : filteredACs.length === 0 && acSearchTerm ? (
+            <Text style={styles.pollingStationError}>No ACs found matching "{acSearchTerm}". Try a different search term.</Text>
+          ) : acsToUse.length === 0 ? (
+            <View style={{ padding: 20 }}>
+              <Text style={styles.pollingStationError}>No ACs available offline. Please sync survey details when online, or ensure you have internet connection when starting the interview.</Text>
+            </View>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => setShowACDropdown(true)}
+              >
+                <Text style={[
+                  styles.dropdownButtonText,
+                  !selectedAC && styles.dropdownPlaceholder
+                ]}>
+                  {selectedAC || 'Search and select an Assembly Constituency...'}
+                </Text>
+                <Text style={styles.dropdownArrow}>▼</Text>
+              </TouchableOpacity>
+              
+              {/* AC Selection Modal - Bottom Sheet with Search */}
+              <Modal
+                visible={showACDropdown}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => {
+                  setShowACDropdown(false);
+                  setACSearchTerm('');
+                }}
+              >
+                <View style={styles.modalBackdrop}>
+                  <TouchableOpacity
+                    style={styles.modalBackdropTouchable}
+                    activeOpacity={1}
+                    onPress={() => {
+                      setShowACDropdown(false);
+                      setACSearchTerm('');
+                    }}
+                  />
+                  <View style={styles.bottomSheetContainer}>
+                    <View style={styles.bottomSheetHeader}>
+                      <Text style={styles.bottomSheetTitle}>Select Assembly Constituency</Text>
+                      <TouchableOpacity onPress={() => {
+                        setShowACDropdown(false);
+                        setACSearchTerm('');
+                      }}>
+                        <Text style={styles.bottomSheetClose}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {/* Search Input */}
+                    <View style={styles.searchContainer}>
+                      <TextInput
+                        mode="outlined"
+                        placeholder="Search by AC Code or Name..."
+                        value={acSearchTerm}
+                        onChangeText={setACSearchTerm}
+                        style={styles.searchInput}
+                        left={<TextInput.Icon icon="magnify" />}
+                      />
+                    </View>
+                    <ScrollView 
+                      style={styles.bottomSheetContent}
+                      contentContainerStyle={styles.bottomSheetContentInner}
+                      showsVerticalScrollIndicator={true}
+                      keyboardShouldPersistTaps="handled"
+                    >
+                      {filteredACs.length === 0 ? (
+                        <View style={styles.emptyState}>
+                          <Text style={styles.emptyStateText}>No ACs found matching "{acSearchTerm}"</Text>
+                        </View>
+                      ) : (
+                        filteredACs.map((ac: any, index: number) => (
+                          <TouchableOpacity
+                            key={`ac-${ac.acCode}-${index}`}
+                            activeOpacity={0.7}
+                            style={[
+                              styles.bottomSheetItem,
+                              selectedAC === ac.acName && styles.bottomSheetItemSelected
+                            ]}
+                            onPress={() => {
+                              handleResponseChange('ac-selection', ac.acName);
+                              setShowACDropdown(false);
+                              setACSearchTerm('');
+                            }}
+                          >
+                            <View>
+                              <Text style={[
+                                styles.bottomSheetItemText,
+                                selectedAC === ac.acName && styles.bottomSheetItemTextSelected
+                              ]}>
+                                {ac.acName}
+                              </Text>
+                              {ac.acCode && (
+                                <Text style={[
+                                  styles.bottomSheetItemSubtext,
+                                  selectedAC === ac.acName && styles.bottomSheetItemSubtextSelected
+                                ]}>
+                                  Code: {ac.acCode}
+                                </Text>
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                        ))
+                      )}
+                    </ScrollView>
+                  </View>
+                </View>
+              </Modal>
+            </>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   const renderQuestion = (question: any) => {
     // For multiple_choice questions with allowMultiple, initialize as array if not set
     const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
@@ -5223,7 +5372,26 @@ export default function InterviewInterface({ navigation, route }: any) {
       displayOptions = [...regularOptions, ...othersOptions];
     }
 
+    // CRITICAL: Handle ac_searchable_dropdown FIRST before any other cases
+    // This ensures it's always rendered correctly, even if question.type is somehow wrong
+    if (question.id === 'ac-selection' || question.isACSelection) {
+      console.log('🔍 Rendering AC selection question - type:', question.type, 'isSearchable:', question.isSearchable, 'hasAssignedACs:', hasAssignedACs);
+      
+      // Force ac_searchable_dropdown if no assigned ACs, regardless of question.type
+      if (!hasAssignedACs && question.type !== 'ac_searchable_dropdown') {
+        console.warn('⚠️ AC question type mismatch - forcing ac_searchable_dropdown (type was:', question.type, ')');
+        // Render as dropdown directly
+        return renderACSearchableDropdown(question);
+      } else if (hasAssignedACs && question.type === 'ac_searchable_dropdown') {
+        console.warn('⚠️ AC question type mismatch - should be single_choice but is ac_searchable_dropdown');
+        // Fall through to single_choice rendering
+      }
+    }
+    
     switch (question.type) {
+      case 'ac_searchable_dropdown':
+        return renderACSearchableDropdown(question);
+        
       case 'text':
       case 'textarea':
         return (
@@ -5512,37 +5680,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         );
 
       case 'ac_searchable_dropdown':
-        // Special searchable dropdown for AC selection when interviewer has no assigned ACs
-        // Use allACs state directly if question.allACs is empty (for offline support)
-        const acsToUse = (question.allACs && question.allACs.length > 0) ? question.allACs : allACs;
-        const filteredACs = acsToUse && acSearchTerm
-          ? acsToUse.filter((ac: any) => {
-              const searchLower = acSearchTerm.toLowerCase();
-              const searchText = ac.searchText || `${ac.acCode || ''} ${ac.acName || ''}`.toLowerCase();
-              const acName = (ac.acName || '').toLowerCase();
-              const acCode = (ac.acCode || '').toLowerCase();
-              return searchText.includes(searchLower) || acName.includes(searchLower) || acCode.includes(searchLower);
-            })
-          : (acsToUse || []);
-        
-        console.log('🔍 AC Dropdown Render - allACs state:', allACs.length, 'question.allACs:', question.allACs?.length || 0, 'acsToUse:', acsToUse.length, 'filteredACs:', filteredACs.length);
-        
-        return (
-          <View style={styles.pollingStationContainer}>
-            <View style={[styles.pollingStationSection, showACDropdown && { zIndex: 1001 }]}>
-              <Text style={styles.pollingStationLabel}>Select Assembly Constituency *</Text>
-              {loadingAllACs ? (
-                <View style={{ alignItems: 'center', padding: 20 }}>
-                  <ActivityIndicator size="small" color="#2563eb" />
-                  <Text style={{ marginTop: 10, color: '#666' }}>Loading ACs...</Text>
-                </View>
-              ) : filteredACs.length === 0 && acSearchTerm ? (
-                <Text style={styles.pollingStationError}>No ACs found matching "{acSearchTerm}". Try a different search term.</Text>
-              ) : acsToUse.length === 0 ? (
-                <View style={{ padding: 20 }}>
-                  <Text style={styles.pollingStationError}>No ACs available offline. Please sync survey details when online, or ensure you have internet connection when starting the interview.</Text>
-                </View>
-              ) : (
+        return renderACSearchableDropdown(question);
                 <>
                   <TouchableOpacity
                     style={styles.dropdownButton}
