@@ -5119,6 +5119,12 @@ export default function InterviewInterface({ navigation, route }: any) {
     const currentResponse = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
     const questionId = question.id;
     
+    // Calculate hasAssignedACs for AC selection questions (use question.isSearchable as fallback)
+    // If isSearchable is false or undefined, it means user has assigned ACs
+    const hasAssignedACs = question.id === 'ac-selection' || question.isACSelection 
+      ? (question.isSearchable === false || (!question.isSearchable && question.type === 'single_choice'))
+      : false;
+    
     // Filter options for "Second Choice" question based on "2025 Preference" selection
     // ONLY for survey "68fd1915d41841da463f0d46"
     let filteredOptions = question.options;
@@ -5681,113 +5687,6 @@ export default function InterviewInterface({ navigation, route }: any) {
 
       case 'ac_searchable_dropdown':
         return renderACSearchableDropdown(question);
-                <>
-                  <TouchableOpacity
-                    style={styles.dropdownButton}
-                    onPress={() => setShowACDropdown(true)}
-                  >
-                    <Text style={[
-                      styles.dropdownButtonText,
-                      !selectedAC && styles.dropdownPlaceholder
-                    ]}>
-                      {selectedAC || 'Search and select an Assembly Constituency...'}
-                    </Text>
-                    <Text style={styles.dropdownArrow}>▼</Text>
-                  </TouchableOpacity>
-                  
-                  {/* AC Selection Modal - Bottom Sheet with Search */}
-                  <Modal
-                    visible={showACDropdown}
-                    transparent={true}
-                    animationType="slide"
-                    onRequestClose={() => {
-                      setShowACDropdown(false);
-                      setACSearchTerm('');
-                    }}
-                  >
-                    <View style={styles.modalBackdrop}>
-                      <TouchableOpacity
-                        style={styles.modalBackdropTouchable}
-                        activeOpacity={1}
-                        onPress={() => {
-                          setShowACDropdown(false);
-                          setACSearchTerm('');
-                        }}
-                      />
-                      <View style={styles.bottomSheetContainer}>
-                        <View style={styles.bottomSheetHeader}>
-                          <Text style={styles.bottomSheetTitle}>Select Assembly Constituency</Text>
-                          <TouchableOpacity onPress={() => {
-                            setShowACDropdown(false);
-                            setACSearchTerm('');
-                          }}>
-                            <Text style={styles.bottomSheetClose}>✕</Text>
-                          </TouchableOpacity>
-                        </View>
-                        {/* Search Input */}
-                        <View style={styles.searchContainer}>
-                          <TextInput
-                            mode="outlined"
-                            placeholder="Search by AC Code or Name..."
-                            value={acSearchTerm}
-                            onChangeText={setACSearchTerm}
-                            style={styles.searchInput}
-                            left={<TextInput.Icon icon="magnify" />}
-                          />
-                        </View>
-                        <ScrollView 
-                          style={styles.bottomSheetContent}
-                          contentContainerStyle={styles.bottomSheetContentInner}
-                          showsVerticalScrollIndicator={true}
-                          keyboardShouldPersistTaps="handled"
-                        >
-                          {filteredACs.length === 0 ? (
-                            <View style={styles.emptyState}>
-                              <Text style={styles.emptyStateText}>No ACs found matching "{acSearchTerm}"</Text>
-                            </View>
-                          ) : (
-                            filteredACs.map((ac: any, index: number) => (
-                              <TouchableOpacity
-                                key={`ac-${ac.acCode}-${index}`}
-                                activeOpacity={0.7}
-                                style={[
-                                  styles.bottomSheetItem,
-                                  selectedAC === ac.acName && styles.bottomSheetItemSelected
-                                ]}
-                                onPress={() => {
-                                  handleResponseChange('ac-selection', ac.acName);
-                                  setShowACDropdown(false);
-                                  setACSearchTerm('');
-                                }}
-                              >
-                                <View>
-                                  <Text style={[
-                                    styles.bottomSheetItemText,
-                                    selectedAC === ac.acName && styles.bottomSheetItemTextSelected
-                                  ]}>
-                                    {ac.acName}
-                                  </Text>
-                                  {ac.acCode && (
-                                    <Text style={[
-                                      styles.bottomSheetItemSubtext,
-                                      selectedAC === ac.acName && styles.bottomSheetItemSubtextSelected
-                                    ]}>
-                                      Code: {ac.acCode}
-                                    </Text>
-                                  )}
-                                </View>
-                              </TouchableOpacity>
-                            ))
-                          )}
-                        </ScrollView>
-                      </View>
-                    </View>
-                  </Modal>
-                </>
-              )}
-            </View>
-          </View>
-        );
 
       case 'single_choice':
       case 'single_select':
