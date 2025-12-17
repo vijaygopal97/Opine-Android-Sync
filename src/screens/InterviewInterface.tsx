@@ -522,6 +522,17 @@ export default function InterviewInterface({ navigation, route }: any) {
     //   3. Only for survey "68fd1915d41841da463f0d46"
     // Note: isTargetSurvey is already declared above (line 337), reusing it here
     const hasAssignedACs = assignedACs && assignedACs.length > 0;
+    
+    // CRITICAL LOGGING: Log AC selection logic
+    console.log('🔍 ========== AC SELECTION RENDER DEBUG ==========');
+    console.log('🔍 assignedACs:', assignedACs);
+    console.log('🔍 assignedACs.length:', assignedACs?.length || 0);
+    console.log('🔍 hasAssignedACs:', hasAssignedACs);
+    console.log('🔍 requiresACSelection:', requiresACSelection);
+    console.log('🔍 isTargetSurvey:', isTargetSurvey);
+    console.log('🔍 allACs.length:', allACs?.length || 0);
+    console.log('🔍 ================================================');
+    
     // Show AC selection if requiresACSelection is true (even if allACs is empty - we'll show loading)
     // Only for target survey when interviewer has no assigned ACs
     const needsACSelection = !isCatiMode && requiresACSelection && isTargetSurvey && (hasAssignedACs || (!hasAssignedACs && requiresACSelection));
@@ -1481,12 +1492,26 @@ export default function InterviewInterface({ navigation, route }: any) {
             const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
             const needsACSelection = result.response.requiresACSelection;
             
+            // CRITICAL LOGGING: Log all AC selection related data
+            console.log('🔍 ========== AC SELECTION DEBUG (OFFLINE) ==========');
+            console.log('🔍 Survey ID:', survey._id || survey.id);
+            console.log('🔍 Is Target Survey:', isTargetSurvey);
+            console.log('🔍 requiresACSelection from response:', result.response.requiresACSelection);
+            console.log('🔍 assignedACs from response:', result.response.assignedACs);
+            console.log('🔍 assignedACs length:', result.response.assignedACs?.length || 0);
+            console.log('🔍 needsACSelection:', needsACSelection);
+            console.log('🔍 Survey assignACs:', survey.assignACs);
+            console.log('🔍 ================================================');
+            
             setRequiresACSelection(needsACSelection);
-            setAssignedACs(result.response.assignedACs || []);
+            const assignedACsArray = result.response.assignedACs || [];
+            console.log('🔍 Setting assignedACs to:', assignedACsArray, '(length:', assignedACsArray.length, ')');
+            setAssignedACs(assignedACsArray);
             
             // If interviewer has no assigned ACs but requiresACSelection is true, fetch all ACs for the state
             // Only for target survey "68fd1915d41841da463f0d46"
-            if (isTargetSurvey && needsACSelection && (!result.response.assignedACs || result.response.assignedACs.length === 0)) {
+            if (isTargetSurvey && needsACSelection && assignedACsArray.length === 0) {
+              console.log('🔍 ✅ Condition met: isTargetSurvey && needsACSelection && no assignedACs - will fetch all ACs');
               const state = survey?.acAssignmentState || result.response.acAssignmentState || 'West Bengal';
               console.log('🔍 No assigned ACs - fetching all ACs for state:', state, '(Survey:', survey._id || survey.id, ')');
               setLoadingAllACs(true);

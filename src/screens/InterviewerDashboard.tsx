@@ -25,6 +25,7 @@ import { apiService } from '../services/api';
 import { User, Survey } from '../types';
 import { offlineStorage } from '../services/offlineStorage';
 import { syncService } from '../services/syncService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -47,9 +48,42 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isSyncingSurveys, setIsSyncingSurveys] = useState(false);
+  const [forceOfflineMode, setForceOfflineMode] = useState(false);
   
   // Get safe area insets for bottom navigation
   const insets = useSafeAreaInsets();
+
+  // Load force offline mode state
+  useEffect(() => {
+    const loadForceOfflineMode = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('forceOfflineMode');
+        const enabled = stored === 'true';
+        setForceOfflineMode(enabled);
+        apiService.setForceOfflineMode(enabled);
+      } catch (error) {
+        console.error('Error loading force offline mode:', error);
+      }
+    };
+    loadForceOfflineMode();
+  }, []);
+
+  const toggleForceOfflineMode = async () => {
+    const newValue = !forceOfflineMode;
+    setForceOfflineMode(newValue);
+    apiService.setForceOfflineMode(newValue);
+    try {
+      await AsyncStorage.setItem('forceOfflineMode', String(newValue));
+      showSnackbar(
+        newValue 
+          ? '🔴 Force Offline Mode ENABLED - All API calls will be blocked' 
+          : '🟢 Force Offline Mode DISABLED - Normal mode restored',
+        newValue ? 'info' : 'success'
+      );
+    } catch (error) {
+      console.error('Error saving force offline mode:', error);
+    }
+  };
   
   // Calculate interview stats
   const interviewStats = useMemo(() => {
@@ -980,6 +1014,38 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 }
 
 const styles = StyleSheet.create({
+  offlineToggleContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+    backgroundColor: '#f5f5f5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  offlineToggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  offlineToggleButtonActive: {
+    backgroundColor: '#dc2626',
+    borderColor: '#b91c1c',
+  },
+  offlineToggleText: {
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  offlineToggleTextActive: {
+    color: '#fff',
+  },
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',

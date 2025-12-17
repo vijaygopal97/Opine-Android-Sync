@@ -8,9 +8,20 @@ const API_BASE_URL = 'https://opine.exypnossolutions.com';
 class ApiService {
   private baseURL: string;
   private offlineDataCacheModule: any = null;
+  private forceOfflineMode: boolean = false; // Toggle for testing offline mode
 
   constructor() {
     this.baseURL = API_BASE_URL;
+  }
+
+  // Toggle offline mode for testing
+  setForceOfflineMode(enabled: boolean) {
+    this.forceOfflineMode = enabled;
+    console.log(`🔧 Force offline mode: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  }
+
+  isForceOfflineMode(): boolean {
+    return this.forceOfflineMode;
   }
 
   // Helper to safely get offline cache (lazy load with error handling)
@@ -90,6 +101,10 @@ class ApiService {
    * Check if device is online
    */
   async isOnline(): Promise<boolean> {
+    // If force offline mode is enabled, always return false
+    if (this.forceOfflineMode) {
+      return false;
+    }
     try {
       // Use a shorter timeout for faster response
       const controller = new AbortController();
