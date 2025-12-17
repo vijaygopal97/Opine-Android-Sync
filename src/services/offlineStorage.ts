@@ -172,6 +172,7 @@ class OfflineStorageService {
 
   /**
    * Get all offline interviews
+   * Handles AsyncStorage "Row too big" errors gracefully
    */
   async getOfflineInterviews(): Promise<OfflineInterview[]> {
     try {
@@ -180,11 +181,65 @@ class OfflineStorageService {
         console.log('📦 No offline interviews found in AsyncStorage');
         return [];
       }
+      
+      // Check if data is too large (AsyncStorage has ~6MB limit per key)
+      // If data is very large, try to parse and filter out corrupted entries
+      if (data.length > 5000000) { // ~5MB threshold
+        console.warn('⚠️ Offline interviews data is very large:', data.length, 'bytes');
+        console.warn('⚠️ Attempting to parse and filter...');
+      }
+      
       const interviews = JSON.parse(data);
       console.log(`📦 Retrieved ${interviews.length} offline interviews from AsyncStorage`);
-      return interviews;
-    } catch (error) {
+      
+      // Validate and filter out corrupted interviews
+      const validInterviews = interviews.filter((interview: any) => {
+        if (!interview || typeof interview !== 'object') {
+          console.warn('⚠️ Found invalid interview entry (not an object)');
+          return false;
+        }
+        if (!interview.id) {
+          console.warn('⚠️ Found interview without ID');
+          return false;
+        }
+        // Check if interview data is suspiciously large (might be corrupted)
+        const interviewSize = JSON.stringify(interview).length;
+        if (interviewSize > 2000000) { // ~2MB per interview is suspicious
+          console.warn(`⚠️ Interview ${interview.id} is suspiciously large: ${interviewSize} bytes - marking as corrupted`);
+          return false;
+        }
+        return true;
+      });
+      
+      if (validInterviews.length < interviews.length) {
+        const removedCount = interviews.length - validInterviews.length;
+        console.warn(`⚠️ Removed ${removedCount} corrupted/invalid interview(s)`);
+        // Save cleaned data back
+        try {
+          await AsyncStorage.setItem(STORAGE_KEYS.OFFLINE_INTERVIEWS, JSON.stringify(validInterviews));
+          console.log('✅ Cleaned and saved valid interviews');
+        } catch (saveError) {
+          console.error('❌ Error saving cleaned interviews:', saveError);
+        }
+      }
+      
+      return validInterviews;
+    } catch (error: any) {
       console.error('❌ Error getting offline interviews:', error);
+      
+      // Handle "Row too big" error specifically
+      if (error.message && error.message.includes('Row too big')) {
+        console.error('❌ AsyncStorage row too big - attempting to clear corrupted data...');
+        try {
+          // Try to get the data in chunks or clear it
+          await AsyncStorage.removeItem(STORAGE_KEYS.OFFLINE_INTERVIEWS);
+          console.log('✅ Cleared corrupted offline interviews data');
+          return [];
+        } catch (clearError) {
+          console.error('❌ Error clearing corrupted data:', clearError);
+        }
+      }
+      
       return [];
     }
   }

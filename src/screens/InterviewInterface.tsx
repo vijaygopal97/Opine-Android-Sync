@@ -102,8 +102,9 @@ let isStartingRecording = false;
 /**
  * Proactively cache polling groups and stations for ACs
  * This ensures data is available even if internet is lost during interview
+ * Accepts both string array (AC names) and object array (AC objects with acName/acCode)
  */
-async function cachePollingDataForACs(acs: string[], state: string): Promise<void> {
+async function cachePollingDataForACs(acs: any[], state: string): Promise<void> {
   if (!acs || acs.length === 0) {
     console.log('📥 No ACs to cache polling data for');
     return;
@@ -124,18 +125,35 @@ async function cachePollingDataForACs(acs: string[], state: string): Promise<voi
     
     // Cache polling groups and stations for each AC
     for (let i = 0; i < acs.length; i++) {
-      const ac = acs[i];
-      if (!ac) continue;
+      const acItem = acs[i];
+      if (!acItem) continue;
+      
+      // Extract AC identifier - handle both string and object formats
+      let acIdentifier: string | null = null;
+      if (typeof acItem === 'string') {
+        acIdentifier = acItem.trim();
+      } else if (acItem && typeof acItem === 'object') {
+        // Try acName first (most common), then acCode, then displayText
+        acIdentifier = acItem.acName || acItem.acCode || acItem.name || acItem.displayText || null;
+        if (acIdentifier) {
+          acIdentifier = String(acIdentifier).trim();
+        }
+      }
+      
+      if (!acIdentifier || acIdentifier.length === 0) {
+        console.warn(`⚠️ Skipping invalid AC item at index ${i}:`, acItem);
+        continue;
+      }
       
       try {
         // Fetch and cache polling groups for this AC
-        console.log(`📥 [${i + 1}/${acs.length}] Caching groups for AC: ${ac}`);
-        const groupsResult = await apiService.getGroupsByAC(state, ac);
+        console.log(`📥 [${i + 1}/${acs.length}] Caching groups for AC: ${acIdentifier}`);
+        const groupsResult = await apiService.getGroupsByAC(state, acIdentifier);
         
         if (groupsResult.success && groupsResult.data) {
           groupsCached++;
           const groups = groupsResult.data.groups || [];
-          console.log(`✅ Cached groups for ${ac}: ${groups.length} group(s)`);
+          console.log(`✅ Cached groups for ${acIdentifier}: ${groups.length} group(s)`);
           
           // Cache polling stations for each group
           for (let j = 0; j < groups.length; j++) {
@@ -155,22 +173,22 @@ async function cachePollingDataForACs(acs: string[], state: string): Promise<voi
             
             try {
               // Fetch and cache polling stations for this group
-              const stationsResult = await apiService.getPollingStationsByGroup(state, ac, groupName);
+              const stationsResult = await apiService.getPollingStationsByGroup(state, acIdentifier, groupName);
               if (stationsResult.success && stationsResult.data) {
                 stationsCached++;
                 const stationCount = stationsResult.data.stations?.length || 0;
-                console.log(`✅ Cached stations for ${ac} - ${groupName}: ${stationCount} station(s)`);
+                console.log(`✅ Cached stations for ${acIdentifier} - ${groupName}: ${stationCount} station(s)`);
               }
             } catch (stationError) {
-              console.warn(`⚠️ Failed to cache stations for ${ac} - ${groupName}:`, stationError);
+              console.warn(`⚠️ Failed to cache stations for ${acIdentifier} - ${groupName}:`, stationError);
               // Continue with next group
             }
           }
         } else {
-          console.warn(`⚠️ Failed to cache groups for ${ac}:`, groupsResult.message);
+          console.warn(`⚠️ Failed to cache groups for ${acIdentifier}:`, groupsResult.message);
         }
       } catch (error) {
-        console.error(`❌ Error caching data for AC ${ac}:`, error);
+        console.error(`❌ Error caching data for AC ${acIdentifier}:`, error);
         // Continue with next AC
       }
     }
