@@ -831,13 +831,65 @@ class OfflineDataCacheService {
       return;
     }
     
+    // SKIP: Polling groups and stations are now bundled in the app
+    // No need to download from server - bundled data is always available
+    console.log('📦 Polling groups and stations are bundled in app - skipping server download');
+    console.log('📦 All ACs, groups, and polling stations available from bundled polling_stations.json');
+    
+    // No need to download anything - bundled data service handles all lookups
+    console.log('✅ Survey sync complete: Using bundled AC and polling station data (no server download needed)');
+    
+    // Download gender quotas for all surveys (still needed from server)
+    for (const surveyId of surveyIds) {
+      try {
+        const result = await apiService.getGenderResponseCounts(surveyId);
+        if (result.success && result.data) {
+          await this.saveGenderQuotas(surveyId, result.data);
+          console.log(`✅ Cached gender quotas for survey: ${surveyId}`);
+        }
+      } catch (error) {
+        console.error(`❌ Error downloading gender quotas for ${surveyId}:`, error);
+      }
+    }
+
+    // Download CATI set numbers for CATI surveys (still needed from server)
+    for (const survey of surveys) {
+      if (survey.mode === 'cati' || survey.assignedMode === 'cati') {
+        try {
+          const result = await apiService.getLastCatiSetNumber(survey._id || survey.id);
+          if (result && result.success && result.data) {
+            await this.saveCatiSetNumber(survey._id || survey.id, result.data);
+            console.log(`✅ Cached CATI set number for survey: ${survey._id || survey.id}`);
+          }
+        } catch (error) {
+          console.error(`❌ Error downloading CATI set number for ${survey._id}:`, error);
+        }
+      }
+    }
+
+    // Download user data - ALWAYS force refresh from server to get latest locationControlBooster
+    try {
+      const userResult = await apiService.getCurrentUser(true); // forceRefresh = true to get latest booster status
+      if (userResult.success && userResult.user) {
+        await this.saveUserData(userResult.user);
+        console.log('✅ Cached fresh user data (locationControlBooster refreshed)');
+      }
+    } catch (error) {
+      console.error('❌ Error downloading user data:', error);
+    }
+
+    console.log('✅ Finished downloading dependent data (AC and polling data skipped - using bundled files)');
+    return; // Exit early - no need to download polling data
+    
+    // OLD CODE BELOW - KEPT FOR REFERENCE BUT NOT EXECUTED
+    // ============================================
+    // The following code is disabled because AC and polling station data is now bundled
+    /*
     console.log(`📥 Downloading polling data for ${acsArray.length} assigned AC(s) in state: ${state}`);
     console.log(`📥 ACs: ${acsArray.join(', ')}`);
 
     // First, download AC data for all assigned ACs to get correct AC names
-    // This helps normalize AC names to match master data spelling
-    // The AC data API returns the correct AC name as used in polling station data
-    const acNameMap = new Map<string, string>(); // Maps original AC name to normalized AC name
+    const acNameMap = new Map<string, string>();
     console.log('📥 Downloading AC data to normalize AC names...');
     for (const ac of acsArray) {
       try {
@@ -1069,7 +1121,7 @@ class OfflineDataCacheService {
       }
     }
 
-    // Download gender quotas for all surveys
+    // Download gender quotas for all surveys (still needed from server)
     for (const surveyId of surveyIds) {
       try {
         const result = await apiService.getGenderResponseCounts(surveyId);
@@ -1082,7 +1134,7 @@ class OfflineDataCacheService {
       }
     }
 
-    // Download CATI set numbers for CATI surveys
+    // Download CATI set numbers for CATI surveys (still needed from server)
     for (const survey of surveys) {
       if (survey.mode === 'cati' || survey.assignedMode === 'cati') {
         try {
@@ -1108,7 +1160,7 @@ class OfflineDataCacheService {
       console.error('❌ Error downloading user data:', error);
     }
 
-      console.log('✅ Finished downloading dependent data');
+    console.log('✅ Finished downloading dependent data (AC and polling data skipped - using bundled files)');
     } catch (error) {
       console.error('❌ Error in downloadDependentDataForSurveys:', error);
       throw error;
