@@ -178,7 +178,7 @@ class SyncService {
       }
     }
     
-    const finalResponses = this.buildFinalResponses(interview);
+    const finalResponses = await this.buildFinalResponses(interview);
 
     // Calculate duration from startTime and endTime if available
     // CRITICAL: Prefer stored duration if it's valid, otherwise calculate from timestamps
