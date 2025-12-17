@@ -780,8 +780,6 @@ class OfflineDataCacheService {
     }
 
     console.log('✅ Finished downloading dependent data (AC and polling data skipped - using bundled files)');
-
-    // First, download AC data for all assigned ACs to get correct AC names
     const acNameMap = new Map<string, string>();
     console.log('📥 Downloading AC data to normalize AC names...');
     for (const ac of acsArray) {
