@@ -400,7 +400,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     //   1. Interviewer has assigned ACs (assignedACs.length > 0) - show only assigned ACs
     //   2. Interviewer has NO assigned ACs (assignedACs.length === 0) - show ALL ACs in searchable dropdown
     //   3. Only for survey "68fd1915d41841da463f0d46"
-    const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+    // Note: isTargetSurvey is already declared above (line 337), reusing it here
     const hasAssignedACs = assignedACs && assignedACs.length > 0;
     // Show AC selection if requiresACSelection is true (even if allACs is empty - we'll show loading)
     // Only for target survey when interviewer has no assigned ACs
