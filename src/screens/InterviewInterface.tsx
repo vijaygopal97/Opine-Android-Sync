@@ -115,6 +115,7 @@ async function cachePollingDataForACs(acs: any[], state: string): Promise<void> 
   const startTime = Date.now();
   let groupsCached = 0;
   let stationsCached = 0;
+  let errorsSkipped = 0;
   
   try {
     // Check if online - only cache if online
@@ -206,7 +207,7 @@ async function cachePollingDataForACs(acs: any[], state: string): Promise<void> 
       }
       
       // Add small delay to prevent overwhelming the API
-      if (i < acsToCache.length - 1 && (i + 1) % 10 === 0) {
+      if (i < acs.length - 1 && (i + 1) % 10 === 0) {
         await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay every 10 ACs
       }
     }
