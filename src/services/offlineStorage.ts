@@ -151,13 +151,19 @@ class OfflineStorageService {
       const existingIndex = interviews.findIndex(i => i.id === interview.id);
       
       if (existingIndex >= 0) {
+        console.log(`🔄 Updating existing offline interview: ${interview.id} (old status: ${interviews[existingIndex].status}, new status: ${interview.status})`);
         interviews[existingIndex] = interview;
       } else {
+        console.log(`➕ Adding new offline interview: ${interview.id} (status: ${interview.status || 'pending'})`);
+        // Ensure status is set to 'pending' if not provided
+        if (!interview.status) {
+          interview.status = 'pending';
+        }
         interviews.push(interview);
       }
       
       await AsyncStorage.setItem(STORAGE_KEYS.OFFLINE_INTERVIEWS, JSON.stringify(interviews));
-      console.log('✅ Saved offline interview:', interview.id);
+      console.log('✅ Saved offline interview:', interview.id, `(Total in storage: ${interviews.length}, Status: ${interview.status})`);
     } catch (error) {
       console.error('❌ Error saving offline interview:', error);
       throw error;
@@ -170,8 +176,13 @@ class OfflineStorageService {
   async getOfflineInterviews(): Promise<OfflineInterview[]> {
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.OFFLINE_INTERVIEWS);
-      if (!data) return [];
-      return JSON.parse(data);
+      if (!data) {
+        console.log('📦 No offline interviews found in AsyncStorage');
+        return [];
+      }
+      const interviews = JSON.parse(data);
+      console.log(`📦 Retrieved ${interviews.length} offline interviews from AsyncStorage`);
+      return interviews;
     } catch (error) {
       console.error('❌ Error getting offline interviews:', error);
       return [];
@@ -184,7 +195,13 @@ class OfflineStorageService {
   async getPendingInterviews(): Promise<OfflineInterview[]> {
     try {
       const interviews = await this.getOfflineInterviews();
-      return interviews.filter(i => i.status === 'pending' || i.status === 'failed');
+      // Include interviews with status 'pending', 'failed', or no status (legacy)
+      const pending = interviews.filter(i => {
+        const status = i.status;
+        return !status || status === 'pending' || status === 'failed';
+      });
+      console.log(`📊 getPendingInterviews: Found ${pending.length} pending interviews out of ${interviews.length} total`);
+      return pending;
     } catch (error) {
       console.error('❌ Error getting pending interviews:', error);
       return [];
