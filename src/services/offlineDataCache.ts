@@ -734,48 +734,10 @@ class OfflineDataCacheService {
       // Continue - bundled data is still available even if cache fails
     }
     
-    // CRITICAL: Even if no assigned ACs, we need to cache polling groups/stations for ALL ACs
-    // This ensures users without assigned ACs can select any AC and see groups/stations offline
-    // However, caching for all 294 ACs would be too slow, so we cache for first 100 ACs (most common)
-    if (acsArray.length === 0) {
-      console.log('⚠️ No assigned ACs found. Caching polling data for first 100 ACs to enable offline AC selection...');
-      
-      // Get all cached ACs for the state
-      const allCachedACs = await this.getAllACsForState(state);
-      if (allCachedACs && allCachedACs.length > 0) {
-        // Extract AC names from AC objects
-        const acNamesToCache: string[] = [];
-        for (const acItem of allCachedACs.slice(0, 100)) { // Limit to first 100 to prevent performance issues
-          let acName: string | null = null;
-          if (typeof acItem === 'string') {
-            acName = acItem.trim();
-          } else if (acItem && typeof acItem === 'object') {
-            acName = acItem.acName || acItem.acCode || acItem.name || acItem.displayText || null;
-            if (acName) {
-              acName = String(acName).trim();
-            }
-          }
-          if (acName && acName.length > 0) {
-            acNamesToCache.push(acName);
-          }
-        }
-        
-        // SKIP: Polling data is bundled - no need to download
-        console.log('📦 Polling data is bundled in app - skipping download');
-      } else {
-        console.log('📦 Polling data is bundled in app - no download needed');
-      }
-    } else {
-      // SKIP: Polling data is bundled - no need to download for assigned ACs either
-      console.log('📦 Polling data is bundled in app - skipping download for assigned ACs');
-    }
-    
     // SKIP: Polling groups and stations are now bundled in the app
     // No need to download from server - bundled data is always available
     console.log('📦 Polling groups and stations are bundled in app - skipping server download');
     console.log('📦 All ACs, groups, and polling stations available from bundled polling_stations.json');
-    
-    // No need to download anything - bundled data service handles all lookups
     console.log('✅ Survey sync complete: Using bundled AC and polling station data (no server download needed)');
     
     // Download gender quotas for all surveys (still needed from server)
