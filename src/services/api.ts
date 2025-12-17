@@ -1001,22 +1001,6 @@ class ApiService {
 
   // Polling Station API methods
   async getGroupsByAC(state: string, acIdentifier: string) {
-    // Check force offline mode first
-    if (this.forceOfflineMode) {
-      console.log('🔴 Force offline mode - using cache for getGroupsByAC');
-      const cacheForRead = await this.getOfflineCache();
-      if (cacheForRead) {
-        try {
-          const cachedGroups = await cacheForRead.getPollingGroups(state, acIdentifier);
-          if (cachedGroups && cachedGroups.groups && cachedGroups.groups.length > 0) {
-            return { success: true, data: cachedGroups };
-          }
-        } catch (error) {
-          console.error('Error reading cached groups:', error);
-        }
-      }
-      return { success: false, message: 'Force offline mode - no cached data available' };
-    }
     try {
       // Normalize AC name to match master data spelling
       const normalizedAC = this.normalizeACName(acIdentifier);
@@ -1065,6 +1049,12 @@ class ApiService {
       
       if (cachedData) {
         return { success: true, data: cachedData };
+      }
+      
+      // If force offline mode is enabled, don't try online fetch
+      if (this.forceOfflineMode) {
+        console.log('🔴 Force offline mode - no cached data found for getGroupsByAC');
+        return { success: false, message: 'Force offline mode - no cached data available' };
       }
 
       // Check if online
