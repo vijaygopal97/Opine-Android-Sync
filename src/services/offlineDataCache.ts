@@ -251,8 +251,44 @@ class OfflineDataCacheService {
   ): Promise<PollingStation | null> {
     try {
       const allStations = await this.getAllPollingStations();
-      const key = `${state}::${acIdentifier}::${groupName}`;
-      return allStations[key] || null;
+      
+      // Try exact match first
+      let key = `${state}::${acIdentifier}::${groupName}`;
+      let result = allStations[key];
+      if (result) {
+        return result;
+      }
+      
+      // If not found, try to find by AC code if acIdentifier is an AC name
+      // Check if any cached entry has matching ac_name
+      for (const [cachedKey, cachedData] of Object.entries(allStations)) {
+        if (cachedKey.startsWith(`${state}::`) && cachedKey.endsWith(`::${groupName}`)) {
+          const parts = cachedKey.replace(`${state}::`, '').replace(`::${groupName}`, '');
+          const cachedACIdentifier = parts;
+          const cachedACName = (cachedData as any).ac_name;
+          
+          // Check if the cached AC name matches our search identifier
+          if (cachedACName && (
+            cachedACName.toLowerCase() === acIdentifier.toLowerCase() ||
+            cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim() === acIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim()
+          )) {
+            console.log(`📦 Found cached stations by AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
+            return cachedData as PollingStation;
+          }
+          
+          // Also check if cached key is AC code and we can match by name
+          if (/^\d+$/.test(cachedACIdentifier) && cachedACName) {
+            const normalizedCachedName = cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim();
+            const normalizedSearchName = acIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim();
+            if (normalizedCachedName === normalizedSearchName) {
+              console.log(`📦 Found cached stations by AC code match: "${acIdentifier}" -> code "${cachedACIdentifier}" (name: "${cachedACName}")`);
+              return cachedData as PollingStation;
+            }
+          }
+        }
+      }
+      
+      return null;
     } catch (error) {
       console.error('Error getting polling stations:', error);
       return null;

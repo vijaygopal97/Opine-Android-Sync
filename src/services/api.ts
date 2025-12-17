@@ -1272,11 +1272,20 @@ class ApiService {
         }
       }
       
-      // Cache the data using normalized name
+      // Cache the data using both AC code (if available) and normalized name
       const cacheForSave = await this.getOfflineCache();
       if (cacheForSave && response.data.success && response.data.data) {
         try {
-          await cacheForSave.savePollingStations(state, normalizedAC, groupName, response.data.data);
+          const stationsData = response.data.data;
+          // Save with normalized AC name
+          await cacheForSave.savePollingStations(state, normalizedAC, groupName, stationsData);
+          
+          // Also try to get AC code from cached groups data for this AC
+          const cachedGroups = await cacheForSave.getPollingGroups(state, normalizedAC);
+          if (cachedGroups && (cachedGroups as any).ac_no) {
+            await cacheForSave.savePollingStations(state, (cachedGroups as any).ac_no.toString(), groupName, stationsData);
+            console.log(`📦 Cached stations with AC code: ${(cachedGroups as any).ac_no} (name: ${normalizedAC})`);
+          }
         } catch (cacheError) {
           // Cache save failed, continue
         }
