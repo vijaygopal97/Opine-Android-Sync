@@ -39,6 +39,7 @@ import { Survey, SurveyResponse } from '../types';
 import { parseTranslation, getMainText } from '../utils/translations';
 import { isGenderQuestion } from '../utils/genderUtils';
 import { offlineStorage, OfflineInterview } from '../services/offlineStorage';
+import { offlineDataCache } from '../services/offlineDataCache';
 
 const { width, height } = Dimensions.get('window');
 
@@ -1225,6 +1226,9 @@ export default function InterviewInterface({ navigation, route }: any) {
   // Load ACs from cache immediately when component mounts (for offline support)
   useEffect(() => {
     const loadACsFromCache = async () => {
+      // Check if this is the target survey
+      const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+      
       // Only load if user has no assigned ACs and needs AC selection
       if (!isCatiMode && requiresACSelection && isTargetSurvey) {
         try {
@@ -1232,32 +1236,46 @@ export default function InterviewInterface({ navigation, route }: any) {
           if (!isOnline) {
             // Offline - try to load from cache immediately
             console.log('📴 Offline detected - loading ACs from cache immediately...');
-            const { offlineDataCache } = await import('../services/offlineDataCache');
             const state = survey?.acAssignmentState || 'West Bengal';
-            const cachedACs = await offlineDataCache.getAllACsForState(state);
             
-            if (cachedACs && cachedACs.length > 0) {
-              const minExpectedACs = state === 'West Bengal' ? 200 : 50;
-              if (cachedACs.length >= minExpectedACs) {
-                console.log('✅ Loaded', cachedACs.length, 'ACs from cache immediately (offline mode)');
-                setAllACs(cachedACs);
+            // Use static import instead of dynamic import to avoid bundle loading errors when offline
+            try {
+              const cachedACs = await offlineDataCache.getAllACsForState(state);
+              
+              if (cachedACs && cachedACs.length > 0) {
+                const minExpectedACs = state === 'West Bengal' ? 200 : 50;
+                if (cachedACs.length >= minExpectedACs) {
+                  console.log('✅ Loaded', cachedACs.length, 'ACs from cache immediately (offline mode)');
+                  setAllACs(cachedACs);
+                } else {
+                  console.warn('⚠️ Cached ACs incomplete:', cachedACs.length, 'ACs (expected at least', minExpectedACs, ')');
+                  // Still set it so dropdown can show, but with warning
+                  setAllACs(cachedACs);
+                }
               } else {
-                console.warn('⚠️ Cached ACs incomplete:', cachedACs.length, 'ACs (expected at least', minExpectedACs, ')');
-                // Still set it so dropdown can show, but with warning
-                setAllACs(cachedACs);
+                console.log('📴 No ACs found in cache');
               }
-            } else {
-              console.log('📴 No ACs found in cache');
+            } catch (cacheError: any) {
+              console.error('❌ Error accessing offlineDataCache:', cacheError);
+              console.error('❌ Cache error details:', {
+                message: cacheError?.message,
+                name: cacheError?.name
+              });
             }
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('❌ Error loading ACs from cache:', error);
+          console.error('❌ Error details:', {
+            message: error?.message,
+            name: error?.name,
+            stack: error?.stack
+          });
         }
       }
     };
     
     loadACsFromCache();
-  }, [isCatiMode, requiresACSelection, isTargetSurvey, survey?.acAssignmentState]);
+  }, [isCatiMode, requiresACSelection, survey, survey?.acAssignmentState]);
 
   // Initialize interview
   useEffect(() => {
