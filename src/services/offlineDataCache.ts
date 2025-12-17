@@ -270,14 +270,30 @@ class OfflineDataCacheService {
 
   /**
    * Get all ACs for a state
+   * Validates cache completeness before returning
    */
   async getAllACsForState(state: string): Promise<any[]> {
     try {
       const allACsData = await this.getAllACsForAllStates();
       const stateData = allACsData[state];
       if (stateData && stateData.acs) {
-        console.log('📦 Found cached ACs for state:', state, stateData.acs.length, 'ACs');
-        return stateData.acs;
+        const cachedACs = stateData.acs;
+        const acCount = cachedACs.length;
+        
+        // CRITICAL: Validate cache completeness
+        // West Bengal should have ~294 ACs, reject if suspiciously few
+        const minExpectedACs = state === 'West Bengal' ? 200 : 50;
+        
+        if (acCount >= minExpectedACs) {
+          console.log('📦 Found cached ACs for state:', state, acCount, 'ACs (validated complete)');
+          return cachedACs;
+        } else {
+          // Cache is incomplete/contaminated - clear it
+          console.warn(`⚠️ Cached ACs for state ${state} has only ${acCount} ACs (expected at least ${minExpectedACs})`);
+          console.warn('⚠️ This cache appears incomplete/contaminated - clearing it');
+          await this.clearACsForState(state);
+          return [];
+        }
       }
       return [];
     } catch (error) {
@@ -296,6 +312,22 @@ class OfflineDataCacheService {
     } catch (error) {
       console.error('Error getting all ACs for all states:', error);
       return {};
+    }
+  }
+
+  /**
+   * Clear all ACs cache for a specific state
+   * This ensures old/contaminated cache doesn't interfere with new data
+   */
+  async clearACsForState(state: string): Promise<void> {
+    try {
+      const allACsData = await this.getAllACsForAllStates();
+      delete allACsData[state];
+      await AsyncStorage.setItem(STORAGE_KEYS.ALL_ACS_FOR_STATE, JSON.stringify(allACsData));
+      console.log('✅ Cleared AC cache for state:', state);
+    } catch (error) {
+      console.error('Error clearing AC cache for state:', error);
+      throw error;
     }
   }
 
@@ -532,20 +564,50 @@ class OfflineDataCacheService {
     const state = states.size > 0 ? Array.from(states)[0] : 'West Bengal';
     const acsArray = Array.from(assignedACs);
     
-    // CRITICAL: Always cache ALL ACs for the state FIRST, regardless of assigned ACs
-    // This ensures users without assigned ACs can still see all ACs offline
-    console.log('📥 Step 1: Caching ALL ACs for state:', state, '(required for users without assigned ACs)');
+    // CRITICAL: Clear old cache FIRST to prevent contamination from previous syncs
+    console.log('🧹 Step 1: Clearing old AC cache for state:', state, '(preventing cache contamination)');
     try {
+      await this.clearACsForState(state);
+      console.log('✅ Cleared old AC cache for state:', state);
+    } catch (clearError) {
+      console.warn('⚠️ Error clearing old cache (non-critical):', clearError);
+      // Continue - clearing old cache failure is not critical
+    }
+    
+    // CRITICAL: Always cache ALL ACs for the state from master data API
+    // This ensures users without assigned ACs can still see all ACs offline
+    // Use the SAME API method as online mode to ensure consistency
+    console.log('📥 Step 2: Fetching and caching ALL ACs for state:', state, 'from master data API (required for users without assigned ACs)');
+    try {
+      // Use apiService.getAllACsForState which fetches from master data API
+      // This ensures we use the exact same method as online mode
       const allACsResult = await apiService.getAllACsForState(state);
+      
       if (allACsResult.success && allACsResult.data) {
         const allACs = allACsResult.data.acs || [];
         const acCount = allACsResult.data.count || allACs.length;
-        console.log(`✅ Cached all ${acCount} ACs for state: ${state} (complete master data)`);
+        
+        // Validate we got complete data (West Bengal should have ~294 ACs)
+        const minExpectedACs = state === 'West Bengal' ? 200 : 50;
+        if (acCount >= minExpectedACs) {
+          // The data is already cached by getAllACsForState, but verify it's in cache
+          const cachedACs = await this.getAllACsForState(state);
+          if (cachedACs.length === acCount) {
+            console.log(`✅ Verified cached all ${acCount} ACs for state: ${state} (complete master data from API)`);
+          } else {
+            // If not properly cached, save it explicitly
+            await this.saveAllACsForState(state, allACs);
+            console.log(`✅ Explicitly cached all ${acCount} ACs for state: ${state} (complete master data)`);
+          }
+        } else {
+          console.error(`❌ Suspicious AC count from API: ${acCount} (expected at least ${minExpectedACs})`);
+          console.error('❌ Not caching incomplete data - will retry on next sync');
+        }
       } else {
-        console.warn('⚠️ Failed to cache all ACs for state:', state, allACsResult.message || 'Unknown error');
+        console.warn('⚠️ Failed to fetch all ACs from API:', allACsResult.message || 'Unknown error');
       }
-    } catch (allACsError) {
-      console.error('❌ Error caching all ACs for state:', state, allACsError);
+    } catch (allACsError: any) {
+      console.error('❌ Error fetching/caching all ACs for state:', state, allACsError?.message || allACsError);
       // Continue - don't block if this fails, but log it
     }
     

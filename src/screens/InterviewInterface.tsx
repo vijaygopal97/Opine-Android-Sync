@@ -1443,45 +1443,15 @@ export default function InterviewInterface({ navigation, route }: any) {
                     console.log('📥 Skipping proactive cache for all ACs (will cache on-demand when AC is selected)');
                   }
                 } else if (allACsResponse.error === 'OFFLINE_NO_CACHE') {
-                  console.log('📴 Offline mode - checking cache again...');
-                  // Try to load from cache directly (bypass validation temporarily)
-                  try {
-                    const { offlineDataCache } = await import('../services/offlineDataCache');
-                    const cachedACs = await offlineDataCache.getAllACsForState(state);
-                    if (cachedACs && cachedACs.length > 0) {
-                      console.log('📦 Found cached ACs:', cachedACs.length, 'ACs');
-                      // Validate cache completeness
-                      const minExpectedACs = state === 'West Bengal' ? 200 : 50;
-                      if (cachedACs.length >= minExpectedACs) {
-                        console.log('✅ Using cached ACs (validated complete)');
-                        setAllACs(cachedACs);
-                      } else {
-                        console.warn('⚠️ Cached ACs incomplete:', cachedACs.length, '(expected at least', minExpectedACs, ')');
-                        Alert.alert(
-                          'Incomplete Data',
-                          `Only ${cachedACs.length} ACs found in cache (expected ${minExpectedACs}+). Please sync survey details when online to cache complete AC list.`,
-                          [{ text: 'OK' }]
-                        );
-                        setAllACs([]);
-                      }
-                    } else {
-                      console.log('📴 No cached ACs found');
-                      Alert.alert(
-                        'Offline Mode',
-                        'Complete AC list is not available offline. Please sync survey details from the dashboard when online, or ensure you have internet connection when starting the interview.',
-                        [{ text: 'OK' }]
-                      );
-                      setAllACs([]);
-                    }
-                  } catch (cacheError) {
-                    console.error('❌ Error loading cached ACs:', cacheError);
-                    Alert.alert(
-                      'Offline Mode',
-                      'Complete AC list is not available offline. Please sync survey details from the dashboard when online.',
-                      [{ text: 'OK' }]
-                    );
-                    setAllACs([]);
-                  }
+                  console.log('📴 Offline mode - no valid cached ACs available');
+                  // Cache validation is already done in getAllACsForState
+                  // If we get here, cache was either empty or incomplete and was cleared
+                  Alert.alert(
+                    'Offline Mode',
+                    'Complete AC list is not available offline. Please sync survey details from the dashboard when online to cache all ACs, or ensure you have internet connection when starting the interview.',
+                    [{ text: 'OK' }]
+                  );
+                  setAllACs([]);
                 } else {
                   console.error('Failed to fetch all ACs:', allACsResponse);
                   setAllACs([]);
