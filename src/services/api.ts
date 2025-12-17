@@ -294,38 +294,87 @@ class ApiService {
         let requiresACSelection = false;
         let assignedACs: string[] = [];
         
+        // Get current user ID to check their specific assignment
+        let currentUserId: string | null = null;
+        try {
+          const userDataStr = await AsyncStorage.getItem('userData');
+          if (userDataStr) {
+            const userData = JSON.parse(userDataStr);
+            currentUserId = userData._id || userData.id || userData.memberId || null;
+            console.log('🔍 Current user ID for assignment check:', currentUserId);
+          }
+        } catch (error) {
+          console.error('❌ Error getting current user ID:', error);
+        }
+        
         if (survey) {
+          console.log('🔍 ========== OFFLINE AC ASSIGNMENT DEBUG ==========');
+          console.log('🔍 Survey ID:', survey._id || survey.id);
+          console.log('🔍 Survey assignACs:', survey.assignACs);
+          console.log('🔍 Is Target Survey:', isTargetSurvey);
+          console.log('🔍 Current User ID:', currentUserId);
+          
           // Check for AC assignment in different assignment types
           let foundAssignment = false;
           
           if (survey.assignedInterviewers && survey.assignedInterviewers.length > 0) {
-            const assignment = survey.assignedInterviewers.find((a: any) => a.status === 'assigned');
+            console.log('🔍 Checking assignedInterviewers:', survey.assignedInterviewers.length);
+            // Find assignment for current user specifically
+            const assignment = survey.assignedInterviewers.find((a: any) => {
+              const matchesStatus = a.status === 'assigned';
+              const matchesUser = currentUserId && (
+                (a.interviewer && (a.interviewer._id === currentUserId || a.interviewer.toString() === currentUserId || a.interviewer.id === currentUserId)) ||
+                (a.interviewerId && (a.interviewerId === currentUserId || a.interviewerId.toString() === currentUserId))
+              );
+              return matchesStatus && (currentUserId ? matchesUser : true); // If no user ID, match any assigned
+            });
+            
             if (assignment) {
+              console.log('🔍 Found assignment in assignedInterviewers:', assignment);
               foundAssignment = true;
               if (assignment.assignedACs && assignment.assignedACs.length > 0) {
                 requiresACSelection = survey.assignACs === true;
                 assignedACs = assignment.assignedACs || [];
+                console.log('🔍 Assignment has', assignedACs.length, 'assigned ACs:', assignedACs);
               } else if (isTargetSurvey) {
                 // For target survey, require AC selection even if no assigned ACs
                 requiresACSelection = survey.assignACs === true;
                 assignedACs = [];
+                console.log('🔍 Target survey with no assigned ACs - will show dropdown');
               }
+            } else {
+              console.log('🔍 No matching assignment found in assignedInterviewers');
             }
           }
           
           // Check CAPI assignments
           if (!foundAssignment && survey.capiInterviewers && survey.capiInterviewers.length > 0) {
-            const assignment = survey.capiInterviewers.find((a: any) => a.status === 'assigned');
+            console.log('🔍 Checking capiInterviewers:', survey.capiInterviewers.length);
+            // Find assignment for current user specifically
+            const assignment = survey.capiInterviewers.find((a: any) => {
+              const matchesStatus = a.status === 'assigned';
+              const matchesUser = currentUserId && (
+                (a.interviewer && (a.interviewer._id === currentUserId || a.interviewer.toString() === currentUserId || a.interviewer.id === currentUserId)) ||
+                (a.interviewerId && (a.interviewerId === currentUserId || a.interviewerId.toString() === currentUserId))
+              );
+              return matchesStatus && (currentUserId ? matchesUser : true); // If no user ID, match any assigned
+            });
+            
             if (assignment) {
+              console.log('🔍 Found assignment in capiInterviewers:', assignment);
               foundAssignment = true;
               if (assignment.assignedACs && assignment.assignedACs.length > 0) {
                 requiresACSelection = survey.assignACs === true;
                 assignedACs = assignment.assignedACs || [];
+                console.log('🔍 Assignment has', assignedACs.length, 'assigned ACs:', assignedACs);
               } else if (isTargetSurvey) {
                 // For target survey, require AC selection even if no assigned ACs
                 requiresACSelection = survey.assignACs === true;
                 assignedACs = [];
+                console.log('🔍 Target survey with no assigned ACs - will show dropdown');
               }
+            } else {
+              console.log('🔍 No matching assignment found in capiInterviewers');
             }
           }
           
@@ -333,7 +382,11 @@ class ApiService {
           if (!foundAssignment && isTargetSurvey && survey.assignACs === true) {
             requiresACSelection = true;
             assignedACs = [];
+            console.log('🔍 No assignment found but target survey - will show dropdown with all ACs');
           }
+          
+          console.log('🔍 Final result - requiresACSelection:', requiresACSelection, 'assignedACs:', assignedACs, '(length:', assignedACs.length, ')');
+          console.log('🔍 ================================================');
         }
         
         // Create local session data
@@ -390,44 +443,92 @@ class ApiService {
         let requiresACSelection = false;
         let assignedACs: string[] = [];
         
+        // Get current user ID to check their specific assignment
+        let currentUserId: string | null = null;
+        try {
+          const userDataStr = await AsyncStorage.getItem('userData');
+          if (userDataStr) {
+            const userData = JSON.parse(userDataStr);
+            currentUserId = userData._id || userData.id || userData.memberId || null;
+            console.log('🔍 [Network Error Fallback] Current user ID for assignment check:', currentUserId);
+          }
+        } catch (error) {
+          console.error('❌ Error getting current user ID:', error);
+        }
+        
         if (survey) {
+          console.log('🔍 [Network Error Fallback] ========== OFFLINE AC ASSIGNMENT DEBUG ==========');
+          console.log('🔍 Survey ID:', survey._id || survey.id);
+          console.log('🔍 Survey assignACs:', survey.assignACs);
+          console.log('🔍 Is Target Survey:', isTargetSurvey);
+          console.log('🔍 Current User ID:', currentUserId);
+          
           let foundAssignment = false;
           
           if (survey.assignedInterviewers && survey.assignedInterviewers.length > 0) {
-            const assignment = survey.assignedInterviewers.find((a: any) => a.status === 'assigned');
+            console.log('🔍 Checking assignedInterviewers:', survey.assignedInterviewers.length);
+            const assignment = survey.assignedInterviewers.find((a: any) => {
+              const matchesStatus = a.status === 'assigned';
+              const matchesUser = currentUserId && (
+                (a.interviewer && (a.interviewer._id === currentUserId || a.interviewer.toString() === currentUserId || a.interviewer.id === currentUserId)) ||
+                (a.interviewerId && (a.interviewerId === currentUserId || a.interviewerId.toString() === currentUserId))
+              );
+              return matchesStatus && (currentUserId ? matchesUser : true);
+            });
+            
             if (assignment) {
+              console.log('🔍 Found assignment in assignedInterviewers:', assignment);
               foundAssignment = true;
               if (assignment.assignedACs && assignment.assignedACs.length > 0) {
                 requiresACSelection = survey.assignACs === true;
                 assignedACs = assignment.assignedACs || [];
+                console.log('🔍 Assignment has', assignedACs.length, 'assigned ACs:', assignedACs);
               } else if (isTargetSurvey) {
-                // For target survey, require AC selection even if no assigned ACs
                 requiresACSelection = survey.assignACs === true;
                 assignedACs = [];
+                console.log('🔍 Target survey with no assigned ACs - will show dropdown');
               }
+            } else {
+              console.log('🔍 No matching assignment found in assignedInterviewers');
             }
           }
           
           if (!foundAssignment && survey.capiInterviewers && survey.capiInterviewers.length > 0) {
-            const assignment = survey.capiInterviewers.find((a: any) => a.status === 'assigned');
+            console.log('🔍 Checking capiInterviewers:', survey.capiInterviewers.length);
+            const assignment = survey.capiInterviewers.find((a: any) => {
+              const matchesStatus = a.status === 'assigned';
+              const matchesUser = currentUserId && (
+                (a.interviewer && (a.interviewer._id === currentUserId || a.interviewer.toString() === currentUserId || a.interviewer.id === currentUserId)) ||
+                (a.interviewerId && (a.interviewerId === currentUserId || a.interviewerId.toString() === currentUserId))
+              );
+              return matchesStatus && (currentUserId ? matchesUser : true);
+            });
+            
             if (assignment) {
+              console.log('🔍 Found assignment in capiInterviewers:', assignment);
               foundAssignment = true;
               if (assignment.assignedACs && assignment.assignedACs.length > 0) {
                 requiresACSelection = survey.assignACs === true;
                 assignedACs = assignment.assignedACs || [];
+                console.log('🔍 Assignment has', assignedACs.length, 'assigned ACs:', assignedACs);
               } else if (isTargetSurvey) {
-                // For target survey, require AC selection even if no assigned ACs
                 requiresACSelection = survey.assignACs === true;
                 assignedACs = [];
+                console.log('🔍 Target survey with no assigned ACs - will show dropdown');
               }
+            } else {
+              console.log('🔍 No matching assignment found in capiInterviewers');
             }
           }
           
-          // If no assignment found but it's target survey, still require AC selection
           if (!foundAssignment && isTargetSurvey && survey.assignACs === true) {
             requiresACSelection = true;
             assignedACs = [];
+            console.log('🔍 No assignment found but target survey - will show dropdown with all ACs');
           }
+          
+          console.log('🔍 Final result - requiresACSelection:', requiresACSelection, 'assignedACs:', assignedACs, '(length:', assignedACs.length, ')');
+          console.log('🔍 ================================================');
         }
         
         // Create local session data
