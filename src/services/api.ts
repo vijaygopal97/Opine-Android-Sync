@@ -1864,7 +1864,11 @@ class ApiService {
           
           return {
             success: true,
-            data: bundledResult.data
+            data: {
+              state: state,
+              acs: bundledResult.data,
+              count: bundledResult.data.length
+            }
           };
         }
       } catch (bundledError) {

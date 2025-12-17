@@ -1526,8 +1526,23 @@ export default function InterviewInterface({ navigation, route }: any) {
               try {
                 const allACsResponse = await apiService.getAllACsForState(state);
                 if (allACsResponse.success && allACsResponse.data) {
-                  const fetchedACs = allACsResponse.data.acs || [];
-                  const acCount = allACsResponse.data.count || fetchedACs.length;
+                  // Handle both bundled data format (data is array) and API format (data.acs is array)
+                  let fetchedACs: any[] = [];
+                  let acCount = 0;
+                  
+                  if (Array.isArray(allACsResponse.data)) {
+                    // Bundled data format: data is directly the array
+                    fetchedACs = allACsResponse.data;
+                    acCount = fetchedACs.length;
+                  } else if (allACsResponse.data.acs && Array.isArray(allACsResponse.data.acs)) {
+                    // API format: data.acs is the array
+                    fetchedACs = allACsResponse.data.acs;
+                    acCount = allACsResponse.data.count || fetchedACs.length;
+                  } else {
+                    // Fallback: try to extract from any structure
+                    fetchedACs = allACsResponse.data.acs || allACsResponse.data || [];
+                    acCount = allACsResponse.data.count || fetchedACs.length;
+                  }
                   
                   // CRITICAL: Validate that we got complete master data, not contaminated cache
                   // West Bengal should have ~294 ACs, reject if we get suspiciously few
