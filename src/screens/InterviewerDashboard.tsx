@@ -838,6 +838,9 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                         {interview.survey?.surveyName || 'Unknown Survey'}
                       </Text>
                     </View>
+                  </View>
+                  {/* Status badge - moved to separate row below title to prevent overflow */}
+                  <View style={styles.statusBadgeContainer}>
                     <View style={[styles.statusBadge, { 
                       backgroundColor: interview.status === 'synced' ? '#059669' : 
                                        interview.status === 'syncing' ? '#f59e0b' : 
@@ -928,8 +931,11 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       </ScrollView>
 
       {/* Sync Offline Interviews Button - Show when there are pending interviews OR when offline interviews exist */}
+      {/* Position above FAB button with proper safe area insets */}
       {(pendingInterviewsCount > 0 || offlineInterviews.length > 0) && (
-        <View style={[styles.syncContainer, { paddingBottom: Math.max(16, insets.bottom) }]}>
+        <View style={[styles.syncContainer, { 
+          paddingBottom: Math.max(16, insets.bottom) + 80 // Add space for FAB button (56px FAB + 24px gap)
+        }]}>
           <Button
             mode="contained"
             onPress={handleSyncOfflineInterviews}
@@ -947,7 +953,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 
       <FAB
         icon="plus"
-        style={[styles.fab, { bottom: Math.max(16, insets.bottom) }]}
+        style={[styles.fab, { bottom: Math.max(16, insets.bottom) + 25 }]} // Move 25px higher as requested
         onPress={() => navigation.navigate('AvailableSurveys')}
         label="Start Interview"
         iconColor="#ffffff"
@@ -1178,7 +1184,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    marginBottom: 0, // Remove bottom margin since status badge is separate now
   },
   interviewHeaderRight: {
     flexDirection: 'row',
@@ -1194,7 +1200,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1f2937',
     flex: 1,
-    marginRight: 12,
+  },
+  interviewTitleContainer: {
+    flex: 1,
+    marginRight: 0,
+  },
+  statusBadgeContainer: {
+    marginTop: 8,
+    marginBottom: 8,
+    alignSelf: 'flex-start', // Align to left, won't overflow
   },
   interviewDate: {
     fontSize: 12,
@@ -1202,9 +1216,10 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 12,
+    alignSelf: 'flex-start', // Prevent overflow
   },
   statusText: {
     fontSize: 10,
@@ -1310,9 +1325,11 @@ const styles = StyleSheet.create({
   },
   syncContainer: {
     padding: 16,
+    paddingTop: 16,
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb',
+    position: 'relative', // Ensure proper positioning
   },
   syncButton: {
     backgroundColor: '#059669',
