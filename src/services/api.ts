@@ -1641,19 +1641,18 @@ class ApiService {
           } else if (cachedACs && cachedACs.length > 0) {
             // Cache exists but has too few ACs - likely contaminated/incomplete
             console.warn('⚠️ Cached ACs for state', state, 'has only', cachedACs.length, 'ACs (expected at least', minExpectedACs, ')');
-            console.warn('⚠️ This cache appears incomplete/contaminated - rejecting and returning empty');
-            // Clear the contaminated cache by saving empty array
-            try {
-              await cacheForRead.saveAllACsForState(state, []);
-              console.log('✅ Cleared contaminated cache for state:', state);
-            } catch (clearError) {
-              console.error('❌ Error clearing contaminated cache:', clearError);
-            }
+            console.warn('⚠️ This cache appears incomplete/contaminated - will reject');
+            // Don't clear cache here - let user sync again to fix it
+            // Return error so UI can show helpful message
+          } else {
+            console.log('📴 No cached ACs found for state:', state);
           }
         } catch (cacheError) {
           console.error('❌ Cache read error:', cacheError);
           // Cache read failed, continue to return error
         }
+      } else {
+        console.log('📴 Offline cache service not available');
       }
 
       // Offline and no valid cache

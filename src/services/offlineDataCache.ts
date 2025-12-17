@@ -532,12 +532,30 @@ class OfflineDataCacheService {
     const state = states.size > 0 ? Array.from(states)[0] : 'West Bengal';
     const acsArray = Array.from(assignedACs);
     
+    // CRITICAL: Always cache ALL ACs for the state FIRST, regardless of assigned ACs
+    // This ensures users without assigned ACs can still see all ACs offline
+    console.log('📥 Step 1: Caching ALL ACs for state:', state, '(required for users without assigned ACs)');
+    try {
+      const allACsResult = await apiService.getAllACsForState(state);
+      if (allACsResult.success && allACsResult.data) {
+        const allACs = allACsResult.data.acs || [];
+        const acCount = allACsResult.data.count || allACs.length;
+        console.log(`✅ Cached all ${acCount} ACs for state: ${state} (complete master data)`);
+      } else {
+        console.warn('⚠️ Failed to cache all ACs for state:', state, allACsResult.message || 'Unknown error');
+      }
+    } catch (allACsError) {
+      console.error('❌ Error caching all ACs for state:', state, allACsError);
+      // Continue - don't block if this fails, but log it
+    }
+    
+    // If no assigned ACs, we're done (AC list is cached above)
     if (acsArray.length === 0) {
-      console.log('⚠️ No assigned ACs found in surveys. Skipping dependent data download.');
+      console.log('✅ Survey sync complete: All ACs cached for state. No assigned ACs, skipping polling data download.');
       return;
     }
     
-    console.log(`📥 Downloading data for ${acsArray.length} AC(s) in state: ${state}`);
+    console.log(`📥 Downloading polling data for ${acsArray.length} assigned AC(s) in state: ${state}`);
     console.log(`📥 ACs: ${acsArray.join(', ')}`);
 
     // First, download AC data for all assigned ACs to get correct AC names
