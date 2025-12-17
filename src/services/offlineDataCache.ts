@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Storage keys
 const STORAGE_KEYS = {
   AC_DATA: 'offline_ac_data',
+  ALL_ACS_FOR_STATE: 'offline_all_acs_for_state', // Cache for all ACs by state
   POLLING_GROUPS: 'offline_polling_groups',
   POLLING_STATIONS: 'offline_polling_stations',
   POLLING_GPS: 'offline_polling_gps',
@@ -244,6 +245,57 @@ class OfflineDataCacheService {
     } catch (error) {
       console.error('Error getting polling stations for AC:', error);
       return [];
+    }
+  }
+
+  // ========== All ACs for State Management ==========
+  
+  /**
+   * Save all ACs for a state
+   */
+  async saveAllACsForState(state: string, acs: any[]): Promise<void> {
+    try {
+      const allACsData = await this.getAllACsForAllStates();
+      allACsData[state] = {
+        acs: acs,
+        cachedAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem(STORAGE_KEYS.ALL_ACS_FOR_STATE, JSON.stringify(allACsData));
+      console.log('✅ Cached', acs.length, 'ACs for state:', state);
+    } catch (error) {
+      console.error('Error saving all ACs for state:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all ACs for a state
+   */
+  async getAllACsForState(state: string): Promise<any[]> {
+    try {
+      const allACsData = await this.getAllACsForAllStates();
+      const stateData = allACsData[state];
+      if (stateData && stateData.acs) {
+        console.log('📦 Found cached ACs for state:', state, stateData.acs.length, 'ACs');
+        return stateData.acs;
+      }
+      return [];
+    } catch (error) {
+      console.error('Error getting all ACs for state:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get all ACs data for all states
+   */
+  private async getAllACsForAllStates(): Promise<Record<string, { acs: any[], cachedAt: string }>> {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEYS.ALL_ACS_FOR_STATE);
+      return data ? JSON.parse(data) : {};
+    } catch (error) {
+      console.error('Error getting all ACs for all states:', error);
+      return {};
     }
   }
 
@@ -777,6 +829,7 @@ class OfflineDataCacheService {
     try {
       await AsyncStorage.multiRemove([
         STORAGE_KEYS.AC_DATA,
+        STORAGE_KEYS.ALL_ACS_FOR_STATE,
         STORAGE_KEYS.POLLING_GROUPS,
         STORAGE_KEYS.POLLING_STATIONS,
         STORAGE_KEYS.POLLING_GPS,

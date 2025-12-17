@@ -189,6 +189,10 @@ export default function InterviewInterface({ navigation, route }: any) {
   const [hasByeElection, setHasByeElection] = useState<boolean>(false); // Track if selected AC has bye-election
   const [assignedACs, setAssignedACs] = useState<string[]>([]);
   const [requiresACSelection, setRequiresACSelection] = useState(false);
+  const [allACs, setAllACs] = useState<any[]>([]); // Store all ACs when interviewer has no assigned ACs
+  const [loadingAllACs, setLoadingAllACs] = useState(false);
+  const [showACDropdown, setShowACDropdown] = useState(false);
+  const [acSearchTerm, setACSearchTerm] = useState('');
   
   // Polling Station Selection state
   const [selectedPollingStation, setSelectedPollingStation] = useState<any>({
@@ -392,27 +396,49 @@ export default function InterviewInterface({ navigation, route }: any) {
     
     // Check if AC selection is required
     // For CATI interviews, AC is auto-populated from respondent info, so we skip AC selection
-    const needsACSelection = !isCatiMode && requiresACSelection && assignedACs && assignedACs.length > 0;
+    // For CAPI: Show AC selection if:
+    //   1. Interviewer has assigned ACs (assignedACs.length > 0) - show only assigned ACs
+    //   2. Interviewer has NO assigned ACs (assignedACs.length === 0) - show ALL ACs in searchable dropdown
+    //   3. Only for survey "68fd1915d41841da463f0d46"
+    const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+    const hasAssignedACs = assignedACs && assignedACs.length > 0;
+    // Show AC selection if requiresACSelection is true (even if allACs is empty - we'll show loading)
+    // Only for target survey when interviewer has no assigned ACs
+    const needsACSelection = !isCatiMode && requiresACSelection && isTargetSurvey && (hasAssignedACs || (!hasAssignedACs && requiresACSelection));
     
     // Add AC selection question as first question if required (NOT for CATI)
     if (needsACSelection) {
+      // Determine which ACs to show: assigned ACs if available, otherwise all ACs
+      const acsToShow = hasAssignedACs ? assignedACs : allACs.map(ac => ac.acName);
+      
       const acQuestion = {
         id: 'ac-selection',
-        type: 'single_choice',
+        type: hasAssignedACs ? 'single_choice' : 'ac_searchable_dropdown', // Use searchable dropdown if no assigned ACs
         text: 'Select Assembly Constituency',
         description: 'Please select the Assembly Constituency where you are conducting this interview.',
         required: true,
         order: -1, // Make it appear first
-        options: assignedACs.map(ac => ({
-          id: `ac-${ac}`,
-          text: ac,
-          value: ac
-        })),
+        options: hasAssignedACs 
+          ? assignedACs.map(ac => ({
+              id: `ac-${ac}`,
+              text: ac,
+              value: ac
+            }))
+          : allACs.map(ac => ({
+              id: `ac-${ac.acCode}`,
+              text: ac.acName,
+              value: ac.acName,
+              acCode: ac.acCode,
+              displayText: ac.displayText,
+              searchText: ac.searchText
+            })),
         sectionIndex: -1, // Special section for AC selection
         questionIndex: -1,
         sectionId: 'ac-selection',
         sectionTitle: 'Assembly Constituency Selection',
-        isACSelection: true // Flag to identify this special question
+        isACSelection: true, // Flag to identify this special question
+        isSearchable: !hasAssignedACs, // Mark as searchable if no assigned ACs
+        allACs: !hasAssignedACs ? allACs : [] // Include all ACs data for searchable dropdown
       };
       questions.push(acQuestion);
       
@@ -590,7 +616,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     }
     
     return questions;
-  }, [survey?.sections, survey?.questions, requiresACSelection, assignedACs, selectedAC, availableGroups, availablePollingStations, selectedPollingStation.groupName, selectedPollingStation.stationName, interviewerFirstName, isCatiMode, selectedSetNumber]);
+  }, [survey?.sections, survey?.questions, requiresACSelection, assignedACs, allACs, selectedAC, availableGroups, availablePollingStations, selectedPollingStation.groupName, selectedPollingStation.stationName, interviewerFirstName, isCatiMode, selectedSetNumber]);
   
   // Check consent form response
   const consentResponse = responses['consent-form'];
@@ -1255,13 +1281,44 @@ export default function InterviewInterface({ navigation, route }: any) {
             setIsInterviewActive(true);
             
             // Check for AC assignment
-            const needsACSelection = result.response.requiresACSelection && 
-                                     result.response.assignedACs && 
-                                     result.response.assignedACs.length > 0;
-            
+            // For CAPI: Show AC selection if requiresACSelection is true (regardless of assignedACs length)
+            // If assignedACs.length === 0, we'll fetch all ACs for the state
+            // Only for survey "68fd1915d41841da463f0d46"
+            const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+            const needsACSelection = result.response.requiresACSelection;
             
             setRequiresACSelection(needsACSelection);
             setAssignedACs(result.response.assignedACs || []);
+            
+            // If interviewer has no assigned ACs but requiresACSelection is true, fetch all ACs for the state
+            // Only for target survey "68fd1915d41841da463f0d46"
+            if (isTargetSurvey && needsACSelection && (!result.response.assignedACs || result.response.assignedACs.length === 0)) {
+              const state = survey?.acAssignmentState || result.response.acAssignmentState || 'West Bengal';
+              console.log('🔍 No assigned ACs - fetching all ACs for state:', state, '(Survey:', survey._id || survey.id, ')');
+              setLoadingAllACs(true);
+              try {
+                const allACsResponse = await apiService.getAllACsForState(state);
+                if (allACsResponse.success && allACsResponse.data) {
+                  setAllACs(allACsResponse.data.acs || []);
+                  console.log('✅ Fetched all ACs:', allACsResponse.data.count, 'ACs');
+                } else if (allACsResponse.error === 'OFFLINE_NO_CACHE') {
+                  console.log('📴 Offline mode - no cached ACs available');
+                  // Still show the question, but with empty list (user can try syncing)
+                  setAllACs([]);
+                } else {
+                  console.error('Failed to fetch all ACs:', allACsResponse);
+                  setAllACs([]);
+                }
+              } catch (error) {
+                console.error('Error fetching all ACs:', error);
+                // Even on error, show the question (might work offline with cached data)
+                setAllACs([]);
+              } finally {
+                setLoadingAllACs(false);
+              }
+            } else {
+              setAllACs([]);
+            }
             
             // Show message if offline
             if (result.response.isOffline) {
@@ -1811,6 +1868,13 @@ export default function InterviewInterface({ navigation, route }: any) {
     if (questionId === 'ac-selection') {
       setSelectedAC(response);
       
+      // Update selectedPollingStation with AC name
+      setSelectedPollingStation((prev: any) => ({
+        ...prev,
+        acName: response,
+        state: survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal'
+      }));
+      
       // Fetch AC data to check for bye-election status (for survey "68fd1915d41841da463f0d46")
       const isByeElectionSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
       if (isByeElectionSurvey && response) {
@@ -2059,8 +2123,20 @@ export default function InterviewInterface({ navigation, route }: any) {
       }
     }
     
-    // For CAPI interviews, check if polling station is selected before allowing navigation
+    // For CAPI interviews, check if AC and polling station are selected before allowing navigation
     if (!isCatiMode && currentQuestion) {
+      // Check if current question is AC selection - check by ID, type, or flag
+      const isACSelectionQuestion = currentQuestion.id === 'ac-selection' ||
+                                    (currentQuestion as any)?.isACSelection ||
+                                    (currentQuestion.text && currentQuestion.text.toLowerCase().includes('select assembly constituency'));
+      
+      if (isACSelectionQuestion) {
+        if (!selectedAC) {
+          showSnackbar('Please select an Assembly Constituency before proceeding.');
+          return;
+        }
+      }
+      
       // Check if current question is polling station selection - check by ID, type, or flag
       const isPollingStationQuestion = currentQuestion.id === 'polling-station-selection' ||
                                       currentQuestion.type === 'polling_station' ||
@@ -2941,6 +3017,28 @@ export default function InterviewInterface({ navigation, route }: any) {
         // Skip consent form validation if call is not connected
         if (shouldSkipConsentCheck && question.id === 'consent-form') {
           return; // Skip this question
+        }
+        
+        // Special handling for AC selection question
+        if (question.id === 'ac-selection' || (question as any)?.isACSelection) {
+          if (!selectedAC) {
+            unansweredRequiredQuestions.push({
+              question: question,
+              index: index
+            });
+            return;
+          }
+        }
+        
+        // Special handling for polling station selection question
+        if (question.id === 'polling-station-selection' || question.type === 'polling_station' || (question as any)?.isPollingStationSelection) {
+          if (!selectedPollingStation.groupName || !selectedPollingStation.stationName) {
+            unansweredRequiredQuestions.push({
+              question: question,
+              index: index
+            });
+            return;
+          }
         }
         
         const response = responses[question.id];
@@ -4969,8 +5067,140 @@ export default function InterviewInterface({ navigation, route }: any) {
           </View>
         );
 
+      case 'ac_searchable_dropdown':
+        // Special searchable dropdown for AC selection when interviewer has no assigned ACs
+        const filteredACs = question.allACs && acSearchTerm
+          ? question.allACs.filter((ac: any) => 
+              ac.searchText.includes(acSearchTerm.toLowerCase()) ||
+              ac.acName.toLowerCase().includes(acSearchTerm.toLowerCase()) ||
+              ac.acCode.toLowerCase().includes(acSearchTerm.toLowerCase())
+            )
+          : (question.allACs || []);
+        
+        return (
+          <View style={styles.pollingStationContainer}>
+            <View style={[styles.pollingStationSection, showACDropdown && { zIndex: 1001 }]}>
+              <Text style={styles.pollingStationLabel}>Select Assembly Constituency *</Text>
+              {loadingAllACs ? (
+                <ActivityIndicator size="small" color="#2563eb" />
+              ) : filteredACs.length === 0 ? (
+                <Text style={styles.pollingStationError}>No ACs found. Please check your search term.</Text>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={styles.dropdownButton}
+                    onPress={() => setShowACDropdown(true)}
+                  >
+                    <Text style={[
+                      styles.dropdownButtonText,
+                      !selectedAC && styles.dropdownPlaceholder
+                    ]}>
+                      {selectedAC || 'Search and select an Assembly Constituency...'}
+                    </Text>
+                    <Text style={styles.dropdownArrow}>▼</Text>
+                  </TouchableOpacity>
+                  
+                  {/* AC Selection Modal - Bottom Sheet with Search */}
+                  <Modal
+                    visible={showACDropdown}
+                    transparent={true}
+                    animationType="slide"
+                    onRequestClose={() => {
+                      setShowACDropdown(false);
+                      setACSearchTerm('');
+                    }}
+                  >
+                    <View style={styles.modalBackdrop}>
+                      <TouchableOpacity
+                        style={styles.modalBackdropTouchable}
+                        activeOpacity={1}
+                        onPress={() => {
+                          setShowACDropdown(false);
+                          setACSearchTerm('');
+                        }}
+                      />
+                      <View style={styles.bottomSheetContainer}>
+                        <View style={styles.bottomSheetHeader}>
+                          <Text style={styles.bottomSheetTitle}>Select Assembly Constituency</Text>
+                          <TouchableOpacity onPress={() => {
+                            setShowACDropdown(false);
+                            setACSearchTerm('');
+                          }}>
+                            <Text style={styles.bottomSheetClose}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                        {/* Search Input */}
+                        <View style={styles.searchContainer}>
+                          <TextInput
+                            mode="outlined"
+                            placeholder="Search by AC Code or Name..."
+                            value={acSearchTerm}
+                            onChangeText={setACSearchTerm}
+                            style={styles.searchInput}
+                            left={<TextInput.Icon icon="magnify" />}
+                          />
+                        </View>
+                        <ScrollView 
+                          style={styles.bottomSheetContent}
+                          contentContainerStyle={styles.bottomSheetContentInner}
+                          showsVerticalScrollIndicator={true}
+                          keyboardShouldPersistTaps="handled"
+                        >
+                          {filteredACs.length === 0 ? (
+                            <View style={styles.emptyState}>
+                              <Text style={styles.emptyStateText}>No ACs found matching "{acSearchTerm}"</Text>
+                            </View>
+                          ) : (
+                            filteredACs.map((ac: any, index: number) => (
+                              <TouchableOpacity
+                                key={`ac-${ac.acCode}-${index}`}
+                                activeOpacity={0.7}
+                                style={[
+                                  styles.bottomSheetItem,
+                                  selectedAC === ac.acName && styles.bottomSheetItemSelected
+                                ]}
+                                onPress={() => {
+                                  handleResponseChange('ac-selection', ac.acName);
+                                  setShowACDropdown(false);
+                                  setACSearchTerm('');
+                                }}
+                              >
+                                <View>
+                                  <Text style={[
+                                    styles.bottomSheetItemText,
+                                    selectedAC === ac.acName && styles.bottomSheetItemTextSelected
+                                  ]}>
+                                    {ac.acName}
+                                  </Text>
+                                  {ac.acCode && (
+                                    <Text style={[
+                                      styles.bottomSheetItemSubtext,
+                                      selectedAC === ac.acName && styles.bottomSheetItemSubtextSelected
+                                    ]}>
+                                      Code: {ac.acCode}
+                                    </Text>
+                                  )}
+                                </View>
+                              </TouchableOpacity>
+                            ))
+                          )}
+                        </ScrollView>
+                      </View>
+                    </View>
+                  </Modal>
+                </>
+              )}
+            </View>
+          </View>
+        );
+
       case 'single_choice':
       case 'single_select':
+        // Check if this is AC selection question with assigned ACs (use regular radio buttons)
+        if (question.isACSelection && !question.isSearchable) {
+          // Use regular single_choice rendering for assigned ACs
+        }
+        
         // Check if this is a gender question for quota display
         const isGenderQuestion = question.id === 'fixed_respondent_gender';
         
@@ -6705,5 +6935,50 @@ const styles = StyleSheet.create({
   bottomSheetItemTextSelected: {
     color: '#2563eb',
     fontWeight: '600',
+  },
+  bottomSheetItemSubtext: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 4,
+  },
+  bottomSheetItemSubtextSelected: {
+    color: '#3b82f6',
+  },
+  searchContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  searchInput: {
+    backgroundColor: '#f9fafb',
+  },
+  emptyState: {
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    gap: 8,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  emptyStateContainer: {
+    padding: 16,
+    backgroundColor: '#fef3c7',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fde68a',
   },
 });

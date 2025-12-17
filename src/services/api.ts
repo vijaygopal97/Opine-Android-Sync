@@ -1577,6 +1577,63 @@ class ApiService {
     }
   }
 
+  // Get all Assembly Constituencies for a state
+  async getAllACsForState(state: string): Promise<any> {
+    try {
+      // Check offline cache first
+      const cacheForRead = await this.getOfflineCache();
+      if (cacheForRead) {
+        try {
+          const cachedACs = await cacheForRead.getAllACsForState(state);
+          if (cachedACs && cachedACs.length > 0) {
+            console.log('📦 Using cached ACs for state:', state, cachedACs.length, 'ACs');
+            return {
+              success: true,
+              data: {
+                state: state,
+                acs: cachedACs,
+                count: cachedACs.length
+              }
+            };
+          }
+        } catch (cacheError) {
+          // Cache read failed, continue to API
+        }
+      }
+
+      // Check if online
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - no cached ACs for state:', state);
+        return {
+          success: false,
+          message: 'No internet connection and no cached data available',
+          error: 'OFFLINE_NO_CACHE'
+        };
+      }
+
+      // Fetch from API
+      const headers = await this.getHeaders();
+      const url = `${this.baseURL}/api/master-data/acs/${encodeURIComponent(state)}`;
+      const response = await axios.get(url, { headers });
+      
+      // Cache the data
+      const cacheForSave = await this.getOfflineCache();
+      if (cacheForSave && response.data.success && response.data.data) {
+        try {
+          await cacheForSave.saveAllACsForState(state, response.data.data.acs || []);
+        } catch (cacheError) {
+          // Cache save failed, continue
+        }
+      }
+      
+      return response.data;
+    } catch (error: any) {
+      console.error('Error fetching all ACs for state:', error);
+      throw error;
+    }
+  }
+
   // Get MP and MLA names for an AC
   async getACData(acName: string) {
     try {
