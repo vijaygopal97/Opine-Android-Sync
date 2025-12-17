@@ -940,22 +940,33 @@ class ApiService {
     } catch (error: any) {
       console.error('Get groups by AC error:', error);
       console.error('Error response:', error.response?.data);
-      console.error('AC Identifier used:', acIdentifier);
+      
+      // Ensure acIdentifier is a string before logging/using
+      let acIdentifierStr: string;
+      if (typeof acIdentifier === 'string') {
+        acIdentifierStr = acIdentifier;
+      } else if (acIdentifier && typeof acIdentifier === 'object') {
+        acIdentifierStr = acIdentifier.acName || acIdentifier.acCode || acIdentifier.name || acIdentifier.displayText || JSON.stringify(acIdentifier);
+        console.error('⚠️ AC Identifier was an object, extracted:', acIdentifierStr);
+      } else {
+        acIdentifierStr = String(acIdentifier || 'unknown');
+      }
+      console.error('AC Identifier used:', acIdentifierStr);
       
       // Try cache as fallback - more aggressive search
       const cacheForFallback = await this.getOfflineCache();
-      if (cacheForFallback) {
+      if (cacheForFallback && typeof acIdentifierStr === 'string') {
         try {
-          const normalizedAC = this.normalizeACName(acIdentifier);
+          const normalizedAC = this.normalizeACName(acIdentifierStr);
           let cachedData = await cacheForFallback.getPollingGroups(state, normalizedAC);
           if (!cachedData) {
-            cachedData = await cacheForFallback.getPollingGroups(state, acIdentifier);
+            cachedData = await cacheForFallback.getPollingGroups(state, acIdentifierStr);
           }
           if (!cachedData) {
             // Try case-insensitive search in all cached groups
             const allGroups = await cacheForFallback.getAllPollingGroups();
             const searchKey = `${state}::`;
-            const lowerAC = acIdentifier.toLowerCase();
+            const lowerAC = acIdentifierStr.toLowerCase();
             const lowerNormalized = normalizedAC.toLowerCase();
             
             for (const [key, value] of Object.entries(allGroups)) {
@@ -975,8 +986,11 @@ class ApiService {
             console.log('📦 Using cached polling groups as fallback for:', state, normalizedAC);
             return { success: true, data: cachedData };
           }
-        } catch (cacheError) {
-          console.error('❌ Cache fallback error:', cacheError);
+        } catch (cacheError: any) {
+          // Only log if it's not a toLowerCase error (which means acIdentifier was an object)
+          if (!cacheError.message || !cacheError.message.includes('toLowerCase')) {
+            console.error('❌ Cache fallback error:', cacheError);
+          }
         }
       }
       

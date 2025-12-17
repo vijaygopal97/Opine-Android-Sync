@@ -185,16 +185,33 @@ async function cachePollingDataForACs(acs: any[], state: string): Promise<void> 
             }
           }
         } else {
-          console.warn(`⚠️ Failed to cache groups for ${acIdentifier}:`, groupsResult.message);
+          // If AC not found (404), skip it - don't retry
+          if (groupsResult.message && groupsResult.message.includes('not found')) {
+            console.log(`⏭️ Skipping AC ${acIdentifier} (not found in polling station data)`);
+            errorsSkipped++;
+          } else {
+            console.warn(`⚠️ Failed to cache groups for ${acIdentifier}:`, groupsResult.message);
+          }
         }
-      } catch (error) {
-        console.error(`❌ Error caching data for AC ${acIdentifier}:`, error);
+      } catch (error: any) {
+        // Skip 404 errors (AC not found) - don't log as error
+        if (error.response?.status === 404 || (error.message && error.message.includes('not found'))) {
+          console.log(`⏭️ Skipping AC ${acIdentifier} (not found)`);
+          errorsSkipped++;
+        } else {
+          console.error(`❌ Error caching data for AC ${acIdentifier}:`, error.message || error);
+        }
         // Continue with next AC
+      }
+      
+      // Add small delay to prevent overwhelming the API
+      if (i < acsToCache.length - 1 && (i + 1) % 10 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay every 10 ACs
       }
     }
     
     const duration = Date.now() - startTime;
-    console.log(`✅ Proactive cache complete: ${groupsCached} AC groups, ${stationsCached} group stations cached in ${duration}ms`);
+    console.log(`✅ Proactive cache complete: ${groupsCached} AC groups, ${stationsCached} group stations cached, ${errorsSkipped} skipped in ${duration}ms`);
   } catch (error) {
     console.error('❌ Error in proactive cache:', error);
     // Don't throw - this is a background operation
@@ -1420,13 +1437,10 @@ export default function InterviewInterface({ navigation, route }: any) {
                     console.log('✅ Fetched all ACs:', acCount, 'ACs (validated complete master data)');
                     setAllACs(fetchedACs);
                     
-                    // CRITICAL: Proactively cache polling groups and stations for all ACs
-                    // This ensures data is available even if internet is lost during interview
-                    console.log('📥 Proactively caching polling data for all ACs...');
-                    cachePollingDataForACs(fetchedACs, state).catch((err) => {
-                      console.error('⚠️ Error proactively caching polling data:', err);
-                      // Don't block interview - continue even if caching fails
-                    });
+                    // NOTE: Don't proactively cache ALL ACs (294 ACs) - this would be too slow
+                    // Instead, cache will happen on-demand when user selects an AC
+                    // This prevents performance issues and infinite error loops
+                    console.log('📥 Skipping proactive cache for all ACs (will cache on-demand when AC is selected)');
                   }
                 } else if (allACsResponse.error === 'OFFLINE_NO_CACHE') {
                   console.log('📴 Offline mode - no valid cached ACs available');
