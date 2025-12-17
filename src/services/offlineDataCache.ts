@@ -338,10 +338,22 @@ class OfflineDataCacheService {
    */
   async clearACsForState(state: string): Promise<void> {
     try {
+      console.log(`🧹 Clearing AC cache for state: ${state}`);
       const allACsData = await this.getAllACsForAllStates();
+      const beforeCount = allACsData[state]?.acs?.length || 0;
+      console.log(`🧹 Before clear: ${beforeCount} ACs for state: ${state}`);
+      
       delete allACsData[state];
       await AsyncStorage.setItem(STORAGE_KEYS.ALL_ACS_FOR_STATE, JSON.stringify(allACsData));
-      console.log('✅ Cleared AC cache for state:', state);
+      
+      // Verify it was cleared
+      const verifyData = await this.getAllACsForAllStates();
+      const afterCount = verifyData[state]?.acs?.length || 0;
+      if (afterCount === 0) {
+        console.log(`✅ Verified cleared AC cache for state: ${state} (was ${beforeCount} ACs)`);
+      } else {
+        console.error(`❌ Failed to clear AC cache: still has ${afterCount} ACs after clear`);
+      }
     } catch (error) {
       console.error('Error clearing AC cache for state:', error);
       throw error;

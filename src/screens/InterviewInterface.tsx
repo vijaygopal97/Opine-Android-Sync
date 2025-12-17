@@ -1222,6 +1222,43 @@ export default function InterviewInterface({ navigation, route }: any) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentQuestionIndex, visibleQuestions, selectedAC, acFromSessionData]); // Only re-run when question changes or AC changes
 
+  // Load ACs from cache immediately when component mounts (for offline support)
+  useEffect(() => {
+    const loadACsFromCache = async () => {
+      // Only load if user has no assigned ACs and needs AC selection
+      if (!isCatiMode && requiresACSelection && isTargetSurvey) {
+        try {
+          const isOnline = await apiService.isOnline();
+          if (!isOnline) {
+            // Offline - try to load from cache immediately
+            console.log('📴 Offline detected - loading ACs from cache immediately...');
+            const { offlineDataCache } = await import('../services/offlineDataCache');
+            const state = survey?.acAssignmentState || 'West Bengal';
+            const cachedACs = await offlineDataCache.getAllACsForState(state);
+            
+            if (cachedACs && cachedACs.length > 0) {
+              const minExpectedACs = state === 'West Bengal' ? 200 : 50;
+              if (cachedACs.length >= minExpectedACs) {
+                console.log('✅ Loaded', cachedACs.length, 'ACs from cache immediately (offline mode)');
+                setAllACs(cachedACs);
+              } else {
+                console.warn('⚠️ Cached ACs incomplete:', cachedACs.length, 'ACs (expected at least', minExpectedACs, ')');
+                // Still set it so dropdown can show, but with warning
+                setAllACs(cachedACs);
+              }
+            } else {
+              console.log('📴 No ACs found in cache');
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error loading ACs from cache:', error);
+        }
+      }
+    };
+    
+    loadACsFromCache();
+  }, [isCatiMode, requiresACSelection, isTargetSurvey, survey?.acAssignmentState]);
+
   // Initialize interview
   useEffect(() => {
     const initializeInterview = async () => {
@@ -1232,12 +1269,32 @@ export default function InterviewInterface({ navigation, route }: any) {
 
         if (isCatiMode) {
           // CATI mode - use CATI-specific endpoint
-          const result = await apiService.startCatiInterview(survey._id);
+          let result;
+          try {
+            result = await apiService.startCatiInterview(survey._id);
+          } catch (error: any) {
+            console.error('❌ Error starting CATI interview:', error);
+            const errorMsg = error?.response?.data?.message || error?.message || 'Failed to start CATI interview. Please check your internet connection.';
+            Alert.alert(
+              'Cannot Start Interview',
+              errorMsg,
+              [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    navigation.goBack();
+                  }
+                }
+              ]
+            );
+            setIsLoading(false);
+            return; // Exit early - don't start the interview
+          }
           
           // First check if the API call was successful
-          if (!result.success) {
+          if (!result || !result.success) {
             // Interview failed to start - show error and navigate back
-            const errorMsg = result.message || result.data?.message || 'Failed to start CATI interview';
+            const errorMsg = result?.message || result?.data?.message || 'Failed to start CATI interview';
             console.error('❌ CATI interview failed to start:', errorMsg);
             Alert.alert(
               'Cannot Start Interview',
@@ -1482,14 +1539,46 @@ export default function InterviewInterface({ navigation, route }: any) {
                   console.error('Failed to fetch all ACs:', allACsResponse);
                   setAllACs([]);
                 }
-              } catch (error) {
+              } catch (error: any) {
                 console.error('Error fetching all ACs:', error);
-                Alert.alert(
-                  'Error Loading ACs',
-                  'Failed to load Assembly Constituencies. Please check your internet connection and try again.',
-                  [{ text: 'OK' }]
-                );
-                setAllACs([]);
+                console.error('Error details:', {
+                  message: error?.message,
+                  response: error?.response,
+                  code: error?.code,
+                  stack: error?.stack
+                });
+                
+                // Try to load from cache as fallback
+                try {
+                  const { offlineDataCache } = await import('../services/offlineDataCache');
+                  const state = survey?.acAssignmentState || result.response.acAssignmentState || 'West Bengal';
+                  const cachedACs = await offlineDataCache.getAllACsForState(state);
+                  
+                  if (cachedACs && cachedACs.length > 0) {
+                    console.log('📦 Loaded', cachedACs.length, 'ACs from cache as fallback');
+                    setAllACs(cachedACs);
+                    Alert.alert(
+                      'Using Cached Data',
+                      `Loaded ${cachedACs.length} ACs from cache. Some data may be outdated.`,
+                      [{ text: 'OK' }]
+                    );
+                  } else {
+                    Alert.alert(
+                      'Error Loading ACs',
+                      error?.message || 'Failed to load Assembly Constituencies. Please check your internet connection and try again.',
+                      [{ text: 'OK' }]
+                    );
+                    setAllACs([]);
+                  }
+                } catch (cacheError) {
+                  console.error('❌ Error loading from cache fallback:', cacheError);
+                  Alert.alert(
+                    'Error Loading ACs',
+                    error?.message || 'Failed to load Assembly Constituencies. Please check your internet connection and try again.',
+                    [{ text: 'OK' }]
+                  );
+                  setAllACs([]);
+                }
               } finally {
                 setLoadingAllACs(false);
               }
@@ -5381,22 +5470,35 @@ export default function InterviewInterface({ navigation, route }: any) {
 
       case 'ac_searchable_dropdown':
         // Special searchable dropdown for AC selection when interviewer has no assigned ACs
-        const filteredACs = question.allACs && acSearchTerm
-          ? question.allACs.filter((ac: any) => 
-              ac.searchText.includes(acSearchTerm.toLowerCase()) ||
-              ac.acName.toLowerCase().includes(acSearchTerm.toLowerCase()) ||
-              ac.acCode.toLowerCase().includes(acSearchTerm.toLowerCase())
-            )
-          : (question.allACs || []);
+        // Use allACs state directly if question.allACs is empty (for offline support)
+        const acsToUse = (question.allACs && question.allACs.length > 0) ? question.allACs : allACs;
+        const filteredACs = acsToUse && acSearchTerm
+          ? acsToUse.filter((ac: any) => {
+              const searchLower = acSearchTerm.toLowerCase();
+              const searchText = ac.searchText || `${ac.acCode || ''} ${ac.acName || ''}`.toLowerCase();
+              const acName = (ac.acName || '').toLowerCase();
+              const acCode = (ac.acCode || '').toLowerCase();
+              return searchText.includes(searchLower) || acName.includes(searchLower) || acCode.includes(searchLower);
+            })
+          : (acsToUse || []);
+        
+        console.log('🔍 AC Dropdown Render - allACs state:', allACs.length, 'question.allACs:', question.allACs?.length || 0, 'acsToUse:', acsToUse.length, 'filteredACs:', filteredACs.length);
         
         return (
           <View style={styles.pollingStationContainer}>
             <View style={[styles.pollingStationSection, showACDropdown && { zIndex: 1001 }]}>
               <Text style={styles.pollingStationLabel}>Select Assembly Constituency *</Text>
               {loadingAllACs ? (
-                <ActivityIndicator size="small" color="#2563eb" />
-              ) : filteredACs.length === 0 ? (
-                <Text style={styles.pollingStationError}>No ACs found. Please check your search term.</Text>
+                <View style={{ alignItems: 'center', padding: 20 }}>
+                  <ActivityIndicator size="small" color="#2563eb" />
+                  <Text style={{ marginTop: 10, color: '#666' }}>Loading ACs...</Text>
+                </View>
+              ) : filteredACs.length === 0 && acSearchTerm ? (
+                <Text style={styles.pollingStationError}>No ACs found matching "{acSearchTerm}". Try a different search term.</Text>
+              ) : acsToUse.length === 0 ? (
+                <View style={{ padding: 20 }}>
+                  <Text style={styles.pollingStationError}>No ACs available offline. Please sync survey details when online, or ensure you have internet connection when starting the interview.</Text>
+                </View>
               ) : (
                 <>
                   <TouchableOpacity
