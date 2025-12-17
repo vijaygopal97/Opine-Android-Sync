@@ -559,6 +559,22 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
+      {/* Force Offline Mode Toggle Button */}
+      <View style={styles.offlineToggleContainer}>
+        <TouchableOpacity
+          style={[styles.offlineToggleButton, forceOfflineMode && styles.offlineToggleButtonActive]}
+          onPress={toggleForceOfflineMode}
+        >
+          <Ionicons 
+            name={forceOfflineMode ? "cloud-offline" : "cloud"} 
+            size={20} 
+            color={forceOfflineMode ? "#fff" : "#666"} 
+          />
+          <Text style={[styles.offlineToggleText, forceOfflineMode && styles.offlineToggleTextActive]}>
+            {forceOfflineMode ? "🔴 Force Offline" : "🟢 Online Mode"}
+          </Text>
+        </TouchableOpacity>
+      </View>
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
         start={{ x: 0, y: 0 }}
