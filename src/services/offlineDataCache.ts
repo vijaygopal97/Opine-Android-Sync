@@ -780,14 +780,6 @@ class OfflineDataCacheService {
     }
 
     console.log('✅ Finished downloading dependent data (AC and polling data skipped - using bundled files)');
-    return; // Exit early - no need to download polling data
-    
-    // OLD CODE BELOW - KEPT FOR REFERENCE BUT NOT EXECUTED
-    // ============================================
-    // The following code is disabled because AC and polling station data is now bundled
-    /*
-    console.log(`📥 Downloading polling data for ${acsArray.length} assigned AC(s) in state: ${state}`);
-    console.log(`📥 ACs: ${acsArray.join(', ')}`);
 
     // First, download AC data for all assigned ACs to get correct AC names
     const acNameMap = new Map<string, string>();

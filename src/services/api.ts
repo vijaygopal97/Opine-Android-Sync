@@ -1029,14 +1029,14 @@ class ApiService {
         console.warn('⚠️ Error loading bundled data, trying cache/API:', bundledError);
       }
       
+      // Normalize AC name to match master data spelling (define before cache check)
+      const normalizedAC = this.normalizeACName(acIdentifier);
+      
       // SECOND: Check offline cache (lazy import) - try multiple variations
       const cacheForRead = await this.getOfflineCache();
       let cachedData = null;
       if (cacheForRead) {
         try {
-          // Normalize AC name to match master data spelling
-          const normalizedAC = this.normalizeACName(acIdentifier);
-          
           // Try normalized name first
           cachedData = await cacheForRead.getPollingGroups(state, normalizedAC);
           if (cachedData) {
@@ -1238,14 +1238,14 @@ class ApiService {
         console.warn('⚠️ Error loading bundled data, trying cache/API:', bundledError);
       }
       
+      // Normalize AC name to match master data spelling (define before cache check)
+      const normalizedAC = this.normalizeACName(acIdentifier);
+      
       // SECOND: Check offline cache (lazy import) - try multiple variations
       const cacheForRead = await this.getOfflineCache();
       let cachedData = null;
       if (cacheForRead) {
         try {
-          // Normalize AC name to match master data spelling
-          const normalizedAC = this.normalizeACName(acIdentifier);
-          
           // Try normalized name first
           cachedData = await cacheForRead.getPollingStations(state, normalizedAC, groupName);
           if (cachedData) {
