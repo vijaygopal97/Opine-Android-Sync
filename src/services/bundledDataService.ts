@@ -103,10 +103,17 @@ class BundledDataService {
       // In React Native/Expo, require() works for JSON files
       const acData = require('../data/assemblyConstituencies.json');
       this.acData = acData as ACData;
-      console.log('✅ Loaded bundled AC data');
-    } catch (error) {
+      
+      // Log summary
+      const states = Object.keys(this.acData.states || {});
+      const totalACs = states.reduce((sum, state) => {
+        return sum + (this.acData.states[state]?.assemblyConstituencies?.length || 0);
+      }, 0);
+      console.log(`✅ Loaded bundled AC data: ${states.length} states, ${totalACs} total ACs`);
+    } catch (error: any) {
       console.error('❌ Error loading bundled AC data:', error);
-      // Return empty structure as fallback
+      console.error('❌ Error details:', error.message, error.stack);
+      // Return empty structure as fallback - app will try cache/API as backup
       this.acData = { states: {} } as ACData;
     }
 

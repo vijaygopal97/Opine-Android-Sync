@@ -715,51 +715,23 @@ class OfflineDataCacheService {
     const state = states.size > 0 ? Array.from(states)[0] : 'West Bengal';
     const acsArray = Array.from(assignedACs);
     
-    // CRITICAL: Clear old cache FIRST to prevent contamination from previous syncs
-    console.log('🧹 Step 1: Clearing old AC cache for state:', state, '(preventing cache contamination)');
-    try {
-      await this.clearACsForState(state);
-      console.log('✅ Cleared old AC cache for state:', state);
-    } catch (clearError) {
-      console.warn('⚠️ Error clearing old cache (non-critical):', clearError);
-      // Continue - clearing old cache failure is not critical
-    }
+    // SKIP: AC and polling station data is now bundled in the app
+    // No need to download from server - it's always available from bundled JSON files
+    console.log('📦 AC and polling station data is bundled in app - skipping server download');
+    console.log('📦 Using bundled data from polling_stations.json and assemblyConstituencies.json');
     
-    // CRITICAL: Always cache ALL ACs for the state from master data API
-    // This ensures users without assigned ACs can still see all ACs offline
-    // Use the SAME API method as online mode to ensure consistency
-    console.log('📥 Step 2: Fetching and caching ALL ACs for state:', state, 'from master data API (required for users without assigned ACs)');
+    // Optionally cache ACs from bundled data for faster lookups (but not required)
     try {
-      // Use apiService.getAllACsForState which fetches from master data API
-      // This ensures we use the exact same method as online mode
-      const allACsResult = await apiService.getAllACsForState(state);
-      
-      if (allACsResult.success && allACsResult.data) {
-        const allACs = allACsResult.data.acs || [];
-        const acCount = allACsResult.data.count || allACs.length;
-        
-        // Validate we got complete data (West Bengal should have ~294 ACs)
-        const minExpectedACs = state === 'West Bengal' ? 200 : 50;
-        if (acCount >= minExpectedACs) {
-          // The data is already cached by getAllACsForState, but verify it's in cache
-          const cachedACs = await this.getAllACsForState(state);
-          if (cachedACs.length === acCount) {
-            console.log(`✅ Verified cached all ${acCount} ACs for state: ${state} (complete master data from API)`);
-          } else {
-            // If not properly cached, save it explicitly
-            await this.saveAllACsForState(state, allACs);
-            console.log(`✅ Explicitly cached all ${acCount} ACs for state: ${state} (complete master data)`);
-          }
-        } else {
-          console.error(`❌ Suspicious AC count from API: ${acCount} (expected at least ${minExpectedACs})`);
-          console.error('❌ Not caching incomplete data - will retry on next sync');
-        }
-      } else {
-        console.warn('⚠️ Failed to fetch all ACs from API:', allACsResult.message || 'Unknown error');
+      const { bundledDataService } = await import('./bundledDataService');
+      const bundledACsResult = await bundledDataService.getAllACsForState(state);
+      if (bundledACsResult.success && bundledACsResult.data) {
+        // Cache bundled ACs for faster future lookups (optional optimization)
+        await this.saveAllACsForState(state, bundledACsResult.data);
+        console.log(`✅ Cached ${bundledACsResult.data.length} ACs from bundled data for state: ${state}`);
       }
-    } catch (allACsError: any) {
-      console.error('❌ Error fetching/caching all ACs for state:', state, allACsError?.message || allACsError);
-      // Continue - don't block if this fails, but log it
+    } catch (bundledError) {
+      console.warn('⚠️ Could not cache bundled ACs (non-critical):', bundledError);
+      // Continue - bundled data is still available even if cache fails
     }
     
     // CRITICAL: Even if no assigned ACs, we need to cache polling groups/stations for ALL ACs
