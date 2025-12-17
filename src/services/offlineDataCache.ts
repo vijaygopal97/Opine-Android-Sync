@@ -611,9 +611,100 @@ class OfflineDataCacheService {
       // Continue - don't block if this fails, but log it
     }
     
-    // If no assigned ACs, we're done (AC list is cached above)
+    // CRITICAL: Even if no assigned ACs, we need to cache polling groups/stations for ALL ACs
+    // This ensures users without assigned ACs can select any AC and see groups/stations offline
+    // However, caching for all 294 ACs would be too slow, so we cache for first 100 ACs (most common)
     if (acsArray.length === 0) {
-      console.log('✅ Survey sync complete: All ACs cached for state. No assigned ACs, skipping polling data download.');
+      console.log('⚠️ No assigned ACs found. Caching polling data for first 100 ACs to enable offline AC selection...');
+      
+      // Get all cached ACs for the state
+      const allCachedACs = await this.getAllACsForState(state);
+      if (allCachedACs && allCachedACs.length > 0) {
+        // Extract AC names from AC objects
+        const acNamesToCache: string[] = [];
+        for (const acItem of allCachedACs.slice(0, 100)) { // Limit to first 100 to prevent performance issues
+          let acName: string | null = null;
+          if (typeof acItem === 'string') {
+            acName = acItem.trim();
+          } else if (acItem && typeof acItem === 'object') {
+            acName = acItem.acName || acItem.acCode || acItem.name || acItem.displayText || null;
+            if (acName) {
+              acName = String(acName).trim();
+            }
+          }
+          if (acName && acName.length > 0) {
+            acNamesToCache.push(acName);
+          }
+        }
+        
+        console.log(`📥 Will cache polling data for ${acNamesToCache.length} ACs (subset of all ACs)`);
+        
+        // Cache polling groups/stations for these ACs (reuse the same logic as assigned ACs)
+        const normalizedACs = acNamesToCache;
+        for (let i = 0; i < normalizedACs.length; i++) {
+          const normalizedAC = normalizedACs[i];
+          try {
+            console.log(`📥 [${i + 1}/${normalizedACs.length}] Caching groups for AC: ${normalizedAC}`);
+            const result = await apiService.getGroupsByAC(state, normalizedAC);
+            if (result.success && result.data) {
+              await this.savePollingGroups(state, normalizedAC, result.data);
+              console.log(`✅ Cached polling groups for: ${normalizedAC}`);
+              
+              // Cache polling stations for each group (limit to prevent performance issues)
+              const groups = result.data.groups || [];
+              const groupsToCache = groups.slice(0, 10); // Limit to first 10 groups per AC
+              console.log(`📥 Found ${groups.length} group(s) for ${normalizedAC}, caching stations for first ${groupsToCache.length}...`);
+              
+              for (let j = 0; j < groupsToCache.length; j++) {
+                const groupItem = groupsToCache[j];
+                let groupName: string | null = null;
+                
+                if (typeof groupItem === 'string') {
+                  groupName = groupItem.trim();
+                } else if (groupItem && typeof groupItem === 'object') {
+                  groupName = (groupItem.name || groupItem.groupName || groupItem.group || groupItem.value || '').toString().trim();
+                }
+                
+                if (!groupName || groupName.length === 0) {
+                  continue;
+                }
+                
+                try {
+                  const stationsResult = await apiService.getPollingStationsByGroup(state, normalizedAC, groupName);
+                  if (stationsResult.success && stationsResult.data) {
+                    await this.savePollingStations(state, normalizedAC, groupName, stationsResult.data);
+                    console.log(`✅ Cached polling stations for: ${normalizedAC} - ${groupName}`);
+                  }
+                } catch (stationsError) {
+                  // Skip 404 errors (AC not found in polling station data)
+                  if (stationsError?.response?.status !== 404) {
+                    console.warn(`⚠️ Failed to cache stations for ${normalizedAC} - ${groupName}:`, stationsError);
+                  }
+                }
+              }
+            } else {
+              // Skip 404 errors silently (AC not found in polling station data)
+              if (result.message && !result.message.includes('not found')) {
+                console.warn(`⚠️ Failed to cache groups for ${normalizedAC}:`, result.message);
+              }
+            }
+          } catch (error: any) {
+            // Skip 404 errors silently
+            if (error?.response?.status !== 404) {
+              console.error(`❌ Error caching data for AC ${normalizedAC}:`, error);
+            }
+          }
+          
+          // Add delay every 10 ACs to prevent overwhelming the API
+          if ((i + 1) % 10 === 0 && i < normalizedACs.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 200)); // 200ms delay
+          }
+        }
+        
+        console.log('✅ Survey sync complete: All ACs cached, polling data cached for subset of ACs.');
+      } else {
+        console.log('⚠️ No ACs found in cache. Cannot cache polling data. Please ensure ACs are cached first.');
+      }
       return;
     }
     

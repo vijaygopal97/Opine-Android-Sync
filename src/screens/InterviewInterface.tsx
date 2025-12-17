@@ -1700,14 +1700,70 @@ export default function InterviewInterface({ navigation, route }: any) {
           // Check if we're offline - if so, try to use cached data more aggressively
           const isOnline = await apiService.isOnline();
           if (!isOnline) {
-            console.log('📴 Offline - checking if data was proactively cached...');
-            // Data should have been proactively cached when interview started
-            // If not available, show helpful message
-            Alert.alert(
-              'Offline Mode',
-              'Groups are not available offline. Please sync survey data from the dashboard when online, or ensure you have internet connection when starting an interview.',
-              [{ text: 'OK' }]
-            );
+            console.log('📴 Offline - checking cache for groups...');
+            
+            // Try to load from cache directly - check multiple AC name variations
+            try {
+              const { offlineDataCache } = await import('../services/offlineDataCache');
+              
+              // Try multiple variations of AC name (normalized, original, case variations)
+              const acVariations = [
+                selectedAC,
+                selectedAC.toUpperCase(),
+                selectedAC.toLowerCase(),
+                selectedAC.trim()
+              ];
+              
+              // Also try normalized version if apiService has the method
+              try {
+                const normalizedAC = (apiService as any).normalizeACName?.(selectedAC) || selectedAC;
+                if (normalizedAC !== selectedAC) {
+                  acVariations.unshift(normalizedAC); // Try normalized first
+                }
+              } catch (e) {
+                // normalizeACName might not be accessible, continue
+              }
+              
+              let cachedGroups = null;
+              for (const acVar of acVariations) {
+                cachedGroups = await offlineDataCache.getPollingGroups(state, acVar);
+                if (cachedGroups) {
+                  console.log(`📦 Found cached groups for AC variation: ${acVar}`);
+                  break;
+                }
+              }
+              
+              if (cachedGroups && cachedGroups.groups && Array.isArray(cachedGroups.groups) && cachedGroups.groups.length > 0) {
+                console.log('📦 Found cached groups for AC:', selectedAC, cachedGroups.groups.length, 'groups');
+                setAvailableGroups(cachedGroups.groups || []);
+                setSelectedPollingStation((prev: any) => ({
+                  ...prev,
+                  state: state,
+                  acName: selectedAC,
+                  acNo: cachedGroups.ac_no,
+                  pcNo: cachedGroups.pc_no,
+                  pcName: cachedGroups.pc_name,
+                  district: cachedGroups.district
+                }));
+                // Clear polling stations when AC changes
+                setAvailablePollingStations([]);
+                return; // Successfully loaded from cache
+              } else {
+                console.log('📴 No cached groups found for AC:', selectedAC, '(tried variations:', acVariations.join(', '), ')');
+                Alert.alert(
+                  'Offline Mode',
+                  `Groups for "${selectedAC}" are not available offline. Please sync survey data from the dashboard when online to cache polling data for all ACs.`,
+                  [{ text: 'OK' }]
+                );
+              }
+            } catch (cacheError) {
+              console.error('❌ Error loading cached groups:', cacheError);
+              Alert.alert(
+                'Offline Mode',
+                'Groups are not available offline. Please sync survey data from the dashboard when online, or ensure you have internet connection when starting an interview.',
+                [{ text: 'OK' }]
+              );
+            }
           } else {
             // Online but failed - show error
             Alert.alert(
@@ -1767,14 +1823,54 @@ export default function InterviewInterface({ navigation, route }: any) {
           // Check if we're offline - if so, try to use cached data more aggressively
           const isOnline = await apiService.isOnline();
           if (!isOnline) {
-            console.log('📴 Offline - checking if polling stations were proactively cached...');
-            // Data should have been proactively cached when interview started
-            // If not available, show helpful message
-            Alert.alert(
-              'Offline Mode',
-              'Polling stations are not available offline. Please sync survey data from the dashboard when online, or ensure you have internet connection when starting an interview.',
-              [{ text: 'OK' }]
-            );
+            console.log('📴 Offline - checking cache for polling stations...');
+            
+            // Try to load from cache directly - check multiple AC name variations
+            try {
+              const { offlineDataCache } = await import('../services/offlineDataCache');
+              
+              // Try multiple variations of AC name
+              const acName = selectedPollingStation.acName;
+              const acVariations = [
+                acName,
+                acName?.toUpperCase(),
+                acName?.toLowerCase(),
+                acName?.trim()
+              ].filter(Boolean) as string[];
+              
+              let cachedStations = null;
+              for (const acVar of acVariations) {
+                cachedStations = await offlineDataCache.getPollingStations(
+                  state,
+                  acVar,
+                  selectedPollingStation.groupName
+                );
+                if (cachedStations) {
+                  console.log(`📦 Found cached polling stations for AC variation: ${acVar}`);
+                  break;
+                }
+              }
+              
+              if (cachedStations && cachedStations.stations && Array.isArray(cachedStations.stations) && cachedStations.stations.length > 0) {
+                console.log('📦 Found cached polling stations:', cachedStations.stations.length, 'stations');
+                setAvailablePollingStations(cachedStations.stations || []);
+                return; // Successfully loaded from cache
+              } else {
+                console.log('📴 No cached polling stations found');
+                Alert.alert(
+                  'Offline Mode',
+                  `Polling stations for "${selectedPollingStation.acName} - ${selectedPollingStation.groupName}" are not available offline. Please sync survey data from the dashboard when online to cache polling data.`,
+                  [{ text: 'OK' }]
+                );
+              }
+            } catch (cacheError) {
+              console.error('❌ Error loading cached polling stations:', cacheError);
+              Alert.alert(
+                'Offline Mode',
+                'Polling stations are not available offline. Please sync survey data from the dashboard when online, or ensure you have internet connection when starting an interview.',
+                [{ text: 'OK' }]
+              );
+            }
           }
           setAvailablePollingStations([]);
         }
