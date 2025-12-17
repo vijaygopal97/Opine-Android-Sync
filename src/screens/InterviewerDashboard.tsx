@@ -59,13 +59,14 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   useEffect(() => {
     loadDashboardData();
     loadPendingInterviewsCount();
+    loadOfflineInterviews(); // Load offline interviews on mount
   }, []);
 
-  // Refresh pending count when screen comes into focus
+  // Refresh pending count and offline interviews when screen comes into focus
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
+      console.log('🔄 Dashboard focused - reloading offline interviews...');
       loadPendingInterviewsCount();
-      // Also reload offline interviews when screen comes into focus
       loadOfflineInterviews();
     });
     return unsubscribe;
@@ -74,6 +75,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const loadPendingInterviewsCount = async () => {
     try {
       const pending = await offlineStorage.getPendingInterviews();
+      console.log('📊 Pending interviews count:', pending.length);
       setPendingInterviewsCount(pending.length);
     } catch (error) {
       console.error('Error loading pending interviews count:', error);
@@ -83,12 +85,22 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const loadOfflineInterviews = async () => {
     try {
       const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
+      console.log('📦 All offline interviews:', allOfflineInterviews.length);
+      console.log('📦 Offline interviews details:', allOfflineInterviews.map((i: any) => ({ id: i.id, status: i.status, surveyName: i.survey?.surveyName })));
+      
+      // Show ALL offline interviews (pending, failed, and syncing) - not just pending/failed
+      // This ensures users can see all their offline interviews
       const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
-        (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+        (interview: any) => interview.status === 'pending' || interview.status === 'failed' || interview.status === 'syncing'
       );
+      
+      console.log('📦 Filtered offline interviews (pending/failed/syncing):', pendingOfflineInterviews.length);
       setOfflineInterviews(pendingOfflineInterviews);
-      // Also update pending count
-      setPendingInterviewsCount(pendingOfflineInterviews.length);
+      // Also update pending count (only for pending/failed, not syncing)
+      const pendingCount = (allOfflineInterviews || []).filter(
+        (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+      ).length;
+      setPendingInterviewsCount(pendingCount);
     } catch (error) {
       console.error('Error loading offline interviews:', error);
     }
@@ -180,12 +192,19 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         const offlineSurveys = await offlineStorage.getSurveys();
         setAvailableSurveys(offlineSurveys || []);
         
-        // Load offline interviews - only show pending and failed ones (not synced or syncing)
+        // Load offline interviews - show pending, failed, and syncing ones (not synced)
         const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
+        console.log('📴 Offline mode - All offline interviews:', allOfflineInterviews.length);
         const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
-          (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+          (interview: any) => interview.status === 'pending' || interview.status === 'failed' || interview.status === 'syncing'
         );
+        console.log('📴 Offline mode - Filtered interviews:', pendingOfflineInterviews.length);
         setOfflineInterviews(pendingOfflineInterviews);
+        // Update pending count
+        const pendingCount = (allOfflineInterviews || []).filter(
+          (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+        ).length;
+        setPendingInterviewsCount(pendingCount);
         
         // Don't try to load myInterviews in offline mode
         setMyInterviews([]);
@@ -219,12 +238,19 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         setMyInterviews([]);
       }
       
-      // Always load offline interviews - only show pending and failed ones (not synced or syncing)
+      // Always load offline interviews - show pending, failed, and syncing ones (not synced)
       const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
+      console.log('🌐 Online mode - All offline interviews:', allOfflineInterviews.length);
       const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
-        (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+        (interview: any) => interview.status === 'pending' || interview.status === 'failed' || interview.status === 'syncing'
       );
+      console.log('🌐 Online mode - Filtered interviews:', pendingOfflineInterviews.length);
       setOfflineInterviews(pendingOfflineInterviews);
+      // Update pending count
+      const pendingCount = (allOfflineInterviews || []).filter(
+        (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+      ).length;
+      setPendingInterviewsCount(pendingCount);
     } catch (error) {
       console.error('Error loading dashboard data:', error);
       // Try to load from offline storage as fallback
@@ -232,10 +258,17 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         const offlineSurveys = await offlineStorage.getSurveys();
         setAvailableSurveys(offlineSurveys || []);
         const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
+        console.log('⚠️ Fallback - All offline interviews:', allOfflineInterviews.length);
         const pendingOfflineInterviews = (allOfflineInterviews || []).filter(
-          (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+          (interview: any) => interview.status === 'pending' || interview.status === 'failed' || interview.status === 'syncing'
         );
+        console.log('⚠️ Fallback - Filtered interviews:', pendingOfflineInterviews.length);
         setOfflineInterviews(pendingOfflineInterviews);
+        // Update pending count
+        const pendingCount = (allOfflineInterviews || []).filter(
+          (interview: any) => interview.status === 'pending' || interview.status === 'failed'
+        ).length;
+        setPendingInterviewsCount(pendingCount);
         setIsOffline(true);
       } catch (fallbackError) {
         console.error('Error loading from offline storage:', fallbackError);
@@ -598,13 +631,13 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         )} */}
         
         {/* Offline Interviews Section - Show when there are offline interviews that need syncing */}
-        {offlineInterviews.length > 0 && (
+        {offlineInterviews.length > 0 ? (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionTitleContainer}>
                 <Text style={styles.sectionTitle}>Offline Saved Interviews</Text>
                 <View style={styles.offlineBadgeContainer}>
-                  <Text style={styles.offlineBadge}>📴 {offlineInterviews.length} Pending</Text>
+                  <Text style={styles.offlineBadge}>📴 {offlineInterviews.length} {offlineInterviews.length === 1 ? 'Interview' : 'Interviews'}</Text>
                 </View>
               </View>
             </View>
