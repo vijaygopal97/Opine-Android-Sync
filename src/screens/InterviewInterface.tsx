@@ -13,6 +13,8 @@ import {
   TouchableOpacity,
   FlatList,
   Image,
+  Pressable,
+  Animated,
 } from 'react-native';
 import {
   Text,
@@ -36,7 +38,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { apiService } from '../services/api';
 import { LocationService } from '../utils/location';
 import { Survey, SurveyResponse } from '../types';
-import { parseTranslation, getMainText } from '../utils/translations';
+import { parseTranslation, getMainText, parseMultiTranslation, getLanguageText } from '../utils/translations';
 import { isGenderQuestion } from '../utils/genderUtils';
 import { offlineStorage, OfflineInterview } from '../services/offlineStorage';
 import { offlineDataCache } from '../services/offlineDataCache';
@@ -231,33 +233,48 @@ export default function InterviewInterface({ navigation, route }: any) {
     ? routeIsCatiMode 
     : survey.mode === 'cati' || survey.assignedMode === 'cati';
   
-  // Helper function to get display text based on translation toggle
+  // Helper function to get display text based on selected language
   const getDisplayText = (text: string | null | undefined): string => {
-    if (!text) return '';
-    
-    // Handle multi-line descriptions with multiple translation blocks
-    // Split by \n\n to handle paragraphs, then parse each paragraph separately
-    if (text.includes('\n\n')) {
-      const paragraphs = text.split('\n\n');
-      return paragraphs.map((paragraph, index) => {
-        const parsed = parseTranslation(paragraph.trim());
-        // If toggle is ON and translation exists, show only translation
-        if (showTranslationOnly && parsed.translation) {
-          return (index > 0 ? '\n\n' : '') + parsed.translation;
-        }
-        // If toggle is OFF, show only main text (no translation)
-        return (index > 0 ? '\n\n' : '') + parsed.mainText;
-      }).join('');
+    try {
+      if (!text) return '';
+      
+      // Ensure selectedLanguageIndex is valid
+      const safeLanguageIndex = selectedLanguageIndex >= 0 ? selectedLanguageIndex : 0;
+      
+      // Handle multi-line descriptions with multiple translation blocks
+      // Split by \n\n to handle paragraphs, then parse each paragraph separately
+      if (typeof text === 'string' && text.includes('\n\n')) {
+        const paragraphs = text.split('\n\n');
+        return paragraphs.map((paragraph, index) => {
+          const displayText = getLanguageText(paragraph.trim(), safeLanguageIndex);
+          return (index > 0 ? '\n\n' : '') + (displayText || '');
+        }).join('');
+      }
+      
+      // Single line or no line breaks - get selected language
+      return getLanguageText(text, safeLanguageIndex);
+    } catch (error) {
+      console.warn('Error in getDisplayText:', error);
+      return text || '';
     }
-    
-    // Single line or no line breaks - parse normally
-    const parsed = parseTranslation(text);
-    // If toggle is ON and translation exists, show only translation
-    if (showTranslationOnly && parsed.translation) {
-      return parsed.translation;
-    }
-    // Otherwise show main text
-    return parsed.mainText;
+  };
+
+  // Handle closing language dropdown with animation
+  const handleCloseLanguageDropdown = () => {
+    Animated.parallel([
+      Animated.timing(languageDropdownAnimation, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(languageDropdownOpacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setLanguageMenuVisible(false);
+    });
   };
 
   // Helper function to check if an option is "Other", "Others", or "Others (Specify)"
@@ -282,7 +299,11 @@ export default function InterviewInterface({ navigation, route }: any) {
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [response, setResponse] = useState<SurveyResponse | null>(null);
-  const [showTranslationOnly, setShowTranslationOnly] = useState(false);
+  const [selectedLanguageIndex, setSelectedLanguageIndex] = useState(0);
+  const [languageMenuVisible, setLanguageMenuVisible] = useState(false);
+  const languageDropdownRef = useRef<View>(null);
+  const [languageDropdownAnimation] = useState(new Animated.Value(0));
+  const [languageDropdownOpacity] = useState(new Animated.Value(0));
   const [interviewerFirstName, setInterviewerFirstName] = useState<string>('');
   
   // MP/MLA names for survey "692fe24faf8e2f42139f5a49"
@@ -974,6 +995,54 @@ export default function InterviewInterface({ navigation, route }: any) {
   const progress = visibleQuestions && visibleQuestions.length > 0 
     ? (currentQuestionIndex + 1) / visibleQuestions.length 
     : 0;
+
+  // Detect available languages from current question and its options
+  const detectAvailableLanguages = useMemo(() => {
+    if (!currentQuestion) return ['Language 1'];
+    
+    const languageCounts = new Set<number>();
+    
+    try {
+      // Check question text
+      if (currentQuestion.text) {
+        const languages = parseMultiTranslation(String(currentQuestion.text));
+        if (languages && Array.isArray(languages)) {
+          languages.forEach((_, index) => languageCounts.add(index));
+        }
+      }
+      
+      // Check question description
+      if (currentQuestion.description) {
+        const languages = parseMultiTranslation(String(currentQuestion.description));
+        if (languages && Array.isArray(languages)) {
+          languages.forEach((_, index) => languageCounts.add(index));
+        }
+      }
+      
+      // Check options
+      if (currentQuestion.options && Array.isArray(currentQuestion.options)) {
+        currentQuestion.options.forEach((option: any) => {
+          try {
+            const optionText = typeof option === 'object' ? (option.text || option.value) : option;
+            if (optionText) {
+              const languages = parseMultiTranslation(String(optionText));
+              if (languages && Array.isArray(languages)) {
+                languages.forEach((_, index) => languageCounts.add(index));
+              }
+            }
+          } catch (error) {
+            console.warn('Error parsing option text:', error);
+          }
+        });
+      }
+    } catch (error) {
+      console.warn('Error detecting languages:', error);
+      return ['Language 1'];
+    }
+    
+    const maxLanguages = Math.max(...Array.from(languageCounts), 0) + 1;
+    return Array.from({ length: maxLanguages }, (_, i) => `Language ${i + 1}`);
+  }, [currentQuestion]);
 
   // Fetch interviewer's first name for consent form
   useEffect(() => {
@@ -6107,15 +6176,113 @@ export default function InterviewInterface({ navigation, route }: any) {
         <View style={styles.headerTop}>
           {/* Recording Indicator / Call Status and Abandon button */}
           <View style={styles.headerActions}>
-            {/* Translation Toggle - Left side */}
-            <View style={styles.translationToggleCompact}>
-              <Text style={styles.translationToggleLabelCompact}>🌐</Text>
-              <Switch
-                value={showTranslationOnly}
-                onValueChange={setShowTranslationOnly}
-                style={styles.translationToggleSwitch}
-              />
-            </View>
+            {/* Language Selector - Left side */}
+            {detectAvailableLanguages && Array.isArray(detectAvailableLanguages) && detectAvailableLanguages.length > 1 && (
+              <>
+                <View ref={languageDropdownRef} collapsable={false}>
+                  <Pressable
+                    onPress={() => {
+                      setLanguageMenuVisible(true);
+                      // Reset animations before starting
+                      languageDropdownAnimation.setValue(0);
+                      languageDropdownOpacity.setValue(0);
+                      // Animate dropdown opening
+                      Animated.parallel([
+                        Animated.timing(languageDropdownAnimation, {
+                          toValue: 1,
+                          duration: 200,
+                          useNativeDriver: true,
+                        }),
+                        Animated.timing(languageDropdownOpacity, {
+                          toValue: 1,
+                          duration: 200,
+                          useNativeDriver: true,
+                        }),
+                      ]).start();
+                    }}
+                    style={styles.translationToggleCompact}
+                  >
+                    <Text style={styles.translationToggleLabelCompact}>🌐</Text>
+                    <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 12 }]}>
+                      {detectAvailableLanguages[selectedLanguageIndex] || 'Language 1'}
+                    </Text>
+                    <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 10 }]}>▼</Text>
+                  </Pressable>
+                </View>
+
+                {/* Custom Dropdown Modal */}
+                <Modal
+                  visible={languageMenuVisible}
+                  transparent={true}
+                  animationType="none"
+                  onRequestClose={() => {
+                    handleCloseLanguageDropdown();
+                  }}
+                >
+                  <View style={styles.languageDropdownBackdrop}>
+                    <Pressable
+                      style={StyleSheet.absoluteFill}
+                      onPress={() => {
+                        handleCloseLanguageDropdown();
+                      }}
+                    />
+                    <Animated.View
+                      style={[
+                        styles.languageDropdownContainer,
+                        {
+                          opacity: languageDropdownOpacity,
+                          transform: [
+                            {
+                              translateY: languageDropdownAnimation.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [-10, 0],
+                              }),
+                            },
+                            {
+                              scale: languageDropdownAnimation.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0.95, 1],
+                              }),
+                            },
+                          ],
+                        },
+                      ]}
+                    >
+                      <FlatList
+                        data={detectAvailableLanguages}
+                        keyExtractor={(_, index) => `lang-${index}`}
+                        renderItem={({ item, index }) => (
+                          <Pressable
+                            onPress={() => {
+                              setSelectedLanguageIndex(index);
+                              handleCloseLanguageDropdown();
+                            }}
+                            style={({ pressed }) => [
+                              styles.languageDropdownItem,
+                              selectedLanguageIndex === index && styles.languageDropdownItemSelected,
+                              pressed && styles.languageDropdownItemPressed,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.languageDropdownItemText,
+                                selectedLanguageIndex === index && styles.languageDropdownItemTextSelected,
+                              ]}
+                            >
+                              {item || `Language ${index + 1}`}
+                            </Text>
+                            {selectedLanguageIndex === index && (
+                              <Text style={styles.languageDropdownCheckmark}>✓</Text>
+                            )}
+                          </Pressable>
+                        )}
+                        ItemSeparatorComponent={() => <View style={styles.languageDropdownSeparator} />}
+                      />
+                    </Animated.View>
+                  </View>
+                </Modal>
+              </>
+            )}
             
             {/* CATI Call Status */}
             {isCatiMode && (
@@ -6831,14 +6998,74 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginRight: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     backgroundColor: '#f3f4f6',
     borderRadius: 8,
+    minHeight: 32,
   },
   translationToggleLabelCompact: {
     fontSize: 14,
-    marginRight: 6,
+    marginRight: 4,
+    color: '#374151',
+  },
+  languageDropdownBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+    paddingTop: Platform.OS === 'ios' ? 50 : 60,
+    paddingLeft: 16,
+  },
+  languageDropdownContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    minWidth: 180,
+    maxWidth: 250,
+    maxHeight: 300,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    overflow: 'hidden',
+  },
+  languageDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#ffffff',
+  },
+  languageDropdownItemSelected: {
+    backgroundColor: '#eff6ff',
+  },
+  languageDropdownItemPressed: {
+    backgroundColor: '#dbeafe',
+  },
+  languageDropdownItemText: {
+    fontSize: 15,
+    color: '#374151',
+    flex: 1,
+  },
+  languageDropdownItemTextSelected: {
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  languageDropdownCheckmark: {
+    fontSize: 16,
+    color: '#2563eb',
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  languageDropdownSeparator: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginHorizontal: 8,
   },
   translationToggleSwitch: {
     transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }],
