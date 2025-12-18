@@ -39,13 +39,16 @@ export default function LoginScreen({ navigation, onLogin }: LoginScreenProps) {
     const trimmed = value.trim();
     if (!trimmed) return false;
     
-    // Check if it's a memberId (any digits)
-    const isMemberId = /^\d+$/.test(trimmed);
-    if (isMemberId) return true;
+    // Check if it's an email (contains @)
+    const isEmail = trimmed.includes('@');
+    if (isEmail) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return emailRegex.test(trimmed);
+    }
     
-    // Check if it's a valid email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(trimmed);
+    // Check if it's a memberId (alphanumeric, no @)
+    const isMemberId = /^[A-Za-z0-9]+$/.test(trimmed);
+    return isMemberId;
   };
 
   const handleLogin = async () => {
