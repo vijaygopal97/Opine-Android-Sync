@@ -776,16 +776,16 @@ export default function ResponseDetailsModal({
   };
 
   // Helper function to check if any rejection option has been selected
+  // NOTE: Questions 6 (name), 7 (age), and 8 (phoneNumber) are excluded from rejection logic
   const hasRejectionOption = (): boolean => {
-    // Check in order of questions
+    // Check in order of questions (excluding name, age, and phoneNumber)
     const questionOrder = [
       { type: 'audioStatus', value: verificationForm.audioStatus },
       { type: 'gender', value: verificationForm.genderMatching },
       { type: 'upcomingElection', value: verificationForm.upcomingElectionsMatching },
       { type: 'assembly2021', value: verificationForm.previousElectionsMatching },
       { type: 'lokSabha2024', value: verificationForm.previousLoksabhaElectionsMatching },
-      { type: 'name', value: verificationForm.nameMatching },
-      { type: 'age', value: verificationForm.ageMatching },
+      // Q6 (name), Q7 (age), and Q8 (phoneNumber) are excluded - they don't affect rejection
     ];
     
     for (const question of questionOrder) {
@@ -806,50 +806,64 @@ export default function ResponseDetailsModal({
       return false;
     }
     
-    // If any rejection option has been selected, hide all subsequent questions
-    if (hasRejectionOption()) {
-      // Define question order
-      const questionOrder = ['audioStatus', 'gender', 'upcomingElection', 'assembly2021', 'lokSabha2024', 'name', 'age', 'phoneNumber'];
-      const currentIndex = questionOrder.indexOf(questionType);
-      
-      // Find the first question with a rejection option
-      let rejectionIndex = -1;
-      if (isRejectionOption('audioStatus', verificationForm.audioStatus)) {
-        rejectionIndex = 0;
-      } else if (isRejectionOption('gender', verificationForm.genderMatching)) {
-        rejectionIndex = 1;
-      } else if (isRejectionOption('upcomingElection', verificationForm.upcomingElectionsMatching)) {
-        rejectionIndex = 2;
-      } else if (isRejectionOption('assembly2021', verificationForm.previousElectionsMatching)) {
-        rejectionIndex = 3;
-      } else if (isRejectionOption('lokSabha2024', verificationForm.previousLoksabhaElectionsMatching)) {
-        rejectionIndex = 4;
-      } else if (isRejectionOption('name', verificationForm.nameMatching)) {
-        rejectionIndex = 5;
-      } else if (isRejectionOption('age', verificationForm.ageMatching)) {
-        rejectionIndex = 6;
-      }
-      
-      // Hide all questions after the one with rejection option
-      if (rejectionIndex >= 0 && currentIndex > rejectionIndex) {
+    const audioStatus = verificationForm.audioStatus;
+    
+    // Q1-Q5: Only option '1' (first/best option) is acceptable for approval
+    // If ANY of Q1-Q5 is NOT option '1', hide ALL subsequent questions
+    
+    // Q1: Audio Status - if NOT option '1', hide ALL subsequent questions (Q2-Q8)
+    // Check this FIRST before anything else
+    if (audioStatus !== '' && audioStatus !== null && audioStatus !== undefined && audioStatus !== '1') {
+      // If audioStatus exists and is not '1', only show audioStatus question itself
+      // Hide everything else (Q2-Q8 including Q6 name)
+      return questionType === 'audioStatus';
+    }
+    
+    // Q2: Gender Matching - if NOT option '1', hide ALL subsequent questions (Q3-Q8)
+    if (verificationForm.genderMatching && verificationForm.genderMatching !== '' && verificationForm.genderMatching !== '1') {
+      // If gender is not '1', only show audioStatus and gender questions
+      // Hide everything else (Q3-Q8 including Q6 name)
+      if (questionType !== 'audioStatus' && questionType !== 'gender') {
         return false;
       }
     }
     
-    // For gender question, only show if audioStatus is valid (1 or 7)
-    // Audio Status must be either:
-    // - "1" (Survey Conversation can be heard)
-    // - "7" (Cannot hear the response clearly)
-    // If any other option is selected, the response will be rejected anyway, so don't show gender question
+    // Q3: Upcoming Elections - if NOT option '1', hide ALL subsequent questions (Q4-Q8)
+    if (verificationForm.upcomingElectionsMatching && verificationForm.upcomingElectionsMatching !== '' && verificationForm.upcomingElectionsMatching !== '1') {
+      // If Q3 is not '1', only show Q1, Q2, Q3
+      // Hide everything else (Q4-Q8 including Q6 name)
+      if (questionType !== 'audioStatus' && questionType !== 'gender' && questionType !== 'upcomingElection') {
+        return false;
+      }
+    }
+    
+    // Q4: Previous Elections - if NOT option '1', hide ALL subsequent questions (Q5-Q8)
+    if (verificationForm.previousElectionsMatching && verificationForm.previousElectionsMatching !== '' && verificationForm.previousElectionsMatching !== '1') {
+      // If Q4 is not '1', only show Q1, Q2, Q3, Q4
+      // Hide everything else (Q5-Q8 including Q6 name)
+      if (questionType !== 'audioStatus' && questionType !== 'gender' && 
+          questionType !== 'upcomingElection' && questionType !== 'assembly2021') {
+        return false;
+      }
+    }
+    
+    // Q5: Previous Loksabha Elections - if NOT option '1', hide Q6, Q7, Q8 (informational questions)
+    if (verificationForm.previousLoksabhaElectionsMatching && verificationForm.previousLoksabhaElectionsMatching !== '' && verificationForm.previousLoksabhaElectionsMatching !== '1') {
+      // If Q5 is not '1', hide Q6, Q7, Q8
+      if (questionType === 'name' || questionType === 'age' || questionType === 'phoneNumber') {
+        return false;
+      }
+    }
+    
+    // For gender question, only show if audioStatus is '1' (best option)
     if (questionType === 'gender') {
-      const audioStatus = verificationForm.audioStatus;
-      // Only show gender question if audioStatus is '1' or '7'
-      if (audioStatus !== '1' && audioStatus !== '7') {
+      if (audioStatus !== '1') {
         return false;
       }
     }
     
-    // Get verification responses to check if related response is skipped
+    // Only reach here if none of the rejection conditions above were met
+    // Now check if related response is skipped
     const verificationResponses = getVerificationResponses();
     
     // Check if related response is skipped
@@ -935,21 +949,10 @@ export default function ResponseDetailsModal({
       }
     }
     
-    if (shouldShowVerificationQuestion('name')) {
-      if (verificationForm.nameMatching !== '1' && 
-          verificationForm.nameMatching !== '3') {
-        return 'rejected';
-      }
-    }
-    
-    if (shouldShowVerificationQuestion('age')) {
-      if (verificationForm.ageMatching !== '1' && 
-          verificationForm.ageMatching !== '3') {
-        return 'rejected';
-      }
-    }
-    
-    // Phone number question is informational only and already excluded for CATI
+    // Q6: Name Matching - EXCLUDED from rejection logic (informational only)
+    // Q7: Age Matching - EXCLUDED from rejection logic (informational only)
+    // Q8: Phone Number Asked - EXCLUDED from rejection logic (informational only)
+    // These questions are answered but do NOT affect approval/rejection status
     
     return 'approved';
   };
