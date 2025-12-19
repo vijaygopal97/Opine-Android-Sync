@@ -6487,7 +6487,9 @@ export default function InterviewInterface({ navigation, route }: any) {
                 )}
                 {catiRespondent && (
                   <View style={styles.respondentInfoContainer}>
-                    <Text style={styles.respondentName}>{catiRespondent.name}</Text>
+                    <Text style={styles.respondentName}>
+                      {catiRespondent.name ? catiRespondent.name.split(' ')[0] : ''}
+                    </Text>
                     <Text style={styles.respondentPhone}>{catiRespondent.phone}</Text>
                   </View>
                 )}

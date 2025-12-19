@@ -90,8 +90,15 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   // Calculate interview stats
   const interviewStats = useMemo(() => {
     const approved = myInterviews.filter(interview => interview.status === 'Approved').length;
-    const pending = myInterviews.filter(interview => interview.status === 'Pending_Approval').length;
-    return { approved, pending };
+    const rejected = myInterviews.filter(interview => interview.status === 'Rejected').length;
+    const pendingApproval = myInterviews.filter(interview => interview.status === 'Pending_Approval').length;
+    // Total Completed = Approved + Rejected + Pending_Approval (exclude Abandoned and Terminated)
+    const totalCompleted = myInterviews.filter(interview => 
+      interview.status === 'Approved' || 
+      interview.status === 'Rejected' || 
+      interview.status === 'Pending_Approval'
+    ).length;
+    return { approved, rejected, pendingApproval, totalCompleted };
   }, [myInterviews]);
 
   useEffect(() => {
@@ -611,29 +618,29 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         <View style={styles.statsContainer}>
           <Card style={styles.statCard}>
             <Card.Content style={styles.statContent}>
-              <Text style={styles.statNumber}>{availableSurveys.length}</Text>
-              <Text style={styles.statLabel}>Available Surveys</Text>
-            </Card.Content>
-          </Card>
-          
-          <Card style={styles.statCard}>
-            <Card.Content style={styles.statContent}>
-              <Text style={styles.statNumber}>{myInterviews.length}</Text>
-              <Text style={styles.statLabel}>My Interviews</Text>
+              <Text style={styles.statNumber}>{interviewStats.totalCompleted}</Text>
+              <Text style={styles.statLabel}>Total Completed</Text>
             </Card.Content>
           </Card>
           
           <Card style={styles.statCard}>
             <Card.Content style={styles.statContent}>
               <Text style={styles.statNumber}>{interviewStats.approved}</Text>
-              <Text style={styles.statLabel}>Accepted</Text>
+              <Text style={styles.statLabel}>Approved</Text>
             </Card.Content>
           </Card>
           
           <Card style={styles.statCard}>
             <Card.Content style={styles.statContent}>
-              <Text style={styles.statNumber}>{interviewStats.pending}</Text>
-              <Text style={styles.statLabel}>Pending</Text>
+              <Text style={styles.statNumber}>{interviewStats.rejected}</Text>
+              <Text style={styles.statLabel}>Rejected</Text>
+            </Card.Content>
+          </Card>
+          
+          <Card style={styles.statCard}>
+            <Card.Content style={styles.statContent}>
+              <Text style={styles.statNumber}>{interviewStats.pendingApproval}</Text>
+              <Text style={styles.statLabel}>Under QC</Text>
             </Card.Content>
           </Card>
         </View>
