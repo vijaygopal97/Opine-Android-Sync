@@ -658,12 +658,23 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             mode="contained"
             onPress={handleSyncSurveyDetails}
             loading={isSyncingSurveys}
-            disabled={isSyncingSurveys || isOffline}
-            style={[styles.syncSurveyButton, isOffline && styles.disabledButton]}
+            disabled={isOffline}
+            style={[
+              styles.syncSurveyButton, 
+              isOffline && styles.disabledButton,
+              isSyncingSurveys && styles.syncingButton
+            ]}
             icon="sync"
-            buttonColor={isOffline ? "#cccccc" : "#ffffff"}
+            buttonColor={isOffline ? "#cccccc" : (isSyncingSurveys ? "#001D48" : "#ffffff")}
             textColor={isSyncingSurveys ? "#ffffff" : (isOffline ? "#666666" : "#001D48")}
+            contentStyle={isSyncingSurveys ? styles.syncingButtonContent : undefined}
+            labelStyle={isSyncingSurveys ? styles.syncingButtonLabel : undefined}
             loadingIndicatorColor="#ffffff"
+            theme={{
+              colors: {
+                primary: isSyncingSurveys ? '#001D48' : '#ffffff',
+              }
+            }}
           >
             {isSyncingSurveys ? 'Downloading & Syncing Data...' : 'Sync Survey Details'}
           </Button>
@@ -1434,6 +1445,16 @@ const styles = StyleSheet.create({
   syncSurveyButton: {
     borderRadius: 8,
     elevation: 2,
+  },
+  syncingButton: {
+    backgroundColor: '#001D48',
+    opacity: 1,
+  },
+  syncingButtonContent: {
+    backgroundColor: '#001D48',
+  },
+  syncingButtonLabel: {
+    color: '#ffffff',
   },
   // Assigned ACs styles for dashboard
   assignedACsContainer: {
