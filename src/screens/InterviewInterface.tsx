@@ -1179,6 +1179,25 @@ export default function InterviewInterface({ navigation, route }: any) {
     ? (currentQuestionIndex + 1) / visibleQuestions.length 
     : 0;
 
+  // OPTIMIZATION: Load ACs when AC selection question becomes visible
+  useEffect(() => {
+    const isACSelectionQuestion = currentQuestion && (
+      currentQuestion.id === 'ac-selection' || 
+      (currentQuestion as any)?.isACSelection
+    );
+    
+    if (isACSelectionQuestion && allACs.length === 0 && !loadingAllACs && !isCatiMode) {
+      const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+      if (isTargetSurvey && requiresACSelection && assignedACs.length === 0) {
+        const state = survey?.acAssignmentState || 'West Bengal';
+        console.log('🔍 AC selection question visible - loading ACs on-demand...');
+        loadACsOnDemand(state).catch((err) => {
+          console.error('⚠️ Error loading ACs when question became visible:', err);
+        });
+      }
+    }
+  }, [currentQuestion?.id, allACs.length, loadingAllACs, isCatiMode, requiresACSelection, assignedACs.length, survey]);
+
   // Detect available languages from current question and its options
   const detectAvailableLanguages = useMemo(() => {
     if (!currentQuestion) return ['Language 1'];
@@ -1476,6 +1495,166 @@ export default function InterviewInterface({ navigation, route }: any) {
   }, [currentQuestionIndex, visibleQuestions, selectedAC, acFromSessionData]); // Only re-run when question changes or AC changes
 
   // Load ACs from cache immediately when component mounts (for offline support)
+  // OPTIMIZATION: Lazy load ACs from cache (fast, non-blocking)
+  // This function checks cache first and uses cached ACs immediately
+  // Then fetches fresh data in background if online
+  const loadACsFromCacheLazy = async (state: string): Promise<void> => {
+    try {
+      // Step 1: Check cache first (fast, < 100ms)
+      const cachedACs = await offlineDataCache.getAllACsForState(state);
+      
+      if (cachedACs && cachedACs.length > 0) {
+        // Use cached ACs immediately (don't validate - just use them)
+        console.log('✅ Loaded', cachedACs.length, 'ACs from cache immediately (using cached data)');
+        setAllACs(cachedACs);
+        
+        // Step 2: Fetch fresh data in background (non-blocking)
+        const isOnline = await apiService.isOnline();
+        if (isOnline) {
+          console.log('🔄 Fetching fresh AC data in background...');
+          // Don't await - let it run in background
+          apiService.getAllACsForState(state)
+            .then((allACsResponse) => {
+              if (allACsResponse.success && allACsResponse.data) {
+                let fetchedACs: any[] = [];
+                
+                if (Array.isArray(allACsResponse.data)) {
+                  fetchedACs = allACsResponse.data;
+                } else if (allACsResponse.data.acs && Array.isArray(allACsResponse.data.acs)) {
+                  fetchedACs = allACsResponse.data.acs;
+                } else {
+                  fetchedACs = allACsResponse.data.acs || allACsResponse.data || [];
+                }
+                
+                if (fetchedACs.length > 0) {
+                  console.log('✅ Fresh AC data fetched:', fetchedACs.length, 'ACs (updating...)');
+                  setAllACs(fetchedACs);
+                }
+              }
+            })
+            .catch((error) => {
+              console.log('⚠️ Background AC fetch failed (using cached data):', error.message);
+              // Don't show error - cached data is already being used
+            });
+        }
+      } else {
+        console.log('📴 No ACs found in cache - will fetch when dropdown opens');
+      }
+    } catch (error: any) {
+      console.error('❌ Error loading ACs from cache:', error);
+      // Don't block - ACs will be fetched when dropdown opens
+    }
+  };
+
+  // OPTIMIZATION: Load ACs on-demand when needed
+  // This function fetches ACs when user opens dropdown or when AC question becomes visible
+  const loadACsOnDemand = async (state: string): Promise<void> => {
+    // If ACs are already loaded, don't fetch again
+    if (allACs.length > 0) {
+      console.log('✅ ACs already loaded:', allACs.length, 'ACs');
+      return;
+    }
+
+    setLoadingAllACs(true);
+    try {
+      // Step 1: Check cache first (fast)
+      const cachedACs = await offlineDataCache.getAllACsForState(state);
+      
+      if (cachedACs && cachedACs.length > 0) {
+        // Use cached ACs immediately
+        console.log('✅ Using cached ACs immediately:', cachedACs.length, 'ACs');
+        setAllACs(cachedACs);
+        setLoadingAllACs(false);
+        
+        // Step 2: Fetch fresh data in background
+        const isOnline = await apiService.isOnline();
+        if (isOnline) {
+          apiService.getAllACsForState(state)
+            .then((allACsResponse) => {
+              if (allACsResponse.success && allACsResponse.data) {
+                let fetchedACs: any[] = [];
+                
+                if (Array.isArray(allACsResponse.data)) {
+                  fetchedACs = allACsResponse.data;
+                } else if (allACsResponse.data.acs && Array.isArray(allACsResponse.data.acs)) {
+                  fetchedACs = allACsResponse.data.acs;
+                } else {
+                  fetchedACs = allACsResponse.data.acs || allACsResponse.data || [];
+                }
+                
+                if (fetchedACs.length > cachedACs.length) {
+                  console.log('✅ Fresh AC data fetched:', fetchedACs.length, 'ACs (updating...)');
+                  setAllACs(fetchedACs);
+                }
+              }
+            })
+            .catch((error) => {
+              console.log('⚠️ Background AC fetch failed (using cached data):', error.message);
+            });
+        }
+        return;
+      }
+
+      // Step 3: Fetch from API if no cache or cache is empty
+      console.log('🔄 Fetching ACs from API...');
+      const allACsResponse = await apiService.getAllACsForState(state);
+      
+      if (allACsResponse.success && allACsResponse.data) {
+        let fetchedACs: any[] = [];
+        let acCount = 0;
+        
+        if (Array.isArray(allACsResponse.data)) {
+          fetchedACs = allACsResponse.data;
+          acCount = fetchedACs.length;
+        } else if (allACsResponse.data.acs && Array.isArray(allACsResponse.data.acs)) {
+          fetchedACs = allACsResponse.data.acs;
+          acCount = allACsResponse.data.count || fetchedACs.length;
+        } else {
+          fetchedACs = allACsResponse.data.acs || allACsResponse.data || [];
+          acCount = allACsResponse.data.count || fetchedACs.length;
+        }
+        
+        if (acCount > 0) {
+          console.log('✅ Fetched all ACs:', acCount, 'ACs');
+          setAllACs(fetchedACs);
+        } else {
+          console.warn('⚠️ No ACs returned from API');
+          setAllACs([]);
+        }
+      } else if (allACsResponse.error === 'OFFLINE_NO_CACHE' || allACsResponse.error === 'OFFLINE_INCOMPLETE_CACHE') {
+        // Try cache as fallback
+        const fallbackACs = await offlineDataCache.getAllACsForState(state);
+        if (fallbackACs && fallbackACs.length > 0) {
+          console.log('📦 Using cached ACs as fallback:', fallbackACs.length, 'ACs');
+          setAllACs(fallbackACs);
+        } else {
+          console.log('📴 No ACs available offline');
+          setAllACs([]);
+        }
+      } else {
+        console.error('Failed to fetch all ACs:', allACsResponse);
+        setAllACs([]);
+      }
+    } catch (error: any) {
+      console.error('Error fetching ACs:', error);
+      // Try cache as final fallback
+      try {
+        const fallbackACs = await offlineDataCache.getAllACsForState(state);
+        if (fallbackACs && fallbackACs.length > 0) {
+          console.log('📦 Using cached ACs as final fallback:', fallbackACs.length, 'ACs');
+          setAllACs(fallbackACs);
+        } else {
+          setAllACs([]);
+        }
+      } catch (cacheError) {
+        console.error('❌ Error loading from cache fallback:', cacheError);
+        setAllACs([]);
+      }
+    } finally {
+      setLoadingAllACs(false);
+    }
+  };
+
   useEffect(() => {
     const loadACsFromCache = async () => {
       // Check if this is the target survey
@@ -1816,138 +1995,17 @@ export default function InterviewInterface({ navigation, route }: any) {
             console.log('🔍 Setting assignedACs to:', assignedACsArray, '(length:', assignedACsArray.length, ')');
             setAssignedACs(assignedACsArray);
             
-            // If interviewer has no assigned ACs but requiresACSelection is true, fetch all ACs for the state
-            // Only for target survey "68fd1915d41841da463f0d46"
+            // OPTIMIZATION: Don't fetch all ACs during initialization - defer to when user opens dropdown
+            // This significantly speeds up CAPI interview start time
             if (isTargetSurvey && needsACSelection && assignedACsArray.length === 0) {
-              console.log('🔍 ✅ Condition met: isTargetSurvey && needsACSelection && no assignedACs - will fetch all ACs');
+              console.log('🔍 ✅ Condition met: isTargetSurvey && needsACSelection && no assignedACs - ACs will be loaded on-demand when dropdown opens');
+              // Try to load from cache immediately (fast, non-blocking)
+              // This allows interview to start immediately with cached ACs if available
               const state = survey?.acAssignmentState || result.response.acAssignmentState || 'West Bengal';
-              console.log('🔍 No assigned ACs - fetching all ACs for state:', state, '(Survey:', survey._id || survey.id, ')');
-              setLoadingAllACs(true);
-              try {
-                const allACsResponse = await apiService.getAllACsForState(state);
-                if (allACsResponse.success && allACsResponse.data) {
-                  // Handle both bundled data format (data is array) and API format (data.acs is array)
-                  let fetchedACs: any[] = [];
-                  let acCount = 0;
-                  
-                  if (Array.isArray(allACsResponse.data)) {
-                    // Bundled data format: data is directly the array
-                    fetchedACs = allACsResponse.data;
-                    acCount = fetchedACs.length;
-                  } else if (allACsResponse.data.acs && Array.isArray(allACsResponse.data.acs)) {
-                    // API format: data.acs is the array
-                    fetchedACs = allACsResponse.data.acs;
-                    acCount = allACsResponse.data.count || fetchedACs.length;
-                  } else {
-                    // Fallback: try to extract from any structure
-                    fetchedACs = allACsResponse.data.acs || allACsResponse.data || [];
-                    acCount = allACsResponse.data.count || fetchedACs.length;
-                  }
-                  
-                  // CRITICAL: Validate that we got complete master data, not contaminated cache
-                  // West Bengal should have ~294 ACs, reject if we get suspiciously few
-                  const minExpectedACs = state === 'West Bengal' ? 200 : 50;
-                  if (acCount < minExpectedACs) {
-                    console.error('❌ Suspicious AC count:', acCount, '(expected at least', minExpectedACs, ')');
-                    console.error('❌ This might be contaminated cache from another user - rejecting');
-                    Alert.alert(
-                      'Incomplete Data',
-                      'The cached AC list appears incomplete. Please ensure you have internet connection when starting the interview to fetch complete data.',
-                      [{ text: 'OK' }]
-                    );
-                    setAllACs([]);
-                  } else {
-                    console.log('✅ Fetched all ACs:', acCount, 'ACs (validated complete master data)');
-                    setAllACs(fetchedACs);
-                    
-                    // NOTE: Don't proactively cache ALL ACs (294 ACs) - this would be too slow
-                    // Instead, cache will happen on-demand when user selects an AC
-                    // This prevents performance issues and infinite error loops
-                    console.log('📥 Skipping proactive cache for all ACs (will cache on-demand when AC is selected)');
-                  }
-                } else if (allACsResponse.error === 'OFFLINE_NO_CACHE' || allACsResponse.error === 'OFFLINE_INCOMPLETE_CACHE' || allACsResponse.error === 'OFFLINE_CACHE_ERROR') {
-                  console.log('📴 Offline mode - cache issue:', allACsResponse.error);
-                  console.log('📴 Error message:', allACsResponse.message);
-                  
-                  // Try to load directly from cache as fallback (bypass validation)
-                  try {
-                    const { offlineDataCache } = await import('../services/offlineDataCache');
-                    const allACsData = await offlineDataCache.getAllACsForAllStates();
-                    const stateData = allACsData[state];
-                    
-                    if (stateData && stateData.acs && stateData.acs.length > 0) {
-                      console.log('📦 Found', stateData.acs.length, 'ACs in cache (using as fallback despite validation failure)');
-                      setAllACs(stateData.acs);
-                      Alert.alert(
-                        'Offline Mode - Limited Data',
-                        `Loaded ${stateData.acs.length} ACs from cache. Some ACs may be missing. Please sync survey details when online for complete data.`,
-                        [{ text: 'OK' }]
-                      );
-                    } else {
-                      console.log('📴 No ACs found in cache at all');
-                      Alert.alert(
-                        'Offline Mode',
-                        allACsResponse.message || 'Complete AC list is not available offline. Please sync survey details from the dashboard when online to cache all ACs, or ensure you have internet connection when starting the interview.',
-                        [{ text: 'OK' }]
-                      );
-                      setAllACs([]);
-                    }
-                  } catch (fallbackError) {
-                    console.error('❌ Error loading fallback cache:', fallbackError);
-                    Alert.alert(
-                      'Offline Mode',
-                      allACsResponse.message || 'Complete AC list is not available offline. Please sync survey details from the dashboard when online to cache all ACs.',
-                      [{ text: 'OK' }]
-                    );
-                    setAllACs([]);
-                  }
-                } else {
-                  console.error('Failed to fetch all ACs:', allACsResponse);
-                  setAllACs([]);
-                }
-              } catch (error: any) {
-                console.error('Error fetching all ACs:', error);
-                console.error('Error details:', {
-                  message: error?.message,
-                  response: error?.response,
-                  code: error?.code,
-                  stack: error?.stack
-                });
-                
-                // Try to load from cache as fallback
-                try {
-                  const { offlineDataCache } = await import('../services/offlineDataCache');
-                  const state = survey?.acAssignmentState || result.response.acAssignmentState || 'West Bengal';
-                  const cachedACs = await offlineDataCache.getAllACsForState(state);
-                  
-                  if (cachedACs && cachedACs.length > 0) {
-                    console.log('📦 Loaded', cachedACs.length, 'ACs from cache as fallback');
-                    setAllACs(cachedACs);
-                    Alert.alert(
-                      'Using Cached Data',
-                      `Loaded ${cachedACs.length} ACs from cache. Some data may be outdated.`,
-                      [{ text: 'OK' }]
-                    );
-                  } else {
-                    Alert.alert(
-                      'Error Loading ACs',
-                      error?.message || 'Failed to load Assembly Constituencies. Please check your internet connection and try again.',
-                      [{ text: 'OK' }]
-                    );
-                    setAllACs([]);
-                  }
-                } catch (cacheError) {
-                  console.error('❌ Error loading from cache fallback:', cacheError);
-                  Alert.alert(
-                    'Error Loading ACs',
-                    error?.message || 'Failed to load Assembly Constituencies. Please check your internet connection and try again.',
-                    [{ text: 'OK' }]
-                  );
-                  setAllACs([]);
-                }
-              } finally {
-                setLoadingAllACs(false);
-              }
+              loadACsFromCacheLazy(state).catch((err) => {
+                console.error('⚠️ Error loading ACs from cache:', err);
+                // Don't block - ACs will be fetched when dropdown opens
+              });
             } else {
               setAllACs([]);
               
@@ -5323,7 +5381,14 @@ export default function InterviewInterface({ navigation, route }: any) {
             <>
               <TouchableOpacity
                 style={styles.dropdownButton}
-                onPress={() => setShowACDropdown(true)}
+                onPress={async () => {
+                  // OPTIMIZATION: Load ACs on-demand when dropdown opens
+                  if (allACs.length === 0 && !loadingAllACs) {
+                    const state = survey?.acAssignmentState || 'West Bengal';
+                    await loadACsOnDemand(state);
+                  }
+                  setShowACDropdown(true);
+                }}
               >
                 <Text style={[
                   styles.dropdownButtonText,
