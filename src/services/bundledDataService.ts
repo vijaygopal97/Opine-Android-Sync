@@ -47,7 +47,8 @@ class BundledDataService {
   private loadingPromise: Promise<void> | null = null;
 
   /**
-   * Load bundled polling station data
+   * Load polling station data
+   * Priority: 1. Downloaded file (document directory) 2. Bundled file (require) 3. Empty object
    */
   async loadPollingStationData(): Promise<PollingStationData> {
     if (this.pollingStationData) {
@@ -61,26 +62,34 @@ class BundledDataService {
 
     this.loadingPromise = (async () => {
       try {
-        // In React Native, we need to fetch the bundled JSON file
-        // Since require() might not work for large files, we'll use a fetch approach
-        // But first, let's try require() - if it fails, we'll use an alternative
+        console.log('📦 Loading polling station data...');
         
-        console.log('📦 Loading bundled polling station data...');
-        
-        // In React Native/Expo, require() works for JSON files
-        // The file is bundled with the app, so it's always available
+        // FIRST: Try to load from downloaded file (if available)
+        try {
+          const { pollingStationsSyncService } = await import('./pollingStationsSyncService');
+          const downloadedData = await pollingStationsSyncService.loadDownloadedFile();
+          
+          if (downloadedData) {
+            this.pollingStationData = downloadedData as PollingStationData;
+            console.log('✅ Loaded polling station data from downloaded file');
+            return;
+          }
+        } catch (downloadError) {
+          console.log('⚠️ Could not load from downloaded file, trying bundled file...', downloadError);
+        }
+
+        // SECOND: Fallback to bundled file (require)
         try {
           const pollingStations = require('../data/polling_stations.json');
           this.pollingStationData = pollingStations as PollingStationData;
-          console.log('✅ Loaded bundled polling station data');
+          console.log('✅ Loaded polling station data from bundled file');
         } catch (requireError) {
-          // If require() fails (e.g., in some bundlers), try alternative approach
+          // If require() fails, try alternative approach
           console.warn('⚠️ require() failed, trying alternative loading method...');
-          // For now, we'll throw the error - the app should handle it gracefully
           throw requireError;
         }
       } catch (error) {
-        console.error('❌ Error loading bundled polling station data:', error);
+        console.error('❌ Error loading polling station data:', error);
         // Return empty object as fallback
         this.pollingStationData = {} as PollingStationData;
       }
@@ -515,6 +524,15 @@ class BundledDataService {
         message: error.message || 'Failed to get polling stations from bundled data'
       };
     }
+  }
+
+  /**
+   * Clear cached polling station data (useful after downloading new file)
+   */
+  clearCache(): void {
+    this.pollingStationData = null;
+    this.loadingPromise = null;
+    console.log('🔄 Cleared polling station data cache');
   }
 }
 

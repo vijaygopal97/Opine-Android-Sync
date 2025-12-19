@@ -1496,6 +1496,70 @@ class ApiService {
     }
   }
 
+  // Check if polling_stations.json has been updated on the server
+  async checkPollingStationsUpdate() {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(`${this.baseURL}/api/polling-stations/check-update`, { headers });
+      if (response.data.success) {
+        return { success: true, data: response.data.data };
+      } else {
+        return { success: false, message: response.data.message || 'Failed to check update' };
+      }
+    } catch (error: any) {
+      console.error('Check polling stations update error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to check update',
+      };
+    }
+  }
+
+  // Download the latest polling_stations.json file
+  async downloadPollingStations(localHash?: string) {
+    try {
+      const headers = await this.getHeaders();
+      const requestHeaders: any = { ...headers };
+      
+      // Add If-None-Match header if we have a local hash
+      if (localHash) {
+        requestHeaders['If-None-Match'] = localHash;
+      }
+
+      const response = await axios.get(`${this.baseURL}/api/polling-stations/download`, {
+        headers: requestHeaders,
+        responseType: 'text', // Get as text to handle JSON properly
+        validateStatus: (status) => status === 200 || status === 304, // Accept 304 Not Modified
+      });
+
+      // If 304, file hasn't changed
+      if (response.status === 304) {
+        return { success: true, unchanged: true, message: 'File is up to date' };
+      }
+
+      // Parse JSON from response
+      const fileContent = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+      const etag = response.headers.etag || response.headers['etag'] || localHash;
+
+      return {
+        success: true,
+        data: fileContent,
+        hash: etag,
+        unchanged: false,
+      };
+    } catch (error: any) {
+      console.error('Download polling stations error:', error);
+      // Handle 304 status code (axios might throw for 304 in some cases)
+      if (error.response?.status === 304) {
+        return { success: true, unchanged: true, message: 'File is up to date' };
+      }
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to download polling stations',
+      };
+    }
+  }
+
   async getPollingStationGPS(state: string, acIdentifier: string, groupName: string, stationName: string) {
     try {
       // Normalize AC name to match master data spelling

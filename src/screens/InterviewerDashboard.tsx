@@ -100,6 +100,33 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     loadDashboardData();
     loadPendingInterviewsCount();
     loadOfflineInterviews(); // Load offline interviews on mount
+    
+    // Check for polling stations update on app startup (background, non-blocking)
+    const checkPollingStationsUpdate = async () => {
+      try {
+        const isOnline = await apiService.isOnline();
+        if (isOnline) {
+          const { pollingStationsSyncService } = await import('../services/pollingStationsSyncService');
+          // Check in background without blocking
+          pollingStationsSyncService.checkAndUpdate().then((result) => {
+            if (result.updated) {
+              console.log('✅ Polling stations updated on startup:', result.message);
+              // Clear cache to force reload
+              import('../services/bundledDataService').then((module) => {
+                module.bundledDataService.clearCache();
+              });
+            }
+          }).catch((err) => {
+            console.error('Startup polling stations check error:', err);
+          });
+        }
+      } catch (error) {
+        console.error('Error checking polling stations on startup:', error);
+      }
+    };
+    
+    // Run check after a short delay to not block initial load
+    setTimeout(checkPollingStationsUpdate, 2000);
   }, []);
 
   // Refresh stats, pending count and offline interviews when screen comes into focus
@@ -253,6 +280,35 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         await offlineStorage.saveSurveys(surveys, true);
         setAvailableSurveys(surveys);
         showSnackbar(`Successfully synced ${surveys.length} survey(s) with offline data`, 'success');
+        
+        // Check for polling stations update in background (lightweight check only)
+        // Don't await - let it run in background without blocking
+        import('../services/pollingStationsSyncService').then((module) => {
+          const pollingStationsSyncService = module.pollingStationsSyncService;
+          pollingStationsSyncService.checkForUpdates().then((checkResult) => {
+            if (checkResult.needsUpdate && !checkResult.error) {
+              console.log('📥 Polling stations file needs update, downloading in background...');
+              // Download in background without blocking UI
+              pollingStationsSyncService.downloadLatest().then((downloadResult) => {
+                if (downloadResult.success && downloadResult.hash) {
+                  console.log('✅ Polling stations file updated in background');
+                  // Clear cached data so it reloads with new file on next access
+                  import('../services/bundledDataService').then((bundledModule) => {
+                    bundledModule.bundledDataService.clearCache();
+                  }).catch((clearErr) => {
+                    console.error('Error clearing cache:', clearErr);
+                  });
+                }
+              }).catch((err) => {
+                console.error('Background polling stations download error:', err);
+              });
+            }
+          }).catch((err) => {
+            console.error('Background polling stations check error:', err);
+          });
+        }).catch((importErr) => {
+          console.error('Error importing pollingStationsSyncService:', importErr);
+        });
       } else {
         showSnackbar('Failed to sync survey details. Please try again.', 'error');
       }
