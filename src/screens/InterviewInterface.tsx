@@ -655,8 +655,16 @@ export default function InterviewInterface({ navigation, route }: any) {
       if (interviewMode === 'capi' && question.enabledForCAPI === false) {
         return false;
       }
-      if (interviewMode === 'cati' && question.enabledForCATI === false) {
-        return false;
+      if (interviewMode === 'cati') {
+        // Hide questions explicitly disabled for CATI
+        if (question.enabledForCATI === false) {
+          return false;
+        }
+        // Also hide questions that are CAPI-only (enabledForCAPI is true but enabledForCATI is not true)
+        // This catches cases where Survey Builder sets "show only in CAPI" but doesn't explicitly set enabledForCATI to false
+        if (question.enabledForCAPI === true && question.enabledForCATI !== true) {
+          return false;
+        }
       }
       
       // Sets logic ONLY applies to CATI interviews, NOT CAPI
@@ -698,13 +706,24 @@ export default function InterviewInterface({ navigation, route }: any) {
     // For CATI, use the selectedSetNumber (fetched via useEffect)
     
     // Add regular survey questions from sections (filtered by CAPI/CATI and sets logic)
+    // SPECIAL: For target survey in CATI mode, include Q17 and Q7 even if they're conditionally hidden or in a different set
+    // This ensures they can be reordered correctly even if they're not initially visible
+    const TARGET_SURVEY_ID = '68fd1915d41841da463f0d46';
+    const isTargetSurveyCATI = isCatiMode && survey && (survey._id === TARGET_SURVEY_ID || survey.id === TARGET_SURVEY_ID);
+    
     if (survey?.sections && Array.isArray(survey.sections) && survey.sections.length > 0) {
       survey.sections.forEach((section: any, sectionIndex: number) => {
         if (section && section.questions && Array.isArray(section.questions) && section.questions.length > 0) {
           section.questions.forEach((question: any, questionIndex: number) => {
             if (!question) return; // Skip null/undefined questions
             // Check if question should be shown
-            if (shouldShowQuestion(question, interviewMode, currentSetNumber)) {
+            const shouldShow = shouldShowQuestion(question, interviewMode, currentSetNumber);
+            const isQ17 = question.questionNumber === '17' || (question.questionNumber && String(question.questionNumber).toLowerCase() === '17');
+            const isQ7 = question.questionNumber === '7' || (question.questionNumber && String(question.questionNumber).toLowerCase() === '7');
+            
+            // For Q17 and Q7 in target survey CATI mode, include them even if filtered out by set logic (for reordering purposes)
+            // But still respect CATI visibility settings (enabledForCATI !== false)
+            if (shouldShow || (isTargetSurveyCATI && (isQ17 || isQ7) && question.enabledForCATI !== false)) {
               questions.push({
                 ...question,
                 sectionIndex,
@@ -712,6 +731,10 @@ export default function InterviewInterface({ navigation, route }: any) {
                 sectionId: section?.id || `section-${sectionIndex}`,
                 sectionTitle: section?.title || 'Survey Section'
               });
+              // Debug logging for Q7 when included
+              if (isQ7) {
+                console.log(`✅ Q7 Included in allQuestions: questionNumber=${question.questionNumber}, shouldShow=${shouldShow}, enabledForCATI=${question.enabledForCATI}, setNumber=${question.setNumber}, currentSetNumber=${currentSetNumber}`);
+              }
             }
           });
         }
@@ -743,37 +766,169 @@ export default function InterviewInterface({ navigation, route }: any) {
       console.log(`🔵 CATI Questions filtered - Set ${selectedSetNumber} questions: ${setQuestions.length}, Non-set questions: ${nonSetQuestions.length}, Total: ${questions.length}`);
     }
     
-    // Special handling for survey 68fd1915d41841da463f0d46: Reorder question 13 for CATI mode
-    // Question 13 should appear after "Please note the respondent's gender" question
-    const TARGET_SURVEY_ID = '68fd1915d41841da463f0d46';
+    // Special handling for survey 68fd1915d41841da463f0d46: Dynamic question reordering for CATI mode
     if (isCatiMode && survey && (survey._id === TARGET_SURVEY_ID || survey.id === TARGET_SURVEY_ID)) {
-      // Find gender question and question 13
-      let genderQIndex = -1;
-      let q13Index = -1;
-      
-      questions.forEach((q: any, idx: number) => {
-        // Find gender question (fixed_respondent_gender or contains "gender" and "respondent")
-        if ((q.id && q.id.includes('fixed_respondent_gender')) || 
-            (q.text && q.text.toLowerCase().includes('gender') && q.text.toLowerCase().includes('respondent'))) {
-          genderQIndex = idx;
+      // Helper function to identify questions by questionNumber ONLY (no text patterns)
+      // Simple and reliable: match by questionNumber only
+      const identifyQuestion = (question: any, targetNumber: string, subQuestion: string | null = null): boolean => {
+        const qNum = String(question.questionNumber || '').trim().toLowerCase();
+        const targetNumLower = String(targetNumber).toLowerCase();
+        
+        // For sub-questions (like 16.a, 16.b), check questionNumber pattern
+        if (subQuestion) {
+          // Check if questionNumber matches the pattern (e.g., "16.a", "16a", "16.A")
+          const patternLower = `${targetNumber}.${subQuestion.toLowerCase()}`;
+          const patternLowerNoDot = `${targetNumber}${subQuestion.toLowerCase()}`;
+          const patternUpper = `${targetNumber}.${subQuestion.toUpperCase()}`;
+          const patternUpperNoDot = `${targetNumber}${subQuestion.toUpperCase()}`;
+          
+          if (qNum === patternLower || qNum === patternLowerNoDot || 
+              qNum === patternUpper || qNum === patternUpperNoDot ||
+              question.questionNumber === patternLower || question.questionNumber === patternUpper) {
+            return true;
+          }
+          return false;
         }
-        // Find question 13 (questionNumber === '13' or contains "three most pressing")
-        if (q.questionNumber === '13' || 
-            (q.text && (q.text.includes('three most pressing') || q.text.includes('পশ্চিমবঙ্গের সবচেয়ে জরুরি')))) {
-          q13Index = idx;
+        
+        // For non-sub-questions, check by questionNumber (exact match)
+        const questionNumberMatches = qNum === targetNumLower || 
+                                     question.questionNumber === targetNumber || 
+                                     question.questionNumber === String(targetNumber);
+        
+        return questionNumberMatches;
+      };
+
+      // Define the desired order with question identifiers for CATI
+      // Format: { number: '2', patterns: ['text patterns'], subQuestion: 'A' or 'B' for sub-questions }
+      // IMPORTANT: Order matters - questions will be reordered in this exact sequence
+      const desiredOrder = [
+        { number: '2' },
+        { number: '1' },
+        { number: '13' },
+        { number: '14' },
+        { number: '16', subQuestion: 'A' },
+        { number: '16', subQuestion: 'B' },
+        { number: '5' },
+        { number: '6' },
+        { number: '7' },
+        { number: '8' },
+        { number: '9' },
+        { number: '10' },
+        { number: '17' },
+        { number: '19' },
+        { number: '28' },
+        { number: '20' },
+        { number: '21' },
+        { number: '22' },
+        { number: '26' },
+        { number: '27' },
+        { number: '3' },
+        { number: '23' },
+        { number: '24' },
+        { number: '25' },
+      ];
+
+      // Find where Q1 starts (questions before Q1 should remain unchanged)
+      // Q1 is typically the first question after system questions (call-status, interviewer-id, consent-form, etc.)
+      let q1StartIndex = -1;
+      questions.forEach((q: any, idx: number) => {
+        if (identifyQuestion(q, '1')) {
+          q1StartIndex = idx;
         }
       });
-      
-      // Reorder: Move question 13 to appear right after gender question
-      if (genderQIndex >= 0 && q13Index >= 0 && q13Index > genderQIndex) {
-        const q13Question = questions[q13Index];
-        // Remove question 13 from its current position
-        questions.splice(q13Index, 1);
-        // Insert question 13 right after gender question
-        const newQ13Index = genderQIndex + 1;
-        questions.splice(newQ13Index, 0, q13Question);
-        console.log('✅ Reordered question 13 to appear after gender question for CATI interview');
+
+      // If Q1 not found, check for first question with questionNumber >= 1
+      if (q1StartIndex === -1) {
+        questions.forEach((q: any, idx: number) => {
+          const qNum = parseInt(q.questionNumber);
+          if (!isNaN(qNum) && qNum >= 1 && q1StartIndex === -1) {
+            q1StartIndex = idx;
+          }
+        });
       }
+
+      // If still not found, assume all questions after system questions are survey questions
+      // System questions typically have negative order or specific IDs
+      if (q1StartIndex === -1) {
+        questions.forEach((q: any, idx: number) => {
+          if (q.order && q.order < 0) {
+            // This is a system question, Q1 should be after this
+            q1StartIndex = Math.max(q1StartIndex, idx + 1);
+          }
+        });
+      }
+
+      // Default: if still not found, start from index 0 (reorder all)
+      if (q1StartIndex === -1) {
+        q1StartIndex = 0;
+      }
+
+      // Split questions: before Q1 and from Q1 onwards
+      const questionsBeforeQ1 = questions.slice(0, q1StartIndex);
+      const questionsFromQ1 = questions.slice(q1StartIndex);
+
+      // Find and extract questions in desired order
+      const reorderedQuestions: any[] = [];
+      const usedIndices = new Set<number>();
+
+      desiredOrder.forEach(({ number, subQuestion }, orderIndex) => {
+        const foundIndex = questionsFromQ1.findIndex((q: any, idx: number) => {
+          if (usedIndices.has(idx)) return false;
+          const matches = identifyQuestion(q, number, subQuestion || null);
+          if (matches) {
+            console.log(`✅ Found Q${number}${subQuestion ? '.' + subQuestion : ''} at index ${idx} (questionNumber: ${q.questionNumber}, id: ${q.id}) for order position ${orderIndex + 1}`);
+          }
+          return matches;
+        });
+
+        if (foundIndex !== -1) {
+          reorderedQuestions.push(questionsFromQ1[foundIndex]);
+          usedIndices.add(foundIndex);
+        } else {
+          console.warn(`⚠️ Could not find Q${number}${subQuestion ? '.' + subQuestion : ''} for order position ${orderIndex + 1}. Available questions: ${questionsFromQ1.map((q: any, i: number) => `[${i}]Q${q.questionNumber || '?'}`).join(', ')}`);
+        }
+      });
+
+      // Add remaining questions (not in desired order) at the end
+      const remainingQuestions = questionsFromQ1.filter((_: any, idx: number) => !usedIndices.has(idx));
+
+      // Combine: questions before Q1 + reordered questions + remaining questions
+      const finalQuestions = [...questionsBeforeQ1, ...reorderedQuestions, ...remainingQuestions];
+
+      // CRITICAL: Re-filter to ensure no CAPI-only questions slip through
+      // This is a safety check to ensure questions with enabledForCATI === false are removed
+      // BUT: Don't filter out Q7 and Q17 for target survey in CATI mode (they're needed for reordering)
+      const filteredFinalQuestions = finalQuestions.filter((q: any) => {
+        const isQ7 = q.questionNumber === '7' || (q.questionNumber && String(q.questionNumber).toLowerCase() === '7');
+        const isQ17 = q.questionNumber === '17' || (q.questionNumber && String(q.questionNumber).toLowerCase() === '17');
+        
+        // For Q7 and Q17 in target survey CATI mode, always include them (they'll be filtered by conditions later)
+        if (isTargetSurveyCATI && (isQ7 || isQ17)) {
+          if (isQ7) {
+            console.log(`✅ Q7 Passing final filter: enabledForCATI=${q.enabledForCATI}, enabledForCAPI=${q.enabledForCAPI}`);
+          }
+          return true; // Always include Q7/Q17 for reordering
+        }
+        
+        // Re-check visibility for CATI mode
+        if (q.enabledForCATI === false) {
+          return false; // Hide questions explicitly disabled for CATI
+        }
+        // Also hide questions that are CAPI-only (enabledForCAPI is true but enabledForCATI is not true)
+        if (q.enabledForCAPI === true && q.enabledForCATI !== true) {
+          return false;
+        }
+        return true;
+      });
+
+      console.log(`✅ Reordered ${reorderedQuestions.length} questions for CATI interview (Survey: ${TARGET_SURVEY_ID})`);
+      console.log(`📋 Order: ${reorderedQuestions.map((q: any) => `Q${q.questionNumber || '?'}`).join(', ')}`);
+      if (finalQuestions.length !== filteredFinalQuestions.length) {
+        console.log(`⚠️ Filtered out ${finalQuestions.length - filteredFinalQuestions.length} CAPI-only questions from CATI interview`);
+      }
+
+      // Return reordered and filtered questions array
+      return filteredFinalQuestions;
     }
     
     return questions;
@@ -903,10 +1058,30 @@ export default function InterviewInterface({ navigation, route }: any) {
           met = !responseStr2.includes(conditionComparison);
           break;
         case 'greater_than':
-          met = parseFloat(String(response)) > parseFloat(String(condition.value));
+          // Convert response to string first, then parse to handle various formats
+          // Handle both direct numeric values and values from options
+          let responseValue: any = response;
+          // If response is an array, take the first element
+          if (Array.isArray(response)) {
+            responseValue = response[0];
+          }
+          // If response is an object, try to extract numeric value
+          if (typeof responseValue === 'object' && responseValue !== null) {
+            responseValue = (responseValue as any).value || (responseValue as any).text || responseValue;
+          }
+          const responseStrNum = String(responseValue || '').trim();
+          const conditionStrNum = String(condition.value || '').trim();
+          const responseNum = parseFloat(responseStrNum);
+          const conditionNum = parseFloat(conditionStrNum);
+          met = !isNaN(responseNum) && !isNaN(conditionNum) && responseNum > conditionNum;
+          if (question.questionNumber === '7') {
+            console.log(`🔍 Q7 Condition Debug: questionId=${condition.questionId}, response="${response}" (extracted: "${responseValue}", as string: "${responseStrNum}", parsed: ${responseNum}), condition.value="${condition.value}" (as string: "${conditionStrNum}", parsed: ${conditionNum}), met=${met}`);
+          }
           break;
         case 'less_than':
-          met = parseFloat(String(response)) < parseFloat(String(condition.value));
+          const responseNum2 = parseFloat(String(response));
+          const conditionNum2 = parseFloat(String(condition.value));
+          met = !isNaN(responseNum2) && !isNaN(conditionNum2) && responseNum2 < conditionNum2;
           break;
         case 'is_empty':
           met = !hasResponseContent(response);
@@ -958,7 +1133,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     if (!allQuestions || allQuestions.length === 0) {
       return [];
     }
-    return allQuestions.filter((question: any) => {
+    const visible = allQuestions.filter((question: any) => {
       if (!question) return false;
       
       // Check conditional logic first
@@ -970,16 +1145,16 @@ export default function InterviewInterface({ navigation, route }: any) {
       // if selected AC does not have bye-election
       const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
       if (isTargetSurvey) {
-        const questionText = getMainText(question.text || '').toLowerCase();
-        const isByeElectionQuestion = questionText.includes('bye-election') || 
-                                      questionText.includes('bye election') ||
-                                      questionText.includes('উপ-নির্বাচন');
+        const questionNum = String(question.questionNumber || '').toLowerCase();
+        // Q7 is the bye-election question
+        const isQ7 = questionNum === '7' || questionNum === '7.0';
         
-        if (isByeElectionQuestion) {
-          // Only show if selected AC has bye-election
+        if (isQ7) {
+          // Only show Q7 if selected AC has bye-election
           // For CATI, check if AC is available from session data
           const acToCheck = selectedAC || acFromSessionData;
           if (!acToCheck || !hasByeElection) {
+            console.log(`🔍 Q7 Filtered by bye-election check: acToCheck=${acToCheck}, hasByeElection=${hasByeElection}`);
             return false;
           }
         }
@@ -987,7 +1162,12 @@ export default function InterviewInterface({ navigation, route }: any) {
       
       return true;
     });
-  }, [allQuestions, evaluateConditions, selectedAC, hasByeElection, survey, acFromSessionData]);
+    
+    // CRITICAL: For CATI mode in target survey, allQuestions is already reordered in getAllQuestions()
+    // We just need to maintain that order here - no need to reorder again
+    // The visible array already maintains the order from allQuestions
+    return visible;
+  }, [allQuestions, evaluateConditions, selectedAC, hasByeElection, survey, acFromSessionData, isCatiMode]); // Added isCatiMode to dependencies
 
   const currentQuestion = visibleQuestions && visibleQuestions.length > 0 && currentQuestionIndex < visibleQuestions.length 
     ? visibleQuestions[currentQuestionIndex] 
