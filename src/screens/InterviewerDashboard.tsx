@@ -48,6 +48,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isSyncingSurveys, setIsSyncingSurveys] = useState(false);
+  const [expandedSurveys, setExpandedSurveys] = useState<Set<string>>(new Set());
   // Interview stats from API (lightweight endpoint)
   const [interviewStats, setInterviewStats] = useState({
     totalCompleted: 0,
@@ -540,6 +541,60 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     }
   };
 
+  const handleStartInterview = async (survey: Survey) => {
+    // Check if this is a CATI interview (multi_mode with cati assignment or direct cati mode)
+    const isCatiMode = survey.mode === 'cati' || (survey.mode === 'multi_mode' && survey.assignedMode === 'cati');
+    
+    if (isCatiMode) {
+      // Check if offline - CATI interviews require internet connection
+      const isOnline = await apiService.isOnline();
+      if (!isOnline) {
+        Alert.alert(
+          'CATI Not Available in Offline Mode',
+          'CATI (Computer-Assisted Telephonic Interviewing) interviews require an active internet connection. Please connect to the internet and try again.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      
+      // CATI interview - navigate directly
+      Alert.alert(
+        'Start CATI Interview',
+        `You are about to start a CATI (Computer-Assisted Telephonic Interviewing) interview for "${survey.surveyName}". A call will be made to the respondent.`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Start',
+            onPress: () => {
+              navigation.navigate('InterviewInterface', { survey, isCatiMode: true });
+            },
+          },
+        ]
+      );
+    } else {
+      // CAPI or other mode
+      Alert.alert(
+        'Start Interview',
+        `Are you sure you want to start the interview for "${survey.surveyName}"?`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Start',
+            onPress: () => {
+              navigation.navigate('InterviewInterface', { survey, isCatiMode: false });
+            },
+          },
+        ]
+      );
+    }
+  };
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -681,81 +736,127 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                       <Text style={styles.statusText}>{getStatusText(survey.status)}</Text>
                     </View>
                   </View>
-                  <Text style={styles.surveyDescription} numberOfLines={2}>
-                    {survey.description}
-                  </Text>
-                  <View style={styles.surveyMeta}>
-                    <View style={styles.metaItem}>
-                      <Text style={styles.metaLabel}>Mode</Text>
-                      <Text style={styles.metaValue}>{survey.mode.toUpperCase()}</Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                      <Text style={styles.metaLabel}>Duration</Text>
-                      <Text style={styles.metaValue}>{survey.estimatedDuration || 0} min</Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                      <Text style={styles.metaLabel}>Questions</Text>
-                      <Text style={styles.metaValue}>
-                        {survey.sections?.reduce((total, section) => 
-                          total + (section.questions?.length || 0), 0) || 0}
-                      </Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                      <Text style={styles.metaLabel}>Target</Text>
-                      <Text style={styles.metaValue}>{survey.sampleSize?.toLocaleString() || 0}</Text>
-                    </View>
+
+                  {/* See More / See Less Button */}
+                  <View style={styles.expandButtonContainer}>
+                    <Button
+                      mode="text"
+                      onPress={() => {
+                        const newExpanded = new Set(expandedSurveys);
+                        if (newExpanded.has(survey._id)) {
+                          newExpanded.delete(survey._id);
+                        } else {
+                          newExpanded.add(survey._id);
+                        }
+                        setExpandedSurveys(newExpanded);
+                      }}
+                      style={styles.expandButton}
+                      icon={expandedSurveys.has(survey._id) ? 'chevron-up' : 'chevron-down'}
+                      compact
+                    >
+                      {expandedSurveys.has(survey._id) ? 'See Less' : 'See More'}
+                    </Button>
                   </View>
 
-                  {/* Assigned ACs */}
-                  {survey.assignedACs && survey.assignedACs.length > 0 && (
-                    <View style={styles.assignedACsContainer}>
-                      <View style={styles.assignedACsHeader}>
-                        <Ionicons name="location" size={14} color="#6b7280" />
-                        <Text style={styles.assignedACsLabel}>Areas:</Text>
+                  {/* Show additional details only if expanded */}
+                  {expandedSurveys.has(survey._id) && (
+                    <>
+                      <Text style={styles.surveyDescription} numberOfLines={2}>
+                        {survey.description}
+                      </Text>
+                      <View style={styles.surveyMeta}>
+                        <View style={styles.metaItem}>
+                          <Text style={styles.metaLabel}>Mode</Text>
+                          <Text style={styles.metaValue}>{survey.mode.toUpperCase()}</Text>
+                        </View>
+                        <View style={styles.metaItem}>
+                          <Text style={styles.metaLabel}>Duration</Text>
+                          <Text style={styles.metaValue}>{survey.estimatedDuration || 0} min</Text>
+                        </View>
+                        <View style={styles.metaItem}>
+                          <Text style={styles.metaLabel}>Questions</Text>
+                          <Text style={styles.metaValue}>
+                            {survey.sections?.reduce((total, section) => 
+                              total + (section.questions?.length || 0), 0) || 0}
+                          </Text>
+                        </View>
+                        <View style={styles.metaItem}>
+                          <Text style={styles.metaLabel}>Target</Text>
+                          <Text style={styles.metaValue}>{survey.sampleSize?.toLocaleString() || 0}</Text>
+                        </View>
                       </View>
-                      <View style={styles.assignedACsChips}>
-                        {survey.assignedACs.slice(0, 3).map((ac, index) => (
-                          <View key={index} style={styles.acChip}>
-                            <Text style={styles.acChipText}>{ac}</Text>
+
+                      {/* Assigned ACs */}
+                      {survey.assignedACs && survey.assignedACs.length > 0 && (
+                        <View style={styles.assignedACsContainer}>
+                          <View style={styles.assignedACsHeader}>
+                            <Ionicons name="location" size={14} color="#6b7280" />
+                            <Text style={styles.assignedACsLabel}>Areas:</Text>
                           </View>
-                        ))}
-                        {survey.assignedACs.length > 3 && (
-                          <View style={styles.acChip}>
-                            <Text style={styles.acChipText}>+{survey.assignedACs.length - 3} more</Text>
+                          <View style={styles.assignedACsChips}>
+                            {survey.assignedACs.slice(0, 3).map((ac, index) => (
+                              <View key={index} style={styles.acChip}>
+                                <Text style={styles.acChipText}>{ac}</Text>
+                              </View>
+                            ))}
+                            {survey.assignedACs.length > 3 && (
+                              <View style={styles.acChip}>
+                                <Text style={styles.acChipText}>+{survey.assignedACs.length - 3} more</Text>
+                              </View>
+                            )}
                           </View>
-                        )}
-                      </View>
-                    </View>
+                        </View>
+                      )}
+
+                      {/* Quick targeting info */}
+                      {survey.targetAudience && (
+                        <View style={styles.quickTargeting}>
+                          {survey.targetAudience.demographics?.ageRange && (
+                            <Text style={styles.quickTargetingText}>
+                              Age: {survey.targetAudience.demographics.ageRange.min || 'N/A'}-{survey.targetAudience.demographics.ageRange.max || 'N/A'}
+                            </Text>
+                          )}
+                          {survey.targetAudience.demographics?.genderRequirements && (
+                            <Text style={styles.quickTargetingText}>
+                              Gender: {(() => {
+                                const requirements = survey.targetAudience.demographics.genderRequirements;
+                                const selectedGenders = Object.keys(requirements).filter(g => requirements[g] && !g.includes('Percentage'));
+                                return selectedGenders.map(gender => {
+                                  const percentage = requirements[`${gender}Percentage`];
+                                  const displayPercentage = selectedGenders.length === 1 && !percentage ? 100 : (percentage || 0);
+                                  return `${gender}: ${displayPercentage}%`;
+                                }).join(', ');
+                              })()}
+                            </Text>
+                          )}
+                          {survey.targetAudience.geographic?.stateRequirements && (
+                            <Text style={styles.quickTargetingText}>
+                              State: {survey.targetAudience.geographic.stateRequirements}
+                            </Text>
+                          )}
+                        </View>
+                      )}
+                    </>
                   )}
 
-                  {/* Quick targeting info */}
-                  {survey.targetAudience && (
-                    <View style={styles.quickTargeting}>
-                      {survey.targetAudience.demographics?.ageRange && (
-                        <Text style={styles.quickTargetingText}>
-                          Age: {survey.targetAudience.demographics.ageRange.min || 'N/A'}-{survey.targetAudience.demographics.ageRange.max || 'N/A'}
-                        </Text>
-                      )}
-                      {survey.targetAudience.demographics?.genderRequirements && (
-                        <Text style={styles.quickTargetingText}>
-                          Gender: {(() => {
-                            const requirements = survey.targetAudience.demographics.genderRequirements;
-                            const selectedGenders = Object.keys(requirements).filter(g => requirements[g] && !g.includes('Percentage'));
-                            return selectedGenders.map(gender => {
-                              const percentage = requirements[`${gender}Percentage`];
-                              const displayPercentage = selectedGenders.length === 1 && !percentage ? 100 : (percentage || 0);
-                              return `${gender}: ${displayPercentage}%`;
-                            }).join(', ');
-                          })()}
-                        </Text>
-                      )}
-                      {survey.targetAudience.geographic?.stateRequirements && (
-                        <Text style={styles.quickTargetingText}>
-                          State: {survey.targetAudience.geographic.stateRequirements}
-                        </Text>
-                      )}
-                    </View>
-                  )}
+                  {/* Start Interview Button */}
+                  <View style={styles.startButtonContainer}>
+                    <Button
+                      mode="contained"
+                      onPress={() => handleStartInterview(survey)}
+                      style={styles.startInterviewButton}
+                      compact
+                    >
+                      {survey.mode === 'multi_mode' && survey.assignedMode === 'cati' 
+                        ? 'Start CATI Interview'
+                        : survey.mode === 'multi_mode' && survey.assignedMode === 'capi' 
+                        ? 'Start CAPI Interview' 
+                        : survey.mode === 'cati'
+                        ? 'Start CATI Interview'
+                        : 'Start CAPI Interview'
+                      }
+                    </Button>
+                  </View>
                 </Card.Content>
               </Card>
             ))
@@ -1379,6 +1480,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6b7280',
     marginBottom: 2,
+  },
+  startButtonContainer: {
+    marginTop: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  startInterviewButton: {
+    backgroundColor: '#001D48',
+    borderRadius: 8,
+  },
+  expandButtonContainer: {
+    marginTop: 8,
+    marginBottom: 8,
+    alignItems: 'center',
+  },
+  expandButton: {
+    minWidth: 120,
   },
   syncButtonContainer: {
     marginTop: 8,
