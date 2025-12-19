@@ -236,21 +236,21 @@ export default function InterviewInterface({ navigation, route }: any) {
   // Helper function to get display text based on selected language
   const getDisplayText = (text: string | null | undefined): string => {
     try {
-      if (!text) return '';
+    if (!text) return '';
       
       // Ensure selectedLanguageIndex is valid
       const safeLanguageIndex = selectedLanguageIndex >= 0 ? selectedLanguageIndex : 0;
-      
-      // Handle multi-line descriptions with multiple translation blocks
-      // Split by \n\n to handle paragraphs, then parse each paragraph separately
+    
+    // Handle multi-line descriptions with multiple translation blocks
+    // Split by \n\n to handle paragraphs, then parse each paragraph separately
       if (typeof text === 'string' && text.includes('\n\n')) {
-        const paragraphs = text.split('\n\n');
-        return paragraphs.map((paragraph, index) => {
+      const paragraphs = text.split('\n\n');
+      return paragraphs.map((paragraph, index) => {
           const displayText = getLanguageText(paragraph.trim(), safeLanguageIndex);
           return (index > 0 ? '\n\n' : '') + (displayText || '');
-        }).join('');
-      }
-      
+      }).join('');
+    }
+    
       // Single line or no line breaks - get selected language
       return getLanguageText(text, safeLanguageIndex);
     } catch (error) {
@@ -658,7 +658,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       if (interviewMode === 'cati') {
         // Hide questions explicitly disabled for CATI
         if (question.enabledForCATI === false) {
-          return false;
+        return false;
         }
         // Also hide questions that are CAPI-only (enabledForCAPI is true but enabledForCATI is not true)
         // This catches cases where Survey Builder sets "show only in CAPI" but doesn't explicitly set enabledForCATI to false
@@ -888,7 +888,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           console.warn(`⚠️ Could not find Q${number}${subQuestion ? '.' + subQuestion : ''} for order position ${orderIndex + 1}. Available questions: ${questionsFromQ1.map((q: any, i: number) => `[${i}]Q${q.questionNumber || '?'}`).join(', ')}`);
         }
       });
-
+      
       // Add remaining questions (not in desired order) at the end
       const remainingQuestions = questionsFromQ1.filter((_: any, idx: number) => !usedIndices.has(idx));
 
@@ -6382,7 +6382,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                     }}
                     style={styles.translationToggleCompact}
                   >
-                    <Text style={styles.translationToggleLabelCompact}>🌐</Text>
+              <Text style={styles.translationToggleLabelCompact}>🌐</Text>
                     <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 12 }]}>
                       {detectAvailableLanguages[selectedLanguageIndex] || 'Language 1'}
                     </Text>
@@ -6459,7 +6459,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                         ItemSeparatorComponent={() => <View style={styles.languageDropdownSeparator} />}
                       />
                     </Animated.View>
-                  </View>
+            </View>
                 </Modal>
               </>
             )}

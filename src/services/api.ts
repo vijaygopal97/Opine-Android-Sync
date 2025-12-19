@@ -770,15 +770,58 @@ class ApiService {
     }
   }
 
-  async getMyInterviews() {
+  // Get interviewer statistics (lightweight endpoint)
+  async getInterviewerStats() {
     try {
       const headers = await this.getHeaders();
-      const response = await axios.get(`${this.baseURL}/api/survey-responses/my-interviews`, { headers });
+      const response = await axios.get(`${this.baseURL}/api/survey-responses/interviewer-stats`, { headers });
       
       if (response.data.success) {
         return { 
           success: true, 
-          interviews: response.data.data?.interviews || response.data.interviews || [] 
+          stats: response.data.data || {}
+        };
+      } else {
+        return {
+          success: false,
+          message: response.data.message || 'Failed to fetch interviewer statistics',
+        };
+      }
+    } catch (error: any) {
+      console.error('Get interviewer stats error:', error);
+      console.error('Error response:', error.response?.data);
+      return {
+        success: false,
+        message: error.response?.data?.message || error.message || 'Failed to fetch interviewer statistics',
+      };
+    }
+  }
+
+  async getMyInterviews(params?: { page?: number; limit?: number; search?: string; status?: string; sortBy?: string; sortOrder?: 'asc' | 'desc' }) {
+    try {
+      const headers = await this.getHeaders();
+      const queryParams = new URLSearchParams();
+      
+      if (params?.page) queryParams.append('page', params.page.toString());
+      if (params?.limit) queryParams.append('limit', params.limit.toString());
+      if (params?.search) queryParams.append('search', params.search);
+      if (params?.status) queryParams.append('status', params.status);
+      if (params?.sortBy) queryParams.append('sortBy', params.sortBy);
+      if (params?.sortOrder) queryParams.append('sortOrder', params.sortOrder);
+      
+      const queryString = queryParams.toString();
+      const url = `${this.baseURL}/api/survey-responses/my-interviews${queryString ? `?${queryString}` : ''}`;
+      
+      const response = await axios.get(url, { headers });
+      
+      if (response.data.success) {
+        return { 
+          success: true, 
+          interviews: response.data.data?.interviews || response.data.interviews || [],
+          total: response.data.data?.total || 0,
+          page: response.data.data?.page || 1,
+          limit: response.data.data?.limit || 20,
+          totalPages: response.data.data?.totalPages || 1
         };
       } else {
         return {

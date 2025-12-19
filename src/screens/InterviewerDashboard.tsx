@@ -48,6 +48,13 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isSyncingSurveys, setIsSyncingSurveys] = useState(false);
+  // Interview stats from API (lightweight endpoint)
+  const [interviewStats, setInterviewStats] = useState({
+    totalCompleted: 0,
+    approved: 0,
+    rejected: 0,
+    pendingApproval: 0
+  });
   // COMMENTED OUT: Force Offline Mode - Can be re-enabled for debugging
   // const [forceOfflineMode, setForceOfflineMode] = useState(false);
   
@@ -86,20 +93,6 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   //     console.error('Error saving force offline mode:', error);
   //   }
   // };
-  
-  // Calculate interview stats
-  const interviewStats = useMemo(() => {
-    const approved = myInterviews.filter(interview => interview.status === 'Approved').length;
-    const rejected = myInterviews.filter(interview => interview.status === 'Rejected').length;
-    const pendingApproval = myInterviews.filter(interview => interview.status === 'Pending_Approval').length;
-    // Total Completed = Approved + Rejected + Pending_Approval (exclude Abandoned and Terminated)
-    const totalCompleted = myInterviews.filter(interview => 
-      interview.status === 'Approved' || 
-      interview.status === 'Rejected' || 
-      interview.status === 'Pending_Approval'
-    ).length;
-    return { approved, rejected, pendingApproval, totalCompleted };
-  }, [myInterviews]);
 
   useEffect(() => {
     loadDashboardData();
@@ -107,10 +100,26 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     loadOfflineInterviews(); // Load offline interviews on mount
   }, []);
 
-  // Refresh pending count and offline interviews when screen comes into focus
+  // Refresh stats, pending count and offline interviews when screen comes into focus
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
-      console.log('🔄 Dashboard focused - reloading offline interviews...');
+      console.log('🔄 Dashboard focused - reloading stats and offline interviews...');
+      // Refresh stats if online
+      const refreshStats = async () => {
+        const isOnline = await apiService.isOnline();
+        if (isOnline) {
+          const statsResult = await apiService.getInterviewerStats();
+          if (statsResult.success && statsResult.stats) {
+            setInterviewStats({
+              totalCompleted: statsResult.stats.totalCompleted || 0,
+              approved: statsResult.stats.approved || 0,
+              rejected: statsResult.stats.rejected || 0,
+              pendingApproval: statsResult.stats.pendingApproval || 0
+            });
+          }
+        }
+      };
+      refreshStats();
       loadPendingInterviewsCount();
       loadOfflineInterviews();
     });
@@ -350,8 +359,9 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         ).length;
         setPendingInterviewsCount(pendingCount);
         
-        // Don't try to load myInterviews in offline mode
+        // Don't try to load stats or interviews in offline mode
         setMyInterviews([]);
+        setInterviewStats({ totalCompleted: 0, approved: 0, rejected: 0, pendingApproval: 0 });
         return;
       }
       
@@ -372,28 +382,30 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         setAvailableSurveys(offlineSurveys || []);
       }
 
-      // Fetch interviews from API
-      const interviewsResult = await apiService.getMyInterviews();
-      console.log('📊 getMyInterviews API response:', {
-        success: interviewsResult.success,
-        count: interviewsResult.interviews?.length || 0,
-        interviews: interviewsResult.interviews?.map((i: any) => ({
-          id: i._id || i.id,
-          surveyName: i.survey?.surveyName,
-          status: i.status,
-          startTime: i.startTime
-        }))
+      // Fetch interviewer stats from lightweight endpoint (much faster than fetching all interviews)
+      const statsResult = await apiService.getInterviewerStats();
+      console.log('📊 getInterviewerStats API response:', {
+        success: statsResult.success,
+        stats: statsResult.stats
       });
 
-      if (interviewsResult.success) {
-        const interviews = interviewsResult.interviews || [];
-        console.log('📊 Setting myInterviews count:', interviews.length);
-        setMyInterviews(interviews);
+      if (statsResult.success && statsResult.stats) {
+        setInterviewStats({
+          totalCompleted: statsResult.stats.totalCompleted || 0,
+          approved: statsResult.stats.approved || 0,
+          rejected: statsResult.stats.rejected || 0,
+          pendingApproval: statsResult.stats.pendingApproval || 0
+        });
       } else {
-        // Don't show error, just leave empty
-        console.log('⚠️ Failed to fetch interviews from API, setting empty array');
-        setMyInterviews([]);
+        // Fallback: set default stats if API fails
+        console.log('⚠️ Failed to fetch stats from API, using defaults');
+        setInterviewStats({ totalCompleted: 0, approved: 0, rejected: 0, pendingApproval: 0 });
       }
+
+      // Don't fetch all interviews for dashboard - we only need stats
+      // If needed for "Recent Interviews" section, fetch only first page with limit
+      // For now, keep myInterviews empty since that section is commented out
+      setMyInterviews([]);
       
       // Always load offline interviews - show pending, failed, syncing, AND incorrectly marked synced ones
       const allOfflineInterviews = await offlineStorage.getOfflineInterviews();
