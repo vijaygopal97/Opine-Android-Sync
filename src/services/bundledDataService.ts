@@ -328,7 +328,7 @@ class BundledDataService {
   /**
    * Get groups for an AC (returns format compatible with API response)
    */
-  async getGroupsByAC(state: string, acIdentifier: string): Promise<{ success: boolean; data?: any; message?: string }> {
+  async getGroupsByAC(state: string, acIdentifier: string, roundNumber?: string): Promise<{ success: boolean; data?: any; message?: string }> {
     try {
       const acData = await this.getGroupsForAC(state, acIdentifier);
 
@@ -339,7 +339,16 @@ class BundledDataService {
         };
       }
 
-      const groups = Object.keys(acData.groups || {});
+      let groups = Object.keys(acData.groups || {});
+      
+      // Filter groups by round number if provided
+      if (roundNumber) {
+        groups = groups.filter(groupName => {
+          const stations = acData.groups[groupName].polling_stations || [];
+          return stations.some((station: any) => station.Interview_Round_number === roundNumber);
+        });
+      }
+      
       const acNo = await this.findACNumberByName(state, acData.ac_name) || acIdentifier;
 
       return {
@@ -350,10 +359,17 @@ class BundledDataService {
           pc_no: acData.pc_no || null,
           pc_name: acData.pc_name || null,
           district: acData.district || null,
-          groups: groups.map(groupName => ({
-            name: groupName,
-            polling_station_count: acData.groups[groupName].polling_stations.length
-          }))
+          groups: groups.map(groupName => {
+            const stations = acData.groups[groupName].polling_stations || [];
+            // Filter stations by round number if provided
+            const filteredStations = roundNumber 
+              ? stations.filter((s: any) => s.Interview_Round_number === roundNumber)
+              : stations;
+            return {
+              name: groupName,
+              polling_station_count: filteredStations.length
+            };
+          }).filter(group => group.polling_station_count > 0) // Only return groups with stations
         }
       };
     } catch (error: any) {
@@ -411,9 +427,51 @@ class BundledDataService {
   }
 
   /**
+   * Get available round numbers for an AC
+   */
+  async getRoundNumbersByAC(state: string, acIdentifier: string): Promise<{ success: boolean; data?: { rounds: string[] }; message?: string }> {
+    try {
+      const acData = await this.getGroupsForAC(state, acIdentifier);
+
+      if (!acData) {
+        return {
+          success: false,
+          message: 'AC not found in polling station data'
+        };
+      }
+
+      // Collect unique round numbers from all groups
+      const roundNumbers = new Set<string>();
+      for (const groupName in acData.groups || {}) {
+        const stations = acData.groups[groupName].polling_stations || [];
+        for (const station of stations) {
+          if (station.Interview_Round_number) {
+            roundNumbers.add(String(station.Interview_Round_number));
+          }
+        }
+      }
+
+      const rounds = Array.from(roundNumbers).sort((a, b) => parseInt(a) - parseInt(b));
+
+      return {
+        success: true,
+        data: {
+          rounds: rounds
+        }
+      };
+    } catch (error: any) {
+      console.error('Error getting round numbers from bundled data:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to get round numbers from bundled data'
+      };
+    }
+  }
+
+  /**
    * Get polling stations for a group
    */
-  async getPollingStationsByGroup(state: string, acIdentifier: string, groupName: string): Promise<{ success: boolean; data?: any; message?: string }> {
+  async getPollingStationsByGroup(state: string, acIdentifier: string, groupName: string, roundNumber?: string): Promise<{ success: boolean; data?: any; message?: string }> {
     try {
       const acData = await this.getGroupsForAC(state, acIdentifier);
 
@@ -431,16 +489,22 @@ class BundledDataService {
         };
       }
 
-      const stations = acData.groups[groupName].polling_stations;
+      let stations = acData.groups[groupName].polling_stations || [];
+
+      // Filter by round number if provided
+      if (roundNumber) {
+        stations = stations.filter((station: any) => station.Interview_Round_number === roundNumber);
+      }
 
       return {
         success: true,
         data: {
-          stations: stations.map(station => ({
+          stations: stations.map((station: any) => ({
             name: station.name,
             gps_location: station.gps_location,
             latitude: station.latitude,
-            longitude: station.longitude
+            longitude: station.longitude,
+            Interview_Round_number: station.Interview_Round_number || null
           }))
         }
       };

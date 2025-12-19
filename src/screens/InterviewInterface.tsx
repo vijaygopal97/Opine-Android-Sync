@@ -347,20 +347,24 @@ export default function InterviewInterface({ navigation, route }: any) {
     pcNo: null,
     pcName: null,
     district: null,
+    roundNumber: null,
     groupName: null,
     stationName: null,
     gpsLocation: null,
     latitude: null,
     longitude: null
   });
+  const [availableRoundNumbers, setAvailableRoundNumbers] = useState<string[]>([]);
   const [availableGroups, setAvailableGroups] = useState<any[]>([]);
   const [availablePollingStations, setAvailablePollingStations] = useState<any[]>([]);
+  const [loadingRoundNumbers, setLoadingRoundNumbers] = useState(false);
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [loadingStations, setLoadingStations] = useState(false);
   const [geofencingError, setGeofencingError] = useState<string | null>(null);
   const [locationControlBooster, setLocationControlBooster] = useState(false);
   
   // Dropdown states for polling station selection
+  const [showRoundDropdown, setShowRoundDropdown] = useState(false);
   const [showGroupDropdown, setShowGroupDropdown] = useState(false);
   const [showStationDropdown, setShowStationDropdown] = useState(false);
   
@@ -385,15 +389,24 @@ export default function InterviewInterface({ navigation, route }: any) {
   // State to track which Set is being shown in this interview
   const [selectedSetNumber, setSelectedSetNumber] = useState<number | null>(null);
   
-  // Close other dropdown when one opens
+  // Close other dropdowns when one opens
+  useEffect(() => {
+    if (showRoundDropdown) {
+      setShowGroupDropdown(false);
+      setShowStationDropdown(false);
+    }
+  }, [showRoundDropdown]);
+  
   useEffect(() => {
     if (showGroupDropdown) {
+      setShowRoundDropdown(false);
       setShowStationDropdown(false);
     }
   }, [showGroupDropdown]);
   
   useEffect(() => {
     if (showStationDropdown) {
+      setShowRoundDropdown(false);
       setShowGroupDropdown(false);
     }
   }, [showStationDropdown]);
@@ -2198,10 +2211,45 @@ export default function InterviewInterface({ navigation, route }: any) {
     return () => backHandler.remove();
   }, []);
 
-  // Fetch groups when AC is selected
+  // Fetch round numbers when AC is selected
+  useEffect(() => {
+    const fetchRoundNumbers = async () => {
+      if (!selectedAC) {
+        setAvailableRoundNumbers([]);
+        setSelectedPollingStation((prev: any) => ({ ...prev, roundNumber: null }));
+        return;
+      }
+      
+      try {
+        setLoadingRoundNumbers(true);
+        const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
+        console.log('🔍 Fetching round numbers for AC:', selectedAC, 'in state:', state);
+        const response = await apiService.getRoundNumbersByAC(state, selectedAC);
+        
+        if (response.success && response.data?.rounds) {
+          const rounds = response.data.rounds || [];
+          console.log('✅ Successfully fetched round numbers:', rounds);
+          setAvailableRoundNumbers(rounds);
+          // Auto-select first round if available and none selected
+          if (rounds.length > 0 && !selectedPollingStation.roundNumber) {
+            setSelectedPollingStation((prev: any) => ({ ...prev, roundNumber: rounds[0] }));
+          }
+        }
+      } catch (error: any) {
+        console.error('❌ Error fetching round numbers:', error);
+        setAvailableRoundNumbers([]);
+      } finally {
+        setLoadingRoundNumbers(false);
+      }
+    };
+    
+    fetchRoundNumbers();
+  }, [selectedAC, survey?.acAssignmentState, sessionData?.acAssignmentState]);
+
+  // Fetch groups when AC and Round Number are selected
   useEffect(() => {
     const fetchGroups = async () => {
-      if (!selectedAC) {
+      if (!selectedAC || !selectedPollingStation.roundNumber) {
         setAvailableGroups([]);
         setAvailablePollingStations([]);
         return;
@@ -2211,15 +2259,15 @@ export default function InterviewInterface({ navigation, route }: any) {
         setLoadingGroups(true);
         // Use survey's acAssignmentState or default to 'West Bengal'
         const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
-        console.log('🔍 Fetching groups for AC:', selectedAC, 'in state:', state);
-        const response = await apiService.getGroupsByAC(state, selectedAC);
+        console.log('🔍 Fetching groups for AC:', selectedAC, 'Round:', selectedPollingStation.roundNumber, 'in state:', state);
+        const response = await apiService.getGroupsByAC(state, selectedAC, selectedPollingStation.roundNumber);
         
         if (response.success) {
           // Backend returns { success: true, data: { groups: [...], ac_name: ..., etc } }
           // API service returns response.data which is { success: true, data: {...} }
           const responseData = response.data || {};
           const groups = responseData.groups || [];
-          console.log('✅ Successfully fetched', groups.length, 'groups for AC:', selectedAC);
+          console.log('✅ Successfully fetched', groups.length, 'groups for AC:', selectedAC, 'Round:', selectedPollingStation.roundNumber);
           setAvailableGroups(groups);
           setSelectedPollingStation((prev: any) => ({
             ...prev,
@@ -2230,7 +2278,7 @@ export default function InterviewInterface({ navigation, route }: any) {
             pcName: responseData.pc_name,
             district: responseData.district
           }));
-          // Clear polling stations when AC changes
+          // Clear polling stations when AC or round changes
           setAvailablePollingStations([]);
         } else {
           console.error('❌ Failed to fetch groups:', response.message);
@@ -2330,12 +2378,12 @@ export default function InterviewInterface({ navigation, route }: any) {
     };
     
     fetchGroups();
-  }, [selectedAC, survey?.acAssignmentState, sessionData?.acAssignmentState]);
+  }, [selectedAC, selectedPollingStation.roundNumber, survey?.acAssignmentState, sessionData?.acAssignmentState]);
 
-  // Fetch polling stations when group is selected
+  // Fetch polling stations when group and round number are selected
   useEffect(() => {
     const fetchPollingStations = async () => {
-      if (!selectedPollingStation.groupName || !selectedPollingStation.acName) {
+      if (!selectedPollingStation.groupName || !selectedPollingStation.acName || !selectedPollingStation.roundNumber) {
         setAvailablePollingStations([]);
         return;
       }
@@ -2347,7 +2395,8 @@ export default function InterviewInterface({ navigation, route }: any) {
         const response = await apiService.getPollingStationsByGroup(
           state,
           selectedPollingStation.acName,
-          selectedPollingStation.groupName
+          selectedPollingStation.groupName,
+          selectedPollingStation.roundNumber
         );
         
         if (response.success) {
@@ -2422,7 +2471,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     };
     
     fetchPollingStations();
-  }, [selectedPollingStation.groupName, selectedPollingStation.acName, selectedPollingStation.state, survey?.acAssignmentState, sessionData?.acAssignmentState]);
+  }, [selectedPollingStation.groupName, selectedPollingStation.acName, selectedPollingStation.roundNumber, selectedPollingStation.state, survey?.acAssignmentState, sessionData?.acAssignmentState]);
 
   // Update polling station GPS and check geofencing when station is selected
   useEffect(() => {
@@ -2738,6 +2787,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         pcNo: null,
         pcName: null,
         district: null,
+        roundNumber: null,
         groupName: null,
         stationName: null,
         gpsLocation: null,
@@ -2745,9 +2795,33 @@ export default function InterviewInterface({ navigation, route }: any) {
         longitude: null
       });
       // Clear groups and polling stations - they will be fetched by useEffect
+      setAvailableRoundNumbers([]);
       setAvailableGroups([]);
       setAvailablePollingStations([]);
       setGeofencingError(null);
+    }
+    
+    // Handle polling station round number selection
+    if (questionId === 'polling-station-round') {
+      setSelectedPollingStation((prev: any) => ({
+        ...prev,
+        roundNumber: response,
+        groupName: null, // Reset group when round changes
+        stationName: null, // Reset station when round changes
+        gpsLocation: null,
+        latitude: null,
+        longitude: null
+      }));
+      setAvailableGroups([]);
+      setAvailablePollingStations([]);
+      setGeofencingError(null);
+      // Clear polling station selection responses when round changes
+      setResponses(prev => ({
+        ...prev,
+        'polling-station-group': null,
+        'polling-station-station': null,
+        'polling-station-selection': null
+      }));
     }
     
     // Handle polling station group selection
@@ -6262,27 +6336,105 @@ export default function InterviewInterface({ navigation, route }: any) {
       case 'polling_station':
         return (
           <View style={styles.pollingStationContainer}>
-            {/* Group Selection */}
-            <View style={[styles.pollingStationSection, showGroupDropdown && { zIndex: 1001 }]}>
-              <Text style={styles.pollingStationLabel}>Select Group *</Text>
-              {loadingGroups ? (
+            {/* Round Number Selection */}
+            <View style={[styles.pollingStationSection, showRoundDropdown && { zIndex: 1002 }]}>
+              <Text style={styles.pollingStationLabel}>Select Round Number *</Text>
+              {loadingRoundNumbers ? (
                 <ActivityIndicator size="small" color="#2563eb" />
-              ) : availableGroups.length === 0 ? (
-                <Text style={styles.pollingStationError}>No groups available. Please select an AC first.</Text>
+              ) : availableRoundNumbers.length === 0 ? (
+                <Text style={styles.pollingStationError}>No round numbers available. Please select an AC first.</Text>
               ) : (
                 <>
                   <TouchableOpacity
                     style={styles.dropdownButton}
-                    onPress={() => setShowGroupDropdown(true)}
+                    onPress={() => setShowRoundDropdown(true)}
                   >
                     <Text style={[
                       styles.dropdownButtonText,
-                      !selectedPollingStation.groupName && styles.dropdownPlaceholder
+                      !selectedPollingStation.roundNumber && styles.dropdownPlaceholder
                     ]}>
-                      {selectedPollingStation.groupName || 'Select a group...'}
+                      {selectedPollingStation.roundNumber ? `Round ${selectedPollingStation.roundNumber}` : 'Select a round number...'}
                     </Text>
                     <Text style={styles.dropdownArrow}>▼</Text>
                   </TouchableOpacity>
+                  
+                  {/* Round Number Selection Modal - Bottom Sheet */}
+                  <Modal
+                    visible={showRoundDropdown}
+                    transparent={true}
+                    animationType="slide"
+                    onRequestClose={() => setShowRoundDropdown(false)}
+                  >
+                    <View style={styles.modalBackdrop}>
+                      <TouchableOpacity
+                        style={styles.modalBackdropTouchable}
+                        activeOpacity={1}
+                        onPress={() => setShowRoundDropdown(false)}
+                      />
+                      <View style={styles.bottomSheetContainer}>
+                        <View style={styles.bottomSheetHeader}>
+                          <Text style={styles.bottomSheetTitle}>Select Round Number</Text>
+                          <TouchableOpacity onPress={() => setShowRoundDropdown(false)}>
+                            <Text style={styles.bottomSheetClose}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <ScrollView 
+                          style={styles.bottomSheetContent}
+                          contentContainerStyle={styles.bottomSheetContentInner}
+                          showsVerticalScrollIndicator={true}
+                          keyboardShouldPersistTaps="handled"
+                        >
+                          {availableRoundNumbers.map((round, index) => (
+                            <TouchableOpacity
+                              key={`round-${index}`}
+                              activeOpacity={0.7}
+                              style={[
+                                styles.bottomSheetItem,
+                                selectedPollingStation.roundNumber === round && styles.bottomSheetItemSelected
+                              ]}
+                              onPress={() => {
+                                handleResponseChange('polling-station-round', round);
+                                setShowRoundDropdown(false);
+                              }}
+                            >
+                              <Text style={[
+                                styles.bottomSheetItemText,
+                                selectedPollingStation.roundNumber === round && styles.bottomSheetItemTextSelected
+                              ]}>
+                                Round {round}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    </View>
+                  </Modal>
+                </>
+              )}
+            </View>
+
+            {/* Group Selection - Only show if round number is selected */}
+            {selectedPollingStation.roundNumber && (
+              <View style={[styles.pollingStationSection, showGroupDropdown && { zIndex: 1001 }]}>
+                <Text style={styles.pollingStationLabel}>Select Group *</Text>
+                {loadingGroups ? (
+                  <ActivityIndicator size="small" color="#2563eb" />
+                ) : availableGroups.length === 0 ? (
+                  <Text style={styles.pollingStationError}>No groups available for this round. Please select a different round.</Text>
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={styles.dropdownButton}
+                      onPress={() => setShowGroupDropdown(true)}
+                    >
+                      <Text style={[
+                        styles.dropdownButtonText,
+                        !selectedPollingStation.groupName && styles.dropdownPlaceholder
+                      ]}>
+                        {selectedPollingStation.groupName || 'Select a group...'}
+                      </Text>
+                      <Text style={styles.dropdownArrow}>▼</Text>
+                    </TouchableOpacity>
                   
                   {/* Group Selection Modal - Bottom Sheet */}
                   <Modal
@@ -6337,7 +6489,8 @@ export default function InterviewInterface({ navigation, route }: any) {
                   </Modal>
                 </>
               )}
-            </View>
+              </View>
+            )}
 
             {/* Polling Station Selection - Only show if group is selected */}
             {selectedPollingStation.groupName && (

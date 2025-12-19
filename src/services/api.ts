@@ -1065,14 +1065,36 @@ class ApiService {
   }
 
   // Polling Station API methods
-  async getGroupsByAC(state: string, acIdentifier: string) {
+  async getRoundNumbersByAC(state: string, acIdentifier: string) {
+    try {
+      // Use bundled data (always available, no network needed)
+      const { bundledDataService } = await import('./bundledDataService');
+      const bundledResult = await bundledDataService.getRoundNumbersByAC(state, acIdentifier);
+      if (bundledResult.success) {
+        console.log('📦 Using bundled round numbers for:', state, acIdentifier);
+        return bundledResult;
+      }
+      return {
+        success: false,
+        message: 'Round numbers not found in bundled data'
+      };
+    } catch (error: any) {
+      console.error('Get round numbers by AC error:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to fetch round numbers'
+      };
+    }
+  }
+
+  async getGroupsByAC(state: string, acIdentifier: string, roundNumber?: string) {
     try {
       // FIRST: Try bundled data (always available, no network needed)
       try {
         const { bundledDataService } = await import('./bundledDataService');
-        const bundledResult = await bundledDataService.getGroupsByAC(state, acIdentifier);
+        const bundledResult = await bundledDataService.getGroupsByAC(state, acIdentifier, roundNumber);
         if (bundledResult.success) {
-          console.log('📦 Using bundled polling groups for:', state, acIdentifier);
+          console.log('📦 Using bundled polling groups for:', state, acIdentifier, 'Round:', roundNumber || 'All');
           
           // Also cache it for faster future lookups
           const cacheForSave = await this.getOfflineCache();
@@ -1215,14 +1237,14 @@ class ApiService {
     }
   }
 
-  async getPollingStationsByGroup(state: string, acIdentifier: string, groupName: string) {
+  async getPollingStationsByGroup(state: string, acIdentifier: string, groupName: string, roundNumber?: string) {
     try {
       // FIRST: Try bundled data (always available, no network needed)
       try {
         const { bundledDataService } = await import('./bundledDataService');
-        const bundledResult = await bundledDataService.getPollingStationsByGroup(state, acIdentifier, groupName);
+        const bundledResult = await bundledDataService.getPollingStationsByGroup(state, acIdentifier, groupName, roundNumber);
         if (bundledResult.success) {
-          console.log('📦 Using bundled polling stations for:', state, acIdentifier, groupName);
+          console.log('📦 Using bundled polling stations for:', state, acIdentifier, groupName, 'Round:', roundNumber || 'All');
           
           // Also cache it for faster future lookups
           const cacheForSave = await this.getOfflineCache();
