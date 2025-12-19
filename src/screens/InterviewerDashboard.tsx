@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Alert,
   Image,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -50,6 +51,10 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const [isOffline, setIsOffline] = useState(false);
   const [isSyncingSurveys, setIsSyncingSurveys] = useState(false);
   const [expandedSurveys, setExpandedSurveys] = useState<Set<string>>(new Set());
+  const [loadingAnimation] = useState(new Animated.Value(0));
+  const [pulseAnimation] = useState(new Animated.Value(1));
+  const [rotationAnimation] = useState(new Animated.Value(0));
+  const [loadingTextIndex, setLoadingTextIndex] = useState(0);
   // Interview stats from API (lightweight endpoint)
   const [interviewStats, setInterviewStats] = useState({
     totalCompleted: 0,
@@ -95,6 +100,68 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   //     console.error('Error saving force offline mode:', error);
   //   }
   // };
+
+  // Animation effects for loading screen
+  useEffect(() => {
+    if (isLoading) {
+      // Start pulsing animation
+      const pulseAnim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnimation, {
+            toValue: 1.2,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnimation, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+
+      // Start rotation animation
+      const rotateAnim = Animated.loop(
+        Animated.timing(rotationAnimation, {
+          toValue: 1,
+          duration: 2000,
+          useNativeDriver: true,
+        })
+      );
+
+      // Start loading bar animation
+      const loadingBarAnim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(loadingAnimation, {
+            toValue: 1,
+            duration: 1500,
+            useNativeDriver: false,
+          }),
+          Animated.timing(loadingAnimation, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: false,
+          }),
+        ])
+      );
+
+      // Rotate loading text
+      const textRotateInterval = setInterval(() => {
+        setLoadingTextIndex((prev) => (prev + 1) % 4);
+      }, 2000);
+
+      pulseAnim.start();
+      rotateAnim.start();
+      loadingBarAnim.start();
+
+      return () => {
+        pulseAnim.stop();
+        rotateAnim.stop();
+        loadingBarAnim.stop();
+        clearInterval(textRotateInterval);
+      };
+    }
+  }, [isLoading]);
 
   useEffect(() => {
     loadDashboardData();
@@ -653,11 +720,108 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   };
 
   if (isLoading) {
+    const loadingTexts = [
+      'Loading your dashboard...',
+      'Fetching survey data...',
+      'Preparing statistics...',
+      'Almost ready...',
+    ];
+
+    const rotateInterpolate = rotationAnimation.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['0deg', '360deg'],
+    });
+
+    const pulseScale = pulseAnimation;
+
+    const loadingBarWidth = loadingAnimation.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['0%', '100%'],
+    });
+
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#001D48" />
-        <Text style={styles.loadingText}>Loading dashboard...</Text>
-      </View>
+      <SafeAreaView style={styles.loadingContainer}>
+        <StatusBar style="dark" />
+        <View style={styles.loadingContent}>
+          {/* Animated Logo/Icon */}
+          <Animated.View
+            style={[
+              styles.loadingLogoContainer,
+              {
+                transform: [
+                  { scale: pulseScale },
+                ],
+              },
+            ]}
+          >
+            <View style={styles.loadingLogoCircle}>
+              <Animated.View
+                style={[
+                  styles.loadingLogoInner,
+                  {
+                    transform: [{ rotate: rotateInterpolate }],
+                  },
+                ]}
+              >
+                <Image
+                  source={require('../../assets/icon.png')}
+                  style={styles.loadingLogoIcon}
+                  resizeMode="cover"
+                />
+              </Animated.View>
+            </View>
+          </Animated.View>
+
+          {/* Loading Text */}
+          <Text style={styles.loadingTitleText}>
+            {loadingTexts[loadingTextIndex]}
+          </Text>
+
+          {/* Animated Dots */}
+          <View style={styles.loadingDotsContainer}>
+            {[0, 1, 2].map((index) => {
+              const dotOpacity = pulseAnimation.interpolate({
+                inputRange: [1, 1.2],
+                outputRange: [0.3, 0.9],
+              });
+
+              return (
+                <Animated.View
+                  key={index}
+                  style={[
+                    styles.loadingDot,
+                    {
+                      opacity: dotOpacity,
+                      transform: [
+                        {
+                          scale: pulseAnimation.interpolate({
+                            inputRange: [1, 1.2],
+                            outputRange: [1, 1.2],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                />
+              );
+            })}
+          </View>
+
+          {/* Subtle Progress Indicator */}
+          <View style={styles.loadingProgressContainer}>
+            <View style={styles.loadingProgressTrack}>
+              <Animated.View
+                style={[
+                  styles.loadingProgressBar,
+                  {
+                    width: loadingBarWidth,
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -1211,14 +1375,83 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     flex: 1,
+    backgroundColor: '#ffffff',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#6b7280',
+  loadingContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    width: '100%',
+    maxWidth: 400,
+    flex: 1,
+  },
+  loadingLogoContainer: {
+    marginBottom: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingLogoCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#f0f4f8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+  },
+  loadingLogoInner: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  loadingLogoIcon: {
+    width: '100%',
+    height: '100%',
+  },
+  loadingTitleText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#1f2937',
+    marginBottom: 32,
+    textAlign: 'center',
+    lineHeight: 24,
+    paddingHorizontal: 20,
+  },
+  loadingDotsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 32,
+    gap: 8,
+  },
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#001D48',
+  },
+  loadingProgressContainer: {
+    width: '100%',
+    maxWidth: 200,
+    alignItems: 'center',
+  },
+  loadingProgressTrack: {
+    width: '100%',
+    height: 2,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 1,
+    overflow: 'hidden',
+  },
+  loadingProgressBar: {
+    height: '100%',
+    backgroundColor: '#001D48',
+    borderRadius: 1,
   },
   header: {
     paddingTop: 50,
