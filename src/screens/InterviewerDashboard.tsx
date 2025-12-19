@@ -7,6 +7,7 @@ import {
   RefreshControl,
   TouchableOpacity,
   Alert,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -631,10 +632,10 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       >
         <View style={styles.headerContent}>
           <View style={styles.userInfo}>
-            <Avatar.Text
-              size={50}
-              label={user.firstName.charAt(0).toUpperCase()}
-              style={styles.avatar}
+            <Image
+              source={require('../../assets/icon.png')}
+              style={styles.avatarLogo}
+              resizeMode="cover"
             />
             <View style={styles.userDetails}>
               <Text style={styles.userName}>{user.firstName} {user.lastName}</Text>
@@ -1178,8 +1179,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
-  avatar: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  avatarLogo: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     marginRight: 16,
   },
   userDetails: {
