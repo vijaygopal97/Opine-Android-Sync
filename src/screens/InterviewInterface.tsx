@@ -296,6 +296,7 @@ export default function InterviewInterface({ navigation, route }: any) {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [responses, setResponses] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadingAnimation] = useState(new Animated.Value(0));
   const [pulseAnimation] = useState(new Animated.Value(1));
   const [rotationAnimation] = useState(new Animated.Value(0));
@@ -4442,6 +4443,7 @@ export default function InterviewInterface({ navigation, route }: any) {
 
     try {
       setIsLoading(true);
+      setIsSubmitting(true);
       
       // Check if offline BEFORE attempting API call
       const isOnline = await apiService.isOnline();
@@ -4575,6 +4577,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           ]
         );
         setIsLoading(false);
+        setIsSubmitting(false);
         return;
       }
       
@@ -5057,6 +5060,7 @@ export default function InterviewInterface({ navigation, route }: any) {
               ]
             );
             setIsLoading(false);
+            setIsSubmitting(false);
             return; // Exit early - don't show error
           } catch (offlineError: any) {
             console.error('Error saving offline:', offlineError);
@@ -5174,6 +5178,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       }
     } finally {
       setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -6662,12 +6667,19 @@ export default function InterviewInterface({ navigation, route }: any) {
   };
 
   if (isLoading) {
-    const loadingTexts = [
-      'Preparing your interview...',
-      'Loading survey questions...',
-      'Setting up the interface...',
-      'Almost ready...',
-    ];
+    const loadingTexts = isSubmitting
+      ? [
+          'Saving your response...',
+          'Uploading your interview...',
+          'Finalizing submission...',
+          'Almost done...',
+        ]
+      : [
+          'Preparing your interview...',
+          'Loading survey questions...',
+          'Setting up the interface...',
+          'Almost ready...',
+        ];
 
     const rotateInterpolate = rotationAnimation.interpolate({
       inputRange: [0, 1],
