@@ -273,6 +273,28 @@ class ApiService {
     }
   }
 
+  // Get full survey data (with sections and questions) - optimized endpoint
+  async getSurveyFull(surveyId: string) {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(`${this.baseURL}/api/surveys/${surveyId}/full`, { headers });
+      if (response.data.success) {
+        return { success: true, survey: response.data.data?.survey || response.data.survey };
+      } else {
+        return {
+          success: false,
+          message: response.data.message || 'Failed to fetch survey',
+        };
+      }
+    } catch (error: any) {
+      console.error('Get survey full error:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to fetch survey',
+      };
+    }
+  }
+
   // Survey Responses - Start interview session
   async startInterview(surveyId: string) {
     try {

@@ -223,7 +223,10 @@ async function cachePollingDataForACs(acs: any[], state: string): Promise<void> 
 }
 
 export default function InterviewInterface({ navigation, route }: any) {
-  const { survey, responseId, isContinuing, isCatiMode: routeIsCatiMode } = route.params;
+  const { survey: routeSurvey, responseId, isContinuing, isCatiMode: routeIsCatiMode } = route.params;
+  
+  // OPTIMIZATION: Use state for survey so we can update it with full data when fetched
+  const [survey, setSurvey] = useState<any>(routeSurvey);
   
   // Get safe area insets for bottom navigation bar
   const insets = useSafeAreaInsets();
@@ -1267,6 +1270,7 @@ export default function InterviewInterface({ navigation, route }: any) {
   }, []);
 
   // Fetch set number for CATI interviews (to alternate sets)
+  // OPTIMIZATION: Use default Set 1 immediately, then fetch actual set number in background
   useEffect(() => {
     const fetchSetNumber = async () => {
       // Only fetch for CATI interviews
@@ -1274,70 +1278,49 @@ export default function InterviewInterface({ navigation, route }: any) {
         return;
       }
 
-      try {
-        if (!survey?._id) {
-          console.warn('No survey ID available, skipping set number fetch');
-          return;
-        }
-        
-        // Helper function to get default set (Set 1)
-        const getDefaultSet = (): number | null => {
-          const setNumbers = new Set<number>();
-          survey?.sections?.forEach((section: any) => {
-            section.questions?.forEach((question: any) => {
-              if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
-                setNumbers.add(question.setNumber);
-              }
-            });
+      // Helper function to get default set (Set 1)
+      const getDefaultSet = (): number | null => {
+        const setNumbers = new Set<number>();
+        survey?.sections?.forEach((section: any) => {
+          section.questions?.forEach((question: any) => {
+            if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
+              setNumbers.add(question.setNumber);
+            }
           });
-          const setArray = Array.from(setNumbers).sort((a, b) => a - b);
-          return setArray.length > 0 ? setArray[0] : null; // First set (usually Set 1)
-        };
-        
-        console.log('🔄 Fetching CATI set number for survey:', survey._id);
-        const response = await apiService.getLastCatiSetNumber(survey._id);
-        console.log('🔄 CATI set number API response:', JSON.stringify(response, null, 2));
-        
-        // Handle response - if API fails or returns no data, default to Set 1
-        if (response && response.success && response.data) {
-          const nextSetNumber = response.data.nextSetNumber;
-          console.log('🔄 Received nextSetNumber from API:', nextSetNumber);
-          if (nextSetNumber !== null && nextSetNumber !== undefined) {
-            console.log('✅ Setting selectedSetNumber to:', nextSetNumber);
-            setSelectedSetNumber(nextSetNumber);
-            return; // Success, exit early
-          } else {
-            console.warn('⚠️ nextSetNumber is null/undefined, will use default Set 1');
-          }
-        } else {
-          console.warn('⚠️ API response not successful or no data:', response);
-        }
-        
-        // Fallback: default to Set 1 (first available set)
-        const defaultSet = getDefaultSet();
-        if (defaultSet !== null) {
-          setSelectedSetNumber(defaultSet);
-        }
-      } catch (error: any) {
-        // Silently handle 404 or other errors - just use default Set 1
-        // Helper function to get default set (Set 1)
-        const getDefaultSet = (): number | null => {
-          const setNumbers = new Set<number>();
-          survey?.sections?.forEach((section: any) => {
-            section.questions?.forEach((question: any) => {
-              if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
-                setNumbers.add(question.setNumber);
-              }
-            });
-          });
-          const setArray = Array.from(setNumbers).sort((a, b) => a - b);
-          return setArray.length > 0 ? setArray[0] : null; // First set (usually Set 1)
-        };
-        const defaultSet = getDefaultSet();
-        if (defaultSet !== null) {
-          setSelectedSetNumber(defaultSet);
-        }
+        });
+        const setArray = Array.from(setNumbers).sort((a, b) => a - b);
+        return setArray.length > 0 ? setArray[0] : null; // First set (usually Set 1)
+      };
+      
+      // OPTIMIZATION: Set default Set 1 immediately (don't block interview start)
+      const defaultSet = getDefaultSet();
+      if (defaultSet !== null && selectedSetNumber === null) {
+        console.log('✅ Setting default Set number:', defaultSet, '(will update from API if different)');
+        setSelectedSetNumber(defaultSet);
       }
+      
+      // OPTIMIZATION: Fetch actual set number in background (non-blocking)
+      // This allows interview to start immediately with default Set 1
+      if (!survey?._id) {
+        console.warn('No survey ID available, skipping set number fetch');
+        return;
+      }
+      
+      // Fetch in background - don't await, let it update when ready
+      apiService.getLastCatiSetNumber(survey._id)
+        .then((response) => {
+          if (response && response.success && response.data) {
+            const nextSetNumber = response.data.nextSetNumber;
+            if (nextSetNumber !== null && nextSetNumber !== undefined && nextSetNumber !== defaultSet) {
+              console.log('🔄 Updating Set number from API:', nextSetNumber, '(was:', defaultSet, ')');
+              setSelectedSetNumber(nextSetNumber);
+            }
+          }
+        })
+        .catch((error: any) => {
+          // Silently handle errors - default Set 1 is already set
+          console.log('⚠️ Set number API call failed, using default Set 1');
+        });
     };
 
     fetchSetNumber();
@@ -1554,11 +1537,37 @@ export default function InterviewInterface({ navigation, route }: any) {
         // Start timing
         setStartTime(new Date());
 
+        // OPTIMIZATION: Check if survey has full data (sections/questions) from route params
+        // If not, fetch full survey data in parallel with startInterview
+        const hasFullSurveyData = survey?.sections && survey?.sections.length > 0;
+        let fullSurveyData = survey; // Use cached survey if available
+        
         if (isCatiMode) {
           // CATI mode - use CATI-specific endpoint
+          // OPTIMIZATION: Start interview and fetch full survey data in parallel
           let result;
+          let fullSurveyPromise: Promise<any> | null = null;
+          
+          // If survey doesn't have full data, fetch it in parallel
+          if (!hasFullSurveyData) {
+            console.log('📥 Survey missing full data, fetching in parallel...');
+            fullSurveyPromise = apiService.getSurveyFull(survey._id);
+          }
+          
           try {
-            result = await apiService.startCatiInterview(survey._id);
+            // Start interview and fetch full survey in parallel
+            const [interviewResult, surveyResult] = await Promise.all([
+              apiService.startCatiInterview(survey._id),
+              fullSurveyPromise || Promise.resolve({ success: false }) // Resolve immediately if not needed
+            ]);
+            
+            result = interviewResult;
+            
+            // If we fetched full survey data, update it
+            if (surveyResult && surveyResult.success && surveyResult.survey) {
+              fullSurveyData = surveyResult.survey;
+              console.log('✅ Fetched full survey data in parallel');
+            }
           } catch (error: any) {
             console.error('❌ Error starting CATI interview:', error);
             const errorMsg = error?.response?.data?.message || error?.message || 'Failed to start CATI interview. Please check your internet connection.';
@@ -1670,6 +1679,16 @@ export default function InterviewInterface({ navigation, route }: any) {
           setCatiQueueId(data.respondent.id); // This is the queue entry ID
           setCatiRespondent(data.respondent);
           
+          // Update survey with full data if fetched
+          if (fullSurveyData && fullSurveyData.sections) {
+            // Update survey state with full data
+            setSurvey((prevSurvey: any) => ({
+              ...prevSurvey,
+              sections: fullSurveyData.sections,
+              questions: fullSurveyData.questions
+            }));
+          }
+          
           // Auto-populate AC and PC from respondent info for CATI interviews
           if (data.respondent && data.respondent.ac) {
             setSelectedAC(data.respondent.ac);
@@ -1687,6 +1706,9 @@ export default function InterviewInterface({ navigation, route }: any) {
           
           setRequiresACSelection(needsACSelection);
           setAssignedACs([]);
+          
+          // OPTIMIZATION: Defer set number fetch - can run after interview starts
+          // Set number fetch will happen in its own useEffect (already implemented)
           
           // Auto-make call after a short delay
           // Use the respondent ID directly from data, not from state (to avoid timing issues)
@@ -1719,25 +1741,53 @@ export default function InterviewInterface({ navigation, route }: any) {
             }
           }, 1500);
         } else {
-          // CAPI mode - get location and start normal interview
+          // CAPI mode - OPTIMIZATION: Run location fetch and startInterview in parallel
           setLocationLoading(true);
-          try {
-            // Check if online before attempting reverse geocoding
-            const isOnline = await apiService.isOnline();
-            console.log('📡 Online status for location:', isOnline);
-            
-            // If offline, skip online geocoding (Nominatim) to avoid network errors
-            const location = await LocationService.getCurrentLocation(!isOnline);
-          setLocationData(location);
-          } catch (locationError) {
-            console.error('Error getting location:', locationError);
-            // Continue without location if it fails
-            setLocationData(null);
+          
+          // OPTIMIZATION: Start location fetch and interview start in parallel
+          const locationPromise = (async () => {
+            try {
+              const isOnline = await apiService.isOnline();
+              console.log('📡 Online status for location:', isOnline);
+              const location = await LocationService.getCurrentLocation(!isOnline);
+              return location;
+            } catch (locationError) {
+              console.error('Error getting location:', locationError);
+              return null;
+            }
+          })();
+          
+          // OPTIMIZATION: Fetch full survey data in parallel if needed
+          let fullSurveyPromise: Promise<any> | null = null;
+          if (!hasFullSurveyData) {
+            console.log('📥 Survey missing full data, fetching in parallel...');
+            fullSurveyPromise = apiService.getSurveyFull(survey._id);
           }
+          
+          // Start interview, location fetch, and full survey fetch in parallel
+          const [interviewResult, location, surveyResult] = await Promise.all([
+            apiService.startInterview(survey._id),
+            locationPromise,
+            fullSurveyPromise || Promise.resolve({ success: false })
+          ]);
+          
+          setLocationData(location);
           setLocationLoading(false);
+          
+          // Update survey with full data if fetched
+          if (surveyResult && surveyResult.success && surveyResult.survey) {
+            fullSurveyData = surveyResult.survey;
+            // Update survey state with full data
+            setSurvey((prevSurvey: any) => ({
+              ...prevSurvey,
+              sections: fullSurveyData.sections,
+              questions: fullSurveyData.questions
+            }));
+            console.log('✅ Fetched full survey data in parallel');
+          }
 
           // Start interview session (works offline for CAPI)
-          const result = await apiService.startInterview(survey._id);
+          const result = interviewResult;
           if (result.success && result.response) {
             setSessionId(result.response.sessionId);
             setSessionData(result.response);
