@@ -390,166 +390,166 @@ export default function AvailableSurveys({ navigation }: any) {
                 {expandedSurveys.has(survey._id) && (
                   <>
                     <Divider style={styles.divider} />
-                    
-                    <Text style={styles.surveyDescription} numberOfLines={3}>
-                      {survey.description}
+
+                <Text style={styles.surveyDescription} numberOfLines={3}>
+                  {survey.description}
+                </Text>
+
+                <View style={styles.surveyMeta}>
+                  <View style={styles.metaItem}>
+                    <Text style={styles.metaLabel}>Duration</Text>
+                    <Text style={styles.metaValue}>{formatDuration(survey.estimatedDuration)}</Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Text style={styles.metaLabel}>Questions</Text>
+                    <Text style={styles.metaValue}>
+                      {survey.sections?.reduce((total: number, section: any) => 
+                        total + (section.questions?.length || 0), 0) || 0}
                     </Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Text style={styles.metaLabel}>Target</Text>
+                    <Text style={styles.metaValue}>{survey.sampleSize?.toLocaleString() || 0} samples</Text>
+                  </View>
+                </View>
 
-                    <View style={styles.surveyMeta}>
-                      <View style={styles.metaItem}>
-                        <Text style={styles.metaLabel}>Duration</Text>
-                        <Text style={styles.metaValue}>{formatDuration(survey.estimatedDuration)}</Text>
-                      </View>
-                      <View style={styles.metaItem}>
-                        <Text style={styles.metaLabel}>Questions</Text>
-                        <Text style={styles.metaValue}>
-                          {survey.sections?.reduce((total: number, section: any) => 
-                            total + (section.questions?.length || 0), 0) || 0}
-                        </Text>
-                      </View>
-                      <View style={styles.metaItem}>
-                        <Text style={styles.metaLabel}>Target</Text>
-                        <Text style={styles.metaValue}>{survey.sampleSize?.toLocaleString() || 0} samples</Text>
-                      </View>
+                {/* Assigned ACs */}
+                {survey.assignedACs && survey.assignedACs.length > 0 && (
+                  <View style={styles.assignedACsContainer}>
+                    <View style={styles.assignedACsHeader}>
+                      <Ionicons name="location" size={16} color="#6b7280" />
+                      <Text style={styles.assignedACsLabel}>Assigned Areas:</Text>
                     </View>
+                    <View style={styles.assignedACsChips}>
+                      {survey.assignedACs.map((ac, index) => (
+                        <View key={index} style={styles.acChip}>
+                          <Text style={styles.acChipText}>{ac}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
 
-                    {/* Assigned ACs */}
-                    {survey.assignedACs && survey.assignedACs.length > 0 && (
-                      <View style={styles.assignedACsContainer}>
-                        <View style={styles.assignedACsHeader}>
-                          <Ionicons name="location" size={16} color="#6b7280" />
-                          <Text style={styles.assignedACsLabel}>Assigned Areas:</Text>
-                        </View>
-                        <View style={styles.assignedACsChips}>
-                          {survey.assignedACs.map((ac, index) => (
-                            <View key={index} style={styles.acChip}>
-                              <Text style={styles.acChipText}>{ac}</Text>
+                {/* Targeting Details */}
+                {survey.targetAudience && (
+                  <View style={styles.targetingContainer}>
+                    {/* Demographics */}
+                    {survey.targetAudience.demographics && (
+                      <View style={styles.targetingSection}>
+                        <Text style={styles.targetingSectionTitle}>Demographics</Text>
+                        {survey.targetAudience.demographics['Age Group'] && survey.targetAudience.demographics.ageRange && (
+                          <View style={styles.targetingItem}>
+                            <Text style={styles.targetingLabel}>Age Range:</Text>
+                            <Text style={styles.targetingValue}>
+                              {survey.targetAudience.demographics.ageRange.min || 'Not specified'} - {survey.targetAudience.demographics.ageRange.max || 'Not specified'} years
+                            </Text>
+                          </View>
+                        )}
+                        {survey.targetAudience.demographics['Gender'] && survey.targetAudience.demographics.genderRequirements && (
+                          <View style={styles.targetingItem}>
+                            <Text style={styles.targetingLabel}>Gender:</Text>
+                            <View style={styles.genderChips}>
+                              {(() => {
+                                const requirements = survey.targetAudience.demographics.genderRequirements;
+                                const selectedGenders = Object.keys(requirements).filter(g => requirements[g] && !g.includes('Percentage'));
+                                
+                                return selectedGenders.map(gender => {
+                                  const percentage = requirements[`${gender}Percentage`];
+                                  const displayPercentage = selectedGenders.length === 1 && !percentage ? 100 : (percentage || 0);
+                                  return (
+                                    <View key={gender} style={styles.genderChip}>
+                                      <Text style={styles.genderChipText}>{gender}: {displayPercentage}%</Text>
+                                    </View>
+                                  );
+                                });
+                              })()}
                             </View>
-                          ))}
-                        </View>
+                          </View>
+                        )}
                       </View>
                     )}
 
-                    {/* Targeting Details */}
-                    {survey.targetAudience && (
-                      <View style={styles.targetingContainer}>
-                        {/* Demographics */}
-                        {survey.targetAudience.demographics && (
+                    {/* Geographic */}
+                    {survey.targetAudience.geographic && (
+                      (() => {
+                        const hasGeographicData = 
+                          (survey.targetAudience.geographic['Country'] && survey.targetAudience.geographic.countryRequirements) ||
+                          (survey.targetAudience.geographic['State/Province'] && survey.targetAudience.geographic.stateRequirements) ||
+                          (survey.targetAudience.geographic['City'] && survey.targetAudience.geographic.cityRequirements) ||
+                          (survey.targetAudience.geographic['Postal Code'] && survey.targetAudience.geographic.postalCodeRequirements) ||
+                          (survey.targetAudience.geographic['Timezone'] && survey.targetAudience.geographic.timezoneRequirements);
+                        
+                        return hasGeographicData ? (
                           <View style={styles.targetingSection}>
-                            <Text style={styles.targetingSectionTitle}>Demographics</Text>
-                            {survey.targetAudience.demographics['Age Group'] && survey.targetAudience.demographics.ageRange && (
+                            <Text style={styles.targetingSectionTitle}>Geographic</Text>
+                            {survey.targetAudience.geographic['Country'] && survey.targetAudience.geographic.countryRequirements && (
                               <View style={styles.targetingItem}>
-                                <Text style={styles.targetingLabel}>Age Range:</Text>
-                                <Text style={styles.targetingValue}>
-                                  {survey.targetAudience.demographics.ageRange.min || 'Not specified'} - {survey.targetAudience.demographics.ageRange.max || 'Not specified'} years
-                                </Text>
+                                <Text style={styles.targetingLabel}>Country:</Text>
+                                <Text style={styles.targetingValue}>{survey.targetAudience.geographic.countryRequirements}</Text>
                               </View>
                             )}
-                            {survey.targetAudience.demographics['Gender'] && survey.targetAudience.demographics.genderRequirements && (
+                            {survey.targetAudience.geographic['State/Province'] && survey.targetAudience.geographic.stateRequirements && (
                               <View style={styles.targetingItem}>
-                                <Text style={styles.targetingLabel}>Gender:</Text>
-                                <View style={styles.genderChips}>
-                                  {(() => {
-                                    const requirements = survey.targetAudience.demographics.genderRequirements;
-                                    const selectedGenders = Object.keys(requirements).filter(g => requirements[g] && !g.includes('Percentage'));
-                                    
-                                    return selectedGenders.map(gender => {
-                                      const percentage = requirements[`${gender}Percentage`];
-                                      const displayPercentage = selectedGenders.length === 1 && !percentage ? 100 : (percentage || 0);
-                                      return (
-                                        <View key={gender} style={styles.genderChip}>
-                                          <Text style={styles.genderChipText}>{gender}: {displayPercentage}%</Text>
-                                        </View>
-                                      );
-                                    });
-                                  })()}
-                                </View>
+                                <Text style={styles.targetingLabel}>State:</Text>
+                                <Text style={styles.targetingValue}>{survey.targetAudience.geographic.stateRequirements}</Text>
+                              </View>
+                            )}
+                            {survey.targetAudience.geographic['City'] && survey.targetAudience.geographic.cityRequirements && (
+                              <View style={styles.targetingItem}>
+                                <Text style={styles.targetingLabel}>City:</Text>
+                                <Text style={styles.targetingValue}>{survey.targetAudience.geographic.cityRequirements}</Text>
+                              </View>
+                            )}
+                            {survey.targetAudience.geographic['Postal Code'] && survey.targetAudience.geographic.postalCodeRequirements && (
+                              <View style={styles.targetingItem}>
+                                <Text style={styles.targetingLabel}>Postal Code:</Text>
+                                <Text style={styles.targetingValue}>{survey.targetAudience.geographic.postalCodeRequirements}</Text>
+                              </View>
+                            )}
+                            {survey.targetAudience.geographic['Timezone'] && survey.targetAudience.geographic.timezoneRequirements && (
+                              <View style={styles.targetingItem}>
+                                <Text style={styles.targetingLabel}>Timezone:</Text>
+                                <Text style={styles.targetingValue}>
+                                  {Object.keys(survey.targetAudience.geographic.timezoneRequirements)
+                                    .filter(tz => survey.targetAudience.geographic.timezoneRequirements[tz])
+                                    .join(', ')}
+                                </Text>
                               </View>
                             )}
                           </View>
-                        )}
+                        ) : null;
+                      })()
+                    )}
 
-                        {/* Geographic */}
-                        {survey.targetAudience.geographic && (
-                          (() => {
-                            const hasGeographicData = 
-                              (survey.targetAudience.geographic['Country'] && survey.targetAudience.geographic.countryRequirements) ||
-                              (survey.targetAudience.geographic['State/Province'] && survey.targetAudience.geographic.stateRequirements) ||
-                              (survey.targetAudience.geographic['City'] && survey.targetAudience.geographic.cityRequirements) ||
-                              (survey.targetAudience.geographic['Postal Code'] && survey.targetAudience.geographic.postalCodeRequirements) ||
-                              (survey.targetAudience.geographic['Timezone'] && survey.targetAudience.geographic.timezoneRequirements);
-                            
-                            return hasGeographicData ? (
-                              <View style={styles.targetingSection}>
-                                <Text style={styles.targetingSectionTitle}>Geographic</Text>
-                                {survey.targetAudience.geographic['Country'] && survey.targetAudience.geographic.countryRequirements && (
-                                  <View style={styles.targetingItem}>
-                                    <Text style={styles.targetingLabel}>Country:</Text>
-                                    <Text style={styles.targetingValue}>{survey.targetAudience.geographic.countryRequirements}</Text>
-                                  </View>
-                                )}
-                                {survey.targetAudience.geographic['State/Province'] && survey.targetAudience.geographic.stateRequirements && (
-                                  <View style={styles.targetingItem}>
-                                    <Text style={styles.targetingLabel}>State:</Text>
-                                    <Text style={styles.targetingValue}>{survey.targetAudience.geographic.stateRequirements}</Text>
-                                  </View>
-                                )}
-                                {survey.targetAudience.geographic['City'] && survey.targetAudience.geographic.cityRequirements && (
-                                  <View style={styles.targetingItem}>
-                                    <Text style={styles.targetingLabel}>City:</Text>
-                                    <Text style={styles.targetingValue}>{survey.targetAudience.geographic.cityRequirements}</Text>
-                                  </View>
-                                )}
-                                {survey.targetAudience.geographic['Postal Code'] && survey.targetAudience.geographic.postalCodeRequirements && (
-                                  <View style={styles.targetingItem}>
-                                    <Text style={styles.targetingLabel}>Postal Code:</Text>
-                                    <Text style={styles.targetingValue}>{survey.targetAudience.geographic.postalCodeRequirements}</Text>
-                                  </View>
-                                )}
-                                {survey.targetAudience.geographic['Timezone'] && survey.targetAudience.geographic.timezoneRequirements && (
-                                  <View style={styles.targetingItem}>
-                                    <Text style={styles.targetingLabel}>Timezone:</Text>
-                                    <Text style={styles.targetingValue}>
-                                      {Object.keys(survey.targetAudience.geographic.timezoneRequirements)
-                                        .filter(tz => survey.targetAudience.geographic.timezoneRequirements[tz])
-                                        .join(', ')}
-                                    </Text>
-                                  </View>
-                                )}
-                              </View>
-                            ) : null;
-                          })()
+                    {/* Assignment Info */}
+                    {survey.assignedAt && (
+                      <View style={styles.assignmentInfo}>
+                        <View style={styles.assignmentItem}>
+                          <Text style={styles.assignmentLabel}>Assigned:</Text>
+                          <Text style={styles.assignmentValue}>
+                            {new Date(survey.assignedAt).toLocaleDateString()}
+                          </Text>
+                        </View>
+                        {survey.deadline && (
+                          <View style={styles.assignmentItem}>
+                            <Text style={styles.assignmentLabel}>Deadline:</Text>
+                            <Text style={styles.assignmentValue}>
+                              {new Date(survey.deadline).toLocaleDateString()}
+                            </Text>
+                          </View>
                         )}
-
-                        {/* Assignment Info */}
-                        {survey.assignedAt && (
-                          <View style={styles.assignmentInfo}>
-                            <View style={styles.assignmentItem}>
-                              <Text style={styles.assignmentLabel}>Assigned:</Text>
-                              <Text style={styles.assignmentValue}>
-                                {new Date(survey.assignedAt).toLocaleDateString()}
-                              </Text>
-                            </View>
-                            {survey.deadline && (
-                              <View style={styles.assignmentItem}>
-                                <Text style={styles.assignmentLabel}>Deadline:</Text>
-                                <Text style={styles.assignmentValue}>
-                                  {new Date(survey.deadline).toLocaleDateString()}
-                                </Text>
-                              </View>
-                            )}
-                            {survey.selectedState && (
-                              <View style={styles.assignmentItem}>
-                                <Text style={styles.assignmentLabel}>State:</Text>
-                                <Text style={styles.assignmentValue}>{survey.selectedState}</Text>
-                              </View>
-                            )}
+                        {survey.selectedState && (
+                          <View style={styles.assignmentItem}>
+                            <Text style={styles.assignmentLabel}>State:</Text>
+                            <Text style={styles.assignmentValue}>{survey.selectedState}</Text>
                           </View>
                         )}
                       </View>
                     )}
+                  </View>
+                )}
 
-                    <Divider style={styles.divider} />
+                <Divider style={styles.divider} />
                   </>
                 )}
 

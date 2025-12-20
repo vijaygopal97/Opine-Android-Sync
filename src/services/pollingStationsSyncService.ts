@@ -109,14 +109,21 @@ class PollingStationsSyncService {
         const hasDownloadedFile = await this.hasDownloadedFile();
         if (!hasDownloadedFile) {
           // No downloaded file and no stored hash means we're using bundled file
-          // Since the bundled file is the same as server file (verified by user),
-          // we should set the server hash as the baseline to prevent unnecessary downloads
-          console.log('📦 No stored hash found - bundled file is current version, setting server hash as baseline');
-          await this.storeHash(serverHash);
-          localHash = serverHash;
-          // Since hashes match, no update needed
+          // IMPORTANT: We cannot assume the bundled file matches the server file
+          // The bundled file might be from an older build (e.g., V9)
+          // We should ALWAYS download if hashes don't match, even if we have no stored hash
+          // This ensures users with old bundled files get the latest version
+          console.log('📦 No stored hash found - checking if bundled file matches server...');
+          console.log('⚠️  Bundled file may be outdated - will download if hashes differ');
+          
+          // Compare bundled file hash with server hash
+          // Since we can't reliably calculate bundled file hash in React Native,
+          // we should ALWAYS treat "no stored hash" as needing an update check
+          // The downloadLatest() method will handle the actual comparison via If-None-Match
+          // For now, return needsUpdate: true to force a download attempt
+          // The download endpoint will return 304 if file hasn't changed
           return {
-            needsUpdate: false,
+            needsUpdate: true, // Force download attempt to verify bundled file
             hash: serverHash,
             lastModified: serverLastModified,
           };
@@ -289,3 +296,4 @@ class PollingStationsSyncService {
 }
 
 export const pollingStationsSyncService = new PollingStationsSyncService();
+

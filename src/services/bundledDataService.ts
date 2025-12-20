@@ -375,7 +375,7 @@ class BundledDataService {
               ? stations.filter((s: any) => s.Interview_Round_number === roundNumber)
               : stations;
             return {
-              name: groupName,
+            name: groupName,
               polling_station_count: filteredStations.length
             };
           }).filter(group => group.polling_station_count > 0) // Only return groups with stations

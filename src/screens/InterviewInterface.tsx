@@ -1369,23 +1369,23 @@ export default function InterviewInterface({ navigation, route }: any) {
     const fetchSetNumber = async () => {
       // Only fetch for CATI interviews
       if (!isCatiMode || !survey?._id || selectedSetNumber !== null) {
-        return;
-      }
-
-      // Helper function to get default set (Set 1)
-      const getDefaultSet = (): number | null => {
-        const setNumbers = new Set<number>();
-        survey?.sections?.forEach((section: any) => {
-          section.questions?.forEach((question: any) => {
-            if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
-              setNumbers.add(question.setNumber);
-            }
+          return;
+        }
+        
+        // Helper function to get default set (Set 1)
+        const getDefaultSet = (): number | null => {
+          const setNumbers = new Set<number>();
+          survey?.sections?.forEach((section: any) => {
+            section.questions?.forEach((question: any) => {
+              if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
+                setNumbers.add(question.setNumber);
+              }
+            });
           });
-        });
-        const setArray = Array.from(setNumbers).sort((a, b) => a - b);
-        return setArray.length > 0 ? setArray[0] : null; // First set (usually Set 1)
-      };
-      
+          const setArray = Array.from(setNumbers).sort((a, b) => a - b);
+          return setArray.length > 0 ? setArray[0] : null; // First set (usually Set 1)
+        };
+        
       // OPTIMIZATION: Set default Set 1 immediately (don't block interview start)
       const defaultSet = getDefaultSet();
       if (defaultSet !== null && selectedSetNumber === null) {
@@ -1403,11 +1403,11 @@ export default function InterviewInterface({ navigation, route }: any) {
       // Fetch in background - don't await, let it update when ready
       apiService.getLastCatiSetNumber(survey._id)
         .then((response) => {
-          if (response && response.success && response.data) {
-            const nextSetNumber = response.data.nextSetNumber;
+        if (response && response.success && response.data) {
+          const nextSetNumber = response.data.nextSetNumber;
             if (nextSetNumber !== null && nextSetNumber !== undefined && nextSetNumber !== defaultSet) {
               console.log('🔄 Updating Set number from API:', nextSetNumber, '(was:', defaultSet, ')');
-              setSelectedSetNumber(nextSetNumber);
+            setSelectedSetNumber(nextSetNumber);
             }
           }
         })
@@ -1857,7 +1857,7 @@ export default function InterviewInterface({ navigation, route }: any) {
         // If not, fetch full survey data in parallel with startInterview
         const hasFullSurveyData = survey?.sections && survey?.sections.length > 0;
         let fullSurveyData = survey; // Use cached survey if available
-        
+
         if (isCatiMode) {
           // CATI mode - use CATI-specific endpoint
           // OPTIMIZATION: Start interview and fetch full survey data in parallel
@@ -2062,13 +2062,13 @@ export default function InterviewInterface({ navigation, route }: any) {
           
           // OPTIMIZATION: Start location fetch and interview start in parallel
           const locationPromise = (async () => {
-            try {
-              const isOnline = await apiService.isOnline();
-              console.log('📡 Online status for location:', isOnline);
-              const location = await LocationService.getCurrentLocation(!isOnline);
+          try {
+            const isOnline = await apiService.isOnline();
+            console.log('📡 Online status for location:', isOnline);
+            const location = await LocationService.getCurrentLocation(!isOnline);
               return location;
-            } catch (locationError) {
-              console.error('Error getting location:', locationError);
+          } catch (locationError) {
+            console.error('Error getting location:', locationError);
               return null;
             }
           })();
@@ -6543,26 +6543,26 @@ export default function InterviewInterface({ navigation, route }: any) {
 
             {/* Group Selection - Only show if round number is selected */}
             {selectedPollingStation.roundNumber && (
-              <View style={[styles.pollingStationSection, showGroupDropdown && { zIndex: 1001 }]}>
-                <Text style={styles.pollingStationLabel}>Select Group *</Text>
-                {loadingGroups ? (
-                  <ActivityIndicator size="small" color="#2563eb" />
-                ) : availableGroups.length === 0 ? (
+            <View style={[styles.pollingStationSection, showGroupDropdown && { zIndex: 1001 }]}>
+              <Text style={styles.pollingStationLabel}>Select Group *</Text>
+              {loadingGroups ? (
+                <ActivityIndicator size="small" color="#2563eb" />
+              ) : availableGroups.length === 0 ? (
                   <Text style={styles.pollingStationError}>No groups available for this round. Please select a different round.</Text>
-                ) : (
-                  <>
-                    <TouchableOpacity
-                      style={styles.dropdownButton}
-                      onPress={() => setShowGroupDropdown(true)}
-                    >
-                      <Text style={[
-                        styles.dropdownButtonText,
-                        !selectedPollingStation.groupName && styles.dropdownPlaceholder
-                      ]}>
-                        {selectedPollingStation.groupName || 'Select a group...'}
-                      </Text>
-                      <Text style={styles.dropdownArrow}>▼</Text>
-                    </TouchableOpacity>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={styles.dropdownButton}
+                    onPress={() => setShowGroupDropdown(true)}
+                  >
+                    <Text style={[
+                      styles.dropdownButtonText,
+                      !selectedPollingStation.groupName && styles.dropdownPlaceholder
+                    ]}>
+                      {selectedPollingStation.groupName || 'Select a group...'}
+                    </Text>
+                    <Text style={styles.dropdownArrow}>▼</Text>
+                  </TouchableOpacity>
                   
                   {/* Group Selection Modal - Bottom Sheet */}
                   <Modal
@@ -6617,7 +6617,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                   </Modal>
                 </>
               )}
-              </View>
+            </View>
             )}
 
             {/* Polling Station Selection - Only show if group is selected */}
@@ -6779,7 +6779,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                   resizeMode="contain"
                 />
               </Animated.View>
-            </View>
+      </View>
           </Animated.View>
 
           {/* Loading Text */}

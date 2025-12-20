@@ -100,7 +100,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   //     console.error('Error saving force offline mode:', error);
   //   }
   // };
-
+  
   // Animation effects for loading screen
   useEffect(() => {
     if (isLoading) {
@@ -769,7 +769,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                   resizeMode="cover"
                 />
               </Animated.View>
-            </View>
+      </View>
           </Animated.View>
 
           {/* Loading Text */}
@@ -993,81 +993,81 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                   {/* Show additional details only if expanded */}
                   {expandedSurveys.has(survey._id) && (
                     <>
-                      <Text style={styles.surveyDescription} numberOfLines={2}>
-                        {survey.description}
+                  <Text style={styles.surveyDescription} numberOfLines={2}>
+                    {survey.description}
+                  </Text>
+                  <View style={styles.surveyMeta}>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Mode</Text>
+                      <Text style={styles.metaValue}>{survey.mode.toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Duration</Text>
+                      <Text style={styles.metaValue}>{survey.estimatedDuration || 0} min</Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Questions</Text>
+                      <Text style={styles.metaValue}>
+                        {survey.sections?.reduce((total, section) => 
+                          total + (section.questions?.length || 0), 0) || 0}
                       </Text>
-                      <View style={styles.surveyMeta}>
-                        <View style={styles.metaItem}>
-                          <Text style={styles.metaLabel}>Mode</Text>
-                          <Text style={styles.metaValue}>{survey.mode.toUpperCase()}</Text>
-                        </View>
-                        <View style={styles.metaItem}>
-                          <Text style={styles.metaLabel}>Duration</Text>
-                          <Text style={styles.metaValue}>{survey.estimatedDuration || 0} min</Text>
-                        </View>
-                        <View style={styles.metaItem}>
-                          <Text style={styles.metaLabel}>Questions</Text>
-                          <Text style={styles.metaValue}>
-                            {survey.sections?.reduce((total, section) => 
-                              total + (section.questions?.length || 0), 0) || 0}
-                          </Text>
-                        </View>
-                        <View style={styles.metaItem}>
-                          <Text style={styles.metaLabel}>Target</Text>
-                          <Text style={styles.metaValue}>{survey.sampleSize?.toLocaleString() || 0}</Text>
-                        </View>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <Text style={styles.metaLabel}>Target</Text>
+                      <Text style={styles.metaValue}>{survey.sampleSize?.toLocaleString() || 0}</Text>
+                    </View>
+                  </View>
+
+                  {/* Assigned ACs */}
+                  {survey.assignedACs && survey.assignedACs.length > 0 && (
+                    <View style={styles.assignedACsContainer}>
+                      <View style={styles.assignedACsHeader}>
+                        <Ionicons name="location" size={14} color="#6b7280" />
+                        <Text style={styles.assignedACsLabel}>Areas:</Text>
                       </View>
-
-                      {/* Assigned ACs */}
-                      {survey.assignedACs && survey.assignedACs.length > 0 && (
-                        <View style={styles.assignedACsContainer}>
-                          <View style={styles.assignedACsHeader}>
-                            <Ionicons name="location" size={14} color="#6b7280" />
-                            <Text style={styles.assignedACsLabel}>Areas:</Text>
+                      <View style={styles.assignedACsChips}>
+                        {survey.assignedACs.slice(0, 3).map((ac, index) => (
+                          <View key={index} style={styles.acChip}>
+                            <Text style={styles.acChipText}>{ac}</Text>
                           </View>
-                          <View style={styles.assignedACsChips}>
-                            {survey.assignedACs.slice(0, 3).map((ac, index) => (
-                              <View key={index} style={styles.acChip}>
-                                <Text style={styles.acChipText}>{ac}</Text>
-                              </View>
-                            ))}
-                            {survey.assignedACs.length > 3 && (
-                              <View style={styles.acChip}>
-                                <Text style={styles.acChipText}>+{survey.assignedACs.length - 3} more</Text>
-                              </View>
-                            )}
+                        ))}
+                        {survey.assignedACs.length > 3 && (
+                          <View style={styles.acChip}>
+                            <Text style={styles.acChipText}>+{survey.assignedACs.length - 3} more</Text>
                           </View>
-                        </View>
-                      )}
+                        )}
+                      </View>
+                    </View>
+                  )}
 
-                      {/* Quick targeting info */}
-                      {survey.targetAudience && (
-                        <View style={styles.quickTargeting}>
-                          {survey.targetAudience.demographics?.ageRange && (
-                            <Text style={styles.quickTargetingText}>
-                              Age: {survey.targetAudience.demographics.ageRange.min || 'N/A'}-{survey.targetAudience.demographics.ageRange.max || 'N/A'}
-                            </Text>
-                          )}
-                          {survey.targetAudience.demographics?.genderRequirements && (
-                            <Text style={styles.quickTargetingText}>
-                              Gender: {(() => {
-                                const requirements = survey.targetAudience.demographics.genderRequirements;
-                                const selectedGenders = Object.keys(requirements).filter(g => requirements[g] && !g.includes('Percentage'));
-                                return selectedGenders.map(gender => {
-                                  const percentage = requirements[`${gender}Percentage`];
-                                  const displayPercentage = selectedGenders.length === 1 && !percentage ? 100 : (percentage || 0);
-                                  return `${gender}: ${displayPercentage}%`;
-                                }).join(', ');
-                              })()}
-                            </Text>
-                          )}
-                          {survey.targetAudience.geographic?.stateRequirements && (
-                            <Text style={styles.quickTargetingText}>
-                              State: {survey.targetAudience.geographic.stateRequirements}
-                            </Text>
-                          )}
-                        </View>
+                  {/* Quick targeting info */}
+                  {survey.targetAudience && (
+                    <View style={styles.quickTargeting}>
+                      {survey.targetAudience.demographics?.ageRange && (
+                        <Text style={styles.quickTargetingText}>
+                          Age: {survey.targetAudience.demographics.ageRange.min || 'N/A'}-{survey.targetAudience.demographics.ageRange.max || 'N/A'}
+                        </Text>
                       )}
+                      {survey.targetAudience.demographics?.genderRequirements && (
+                        <Text style={styles.quickTargetingText}>
+                          Gender: {(() => {
+                            const requirements = survey.targetAudience.demographics.genderRequirements;
+                            const selectedGenders = Object.keys(requirements).filter(g => requirements[g] && !g.includes('Percentage'));
+                            return selectedGenders.map(gender => {
+                              const percentage = requirements[`${gender}Percentage`];
+                              const displayPercentage = selectedGenders.length === 1 && !percentage ? 100 : (percentage || 0);
+                              return `${gender}: ${displayPercentage}%`;
+                            }).join(', ');
+                          })()}
+                        </Text>
+                      )}
+                      {survey.targetAudience.geographic?.stateRequirements && (
+                        <Text style={styles.quickTargetingText}>
+                          State: {survey.targetAudience.geographic.stateRequirements}
+                        </Text>
+                      )}
+                    </View>
+                  )}
                     </>
                   )}
 
