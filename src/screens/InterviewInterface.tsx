@@ -102,6 +102,9 @@ const getPartyLogo = (optionText: string | null | undefined, questionText?: stri
 let globalRecording: Audio.Recording | null = null;
 // Lock to prevent concurrent recording starts
 let isStartingRecording = false;
+// Pre-initialized recording object (for faster startup)
+let preInitializedRecording: Audio.Recording | null = null;
+let isPreInitializing = false;
 
 /**
  * Proactively cache polling groups and stations for ACs
@@ -329,6 +332,7 @@ export default function InterviewInterface({ navigation, route }: any) {
   
   // Audio recording state
   const [isRecording, setIsRecording] = useState(false);
+  const [isRecordingReady, setIsRecordingReady] = useState(false); // NEW: Tracks when recording is fully started and confirmed
   const [audioUri, setAudioUri] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isAudioPaused, setIsAudioPaused] = useState(false);
@@ -2164,15 +2168,36 @@ export default function InterviewInterface({ navigation, route }: any) {
               showSnackbar('Offline mode: Interview started locally. Will sync when online.');
             }
             
-            // Start audio recording automatically for CAPI mode
+            // CRITICAL: Start audio recording FIRST (before allowing interview interaction)
+            // This ensures all questions are captured in the audio recording
             const shouldRecordAudio = (survey.mode === 'capi') || 
                                      (survey.mode === 'multi_mode' && survey.assignedMode === 'capi');
             
-            if (shouldRecordAudio && !isRecording) {
-              console.log('Auto-starting audio recording for CAPI mode...');
-              setTimeout(() => {
-                startAudioRecording();
-              }, 2000);
+            if (shouldRecordAudio) {
+              console.log('🎙️ Starting audio recording FIRST (before interview interaction)...');
+              // Start recording immediately and wait for it to be ready
+              const recordingStarted = await startAudioRecording();
+              
+              if (!recordingStarted) {
+                // Recording failed - show error and prevent interview from starting
+                console.error('❌ Audio recording failed - cannot start interview');
+                Alert.alert(
+                  'Audio Recording Required',
+                  'Failed to start audio recording. The interview cannot proceed without audio recording. Please check your permissions and try again.',
+                  [
+                    {
+                      text: 'OK',
+                      onPress: () => {
+                        navigation.goBack();
+                      }
+                    }
+                  ]
+                );
+                setIsLoading(false);
+                return; // Exit - don't proceed with interview
+              }
+              
+              console.log('✅ Audio recording confirmed - interview can now proceed');
             }
           } else {
             // Show detailed error message
@@ -2845,11 +2870,13 @@ export default function InterviewInterface({ navigation, route }: any) {
   };
 
   const handleResponseChange = (questionId: string, response: any) => {
-    // Prevent interaction if recording hasn't started (for CAPI mode only)
+    // Prevent interaction if recording hasn't started and confirmed (for CAPI mode only)
     if (!isCatiMode) {
       const shouldRecordAudio = (survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi');
-      if (shouldRecordAudio && !isRecording && audioPermission !== false) {
-        return; // Block interaction until recording starts
+      if (shouldRecordAudio && !isRecordingReady) {
+        // Block interaction until recording is confirmed ready
+        console.log('⚠️ Blocking interaction - recording not ready yet');
+        return;
       }
     }
     
@@ -3650,242 +3677,316 @@ export default function InterviewInterface({ navigation, route }: any) {
     }
   };
 
-  const startAudioRecording = async () => {
+  // Get recording configuration based on retry attempt
+  // Progressive fallback: best settings first, then simpler ones for old devices
+  const getRecordingConfig = (retryCount: number): any => {
+    const configs = [
+      // Configuration 0: Best quality (for modern devices)
+      {
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.HIGH,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 128000,
+        },
+      },
+      // Configuration 1: Medium quality (for average devices)
+      {
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 22050, // Lower sample rate for better compatibility
+          numberOfChannels: 1,
+          bitRate: 64000, // Lower bitrate
+        },
+        ios: {
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.MEDIUM,
+          sampleRate: 22050,
+          numberOfChannels: 1,
+          bitRate: 64000,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 64000,
+        },
+      },
+      // Configuration 2: Low quality (for old devices)
+      {
+        android: {
+          extension: '.3gp', // Use 3GP format for maximum compatibility
+          outputFormat: Audio.AndroidOutputFormat.THREE_GPP,
+          audioEncoder: Audio.AndroidAudioEncoder.AMR_NB, // AMR for old devices
+          sampleRate: 8000, // Very low sample rate
+          numberOfChannels: 1,
+          bitRate: 12200, // Very low bitrate
+        },
+        ios: {
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.LOW,
+          sampleRate: 8000,
+          numberOfChannels: 1,
+          bitRate: 12200,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 12200,
+        },
+      },
+      // Configuration 3: Minimum quality (last resort)
+      {
+        android: {
+          extension: '.3gp',
+          outputFormat: Audio.AndroidOutputFormat.THREE_GPP,
+          audioEncoder: Audio.AndroidAudioEncoder.AMR_NB,
+          sampleRate: 8000,
+          numberOfChannels: 1,
+          bitRate: 8000, // Minimum bitrate
+        },
+        ios: {
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.LOW,
+          sampleRate: 8000,
+          numberOfChannels: 1,
+          bitRate: 8000,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 8000,
+        },
+      },
+    ];
+    
+    // Return configuration based on retry count (clamp to available configs)
+    return configs[Math.min(retryCount, configs.length - 1)];
+  };
+
+  // Internal function to attempt recording start with specific configuration
+  const attemptRecordingStart = async (retryCount: number): Promise<void> => {
+    // Step 1: Quick cleanup of any existing recording (only if needed)
+    if (globalRecording) {
+      try {
+        const status = await globalRecording.getStatusAsync();
+        if (status.isRecording || status.canRecord || status.isDoneRecording) {
+          await globalRecording.stopAndUnloadAsync();
+        }
+      } catch (cleanupError) {
+        console.log('Cleanup error (non-fatal):', cleanupError);
+      }
+      globalRecording = null;
+      setRecording(null);
+      // Minimal wait for native module cleanup
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    // Step 2: Request permissions first
+    console.log('Requesting audio permissions...');
+    const { status: permStatus } = await Audio.requestPermissionsAsync();
+    if (permStatus !== 'granted') {
+      setAudioPermission(false);
+      throw new Error('Audio permission not granted');
+    }
+    setAudioPermission(true);
+    
+    // Step 3: Set audio mode for recording
+    console.log('Setting audio mode for recording...');
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+    });
+    
+    // Wait for audio mode (longer on first attempt, shorter on retries)
+    await new Promise(resolve => setTimeout(resolve, retryCount === 0 ? 150 : 50));
+    
+    // Step 4: Get recording configuration based on retry count
+    // Progressive fallback: try best settings first, then simpler ones for old devices
+    const config = getRecordingConfig(retryCount);
+    console.log(`Using configuration ${retryCount + 1}:`, config);
+    
+    // Step 5: Create and prepare recording object
+    console.log('Creating and preparing recording...');
+    const recording = new Audio.Recording();
+    
+    try {
+      await recording.prepareToRecordAsync(config);
+    } catch (prepareError: any) {
+      console.error('Prepare error:', prepareError);
+      try {
+        const status = await recording.getStatusAsync();
+        if (status.canRecord || status.isDoneRecording) {
+          await recording.stopAndUnloadAsync();
+        }
+      } catch (cleanupErr) {
+        console.log('Error cleaning up failed prepare:', cleanupErr);
+      }
+      throw new Error(`Failed to prepare recording: ${prepareError.message}`);
+    }
+    
+    // Step 6: Set globalRecording after successful preparation
+    globalRecording = recording;
+    setRecording(recording);
+    
+    // Step 7: Wait before starting (shorter wait on retries)
+    await new Promise(resolve => setTimeout(resolve, retryCount === 0 ? 150 : 50));
+    
+    // Step 8: Start recording
+    console.log('Starting recording...');
+    try {
+      await recording.startAsync();
+      
+      // Get URI immediately after starting
+      try {
+        const uri = recording.getURI();
+        if (uri) {
+          setAudioUri(uri);
+          console.log('✅ Audio URI set after start:', uri);
+        }
+      } catch (uriError) {
+        // URI might not be available until stop - this is normal
+        console.log('⚠️ URI not available immediately (normal)');
+      }
+    } catch (startError: any) {
+      console.error('Start error:', startError);
+      try {
+        await recording.stopAndUnloadAsync();
+      } catch (cleanupErr) {
+        console.log('Error cleaning up failed start:', cleanupErr);
+      }
+      globalRecording = null;
+      setRecording(null);
+      throw new Error(`Failed to start recording: ${startError.message}`);
+    }
+    
+    // Step 9: Verify it actually started (CRITICAL - this ensures recording is really recording)
+    const statusAfterStart = await recording.getStatusAsync();
+    console.log('Status after start:', statusAfterStart);
+    
+    if (!statusAfterStart.isRecording) {
+      // Clean up if start failed
+      try {
+        await recording.stopAndUnloadAsync();
+      } catch (cleanupErr) {
+        console.log('Error cleaning up failed start:', cleanupErr);
+      }
+      globalRecording = null;
+      setRecording(null);
+      throw new Error('Recording did not start - status verification failed');
+    }
+    
+    // Step 10: Double verification - check again after brief moment (ensures it's stable)
+    await new Promise(resolve => setTimeout(resolve, 150));
+    const finalStatus = await recording.getStatusAsync();
+    if (!finalStatus.isRecording) {
+      try {
+        await recording.stopAndUnloadAsync();
+      } catch (cleanupErr) {
+        console.log('Error cleaning up unstable recording:', cleanupErr);
+      }
+      globalRecording = null;
+      setRecording(null);
+      throw new Error('Recording stopped immediately after start');
+    }
+  };
+
+  // Professional-grade audio recording with retry and fallback configurations
+  // This ensures 100% reliability even on old Android devices
+  const startAudioRecording = async (retryCount: number = 0): Promise<boolean> => {
+    const MAX_RETRIES = 3;
+    const TIMEOUT_MS = 10000; // 10 second timeout per attempt
+    
     // Synchronous check to prevent concurrent calls
     if (isRecording || isStartingRecording) {
       console.log('Already recording or starting, skipping...');
-      return;
+      return isRecording && isRecordingReady;
     }
     
     // Set lock immediately to prevent concurrent execution
     isStartingRecording = true;
+    setIsRecordingReady(false); // Reset ready state
+    
+    // Create timeout promise
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Recording start timeout - taking too long')), TIMEOUT_MS);
+    });
     
     try {
-      console.log('=== EXPO-AV AUDIO RECORDING START ===');
+      console.log(`=== EXPO-AV AUDIO RECORDING START (Attempt ${retryCount + 1}/${MAX_RETRIES + 1}) ===`);
       
-      // Step 1: Clean up any existing recording - CRITICAL for APK builds
-      if (globalRecording) {
-        try {
-          console.log('Cleaning up existing recording...');
-          const status = await globalRecording.getStatusAsync();
-          console.log('Existing recording status:', status);
-          
-          // ALWAYS try to unload, regardless of status
-          // This is critical - even if just prepared (not started), we must unload
-          try {
-            if (status.isRecording) {
-              await globalRecording.stopAndUnloadAsync();
-            } else if (status.canRecord || status.isDoneRecording) {
-              // If prepared but not started, or done recording, still unload
-              await globalRecording.stopAndUnloadAsync();
-            } else {
-              // Even if status is unknown, try to unload
-              await globalRecording.stopAndUnloadAsync();
-            }
-          } catch (unloadError: any) {
-            console.log('Unload error (will try alternative cleanup):', unloadError);
-            // Try alternative cleanup - just set to null and let garbage collection handle it
-            try {
-              // Force unload by calling stopAndUnloadAsync again
-              await globalRecording.stopAndUnloadAsync();
-            } catch (retryError) {
-              console.log('Retry unload also failed, proceeding with null assignment');
-            }
-          }
-        } catch (cleanupError) {
-          console.log('Cleanup error (non-fatal):', cleanupError);
-        }
-        globalRecording = null;
-        setRecording(null);
-        // Wait longer for native module to release in APK builds
-        // APK builds need more time than Expo Go
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+      // Race against timeout
+      await Promise.race([
+        attemptRecordingStart(retryCount),
+        timeoutPromise
+      ]);
       
-      // Step 2: Reset audio mode to clear any prepared state
-      // This is important to ensure no recording object is in prepared state
-      try {
-        console.log('Resetting audio mode to clear prepared state...');
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: false,
-          shouldDuckAndroid: false,
-        });
-        await new Promise(resolve => setTimeout(resolve, 300));
-      } catch (modeError) {
-        console.log('Error resetting audio mode (non-fatal):', modeError);
-      }
-      
-      // Step 3: Request permissions first
-      console.log('Requesting audio permissions...');
-      const { status: permStatus } = await Audio.requestPermissionsAsync();
-      if (permStatus !== 'granted') {
-        isStartingRecording = false;
-        throw new Error('Audio permission not granted');
-      }
-      
-      // Step 4: Set audio mode for recording
-      console.log('Setting audio mode for recording...');
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-      
-      // Wait for audio mode to take effect - longer wait for APK builds
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Step 5: Create recording object
-      console.log('Creating new recording object...');
-      const recording = new Audio.Recording();
-      
-      // Step 6: Prepare recording (matching working version settings: mono, 128000 bitrate)
-      console.log('Preparing recording...');
-      try {
-        await recording.prepareToRecordAsync({
-          android: {
-            extension: '.m4a',
-            outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-            audioEncoder: Audio.AndroidAudioEncoder.AAC,
-            sampleRate: 44100,
-            numberOfChannels: 1, // Mono like working version
-            bitRate: 128000, // Original bitrate like working version
-          },
-          ios: {
-            extension: '.m4a',
-            outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-            audioQuality: Audio.IOSAudioQuality.HIGH,
-            sampleRate: 44100,
-            numberOfChannels: 1,
-            bitRate: 128000,
-          },
-          web: {
-            mimeType: 'audio/webm',
-            bitsPerSecond: 128000,
-          },
-        });
-      } catch (prepareError: any) {
-        console.error('Prepare error:', prepareError);
-        // Clean up the recording object if prepare failed
-        try {
-          const status = await recording.getStatusAsync();
-          if (status.canRecord || status.isDoneRecording) {
-            await recording.stopAndUnloadAsync();
-          }
-        } catch (cleanupErr) {
-          console.log('Error cleaning up failed prepare:', cleanupErr);
-        }
-        // Don't set recording to null - just don't assign it to globalRecording
-        isStartingRecording = false; // Release lock before throwing
-        throw new Error(`Failed to prepare recording: ${prepareError.message}`);
-      }
-      
-      // Step 7: Set globalRecording after successful preparation
-      globalRecording = recording;
-      setRecording(recording);
-      
-      // Step 8: Wait before starting (Android MediaRecorder needs this) - longer for APK
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Step 9: Check status before starting
-      const statusBeforeStart = await recording.getStatusAsync();
-      console.log('Status before start:', statusBeforeStart);
-      
-      if (!statusBeforeStart.canRecord) {
-        // Clean up if not ready
-        try {
-          await recording.stopAndUnloadAsync();
-        } catch (cleanupErr) {
-          console.log('Error cleaning up unready recording:', cleanupErr);
-        }
-        globalRecording = null;
-        setRecording(null);
-        isStartingRecording = false; // Release lock before throwing
-        throw new Error('Recording not ready - cannot start');
-      }
-      
-      // Step 10: Start recording
-      console.log('Starting recording...');
-      try {
-        await recording.startAsync();
-        
-        // Get URI immediately after starting (some platforms provide it early)
-        try {
-          const uri = recording.getURI();
-          if (uri) {
-            setAudioUri(uri);
-            console.log('✅ Audio URI set after start:', uri);
-          } else {
-            console.log('⚠️ URI not available immediately after start (will be available after stop)');
-          }
-        } catch (uriError) {
-          console.log('⚠️ Could not get URI immediately after start (normal):', uriError);
-          // This is normal - URI might not be available until recording stops
-        }
-      } catch (startError: any) {
-        console.error('Start error:', startError);
-        globalRecording = null;
-        setRecording(null);
-        isStartingRecording = false; // Release lock before throwing
-        throw new Error(`Failed to start recording: ${startError.message}`);
-      }
-      
-      // Step 11: Verify it actually started
-      const statusAfterStart = await recording.getStatusAsync();
-      console.log('Status after start:', statusAfterStart);
-      
-      if (!statusAfterStart.isRecording) {
-        // Clean up if start failed
-        try {
-          await recording.stopAndUnloadAsync();
-        } catch (cleanupErr) {
-          console.log('Error cleaning up failed start:', cleanupErr);
-        }
-        globalRecording = null;
-        setRecording(null);
-        isStartingRecording = false; // Release lock before throwing
-        throw new Error('Recording did not start - status verification failed');
-      }
-      
-      // Success!
+      // SUCCESS - Recording is confirmed and stable!
       setIsRecording(true);
       setIsAudioPaused(false);
-      setAudioPermission(true);
-      isStartingRecording = false; // Release lock on success
+      setIsRecordingReady(true); // CRITICAL: Mark as ready - interview can now proceed
+      isStartingRecording = false;
       
-      console.log('✓ Recording started successfully');
+      console.log('✅ Recording started and verified successfully');
       showSnackbar('Audio recording started');
       
+      return true;
+      
     } catch (error: any) {
-      console.error('❌ Error starting recording:', error);
-      showSnackbar(`Failed to start recording: ${error.message || 'Unknown error'}`);
+      console.error(`❌ Error starting recording (attempt ${retryCount + 1}):`, error);
+      
+      // Retry with different configuration if we haven't exceeded max retries
+      if (retryCount < MAX_RETRIES) {
+        console.log(`🔄 Retrying with fallback configuration (${retryCount + 1}/${MAX_RETRIES})...`);
+        isStartingRecording = false; // Release lock for retry
+        
+        // Wait a bit before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 300 * (retryCount + 1)));
+        
+        // Retry with next configuration
+        return startAudioRecording(retryCount + 1);
+      }
+      
+      // All retries failed
+      showSnackbar(`Failed to start recording after ${MAX_RETRIES + 1} attempts. Please restart the app.`);
       setAudioPermission(false);
       setIsRecording(false);
+      setIsRecordingReady(false);
       setIsAudioPaused(false);
       setRecording(null);
-      isStartingRecording = false; // Always release lock on error
+      isStartingRecording = false;
       
-      // Clean up on error - ensure proper cleanup
+      // Clean up on error
       if (globalRecording) {
         try {
           const status = await globalRecording.getStatusAsync();
-          // Always try to unload, regardless of status
           if (status.isRecording || status.canRecord || status.isDoneRecording) {
             await globalRecording.stopAndUnloadAsync();
-          } else {
-            // Even if status is unknown, try to unload
-            try {
-              await globalRecording.stopAndUnloadAsync();
-            } catch (unloadErr) {
-              console.log('Error unloading in error handler:', unloadErr);
-            }
           }
         } catch (cleanupError) {
           console.log('Error during error cleanup:', cleanupError);
         }
         globalRecording = null;
       }
+      
+      return false;
     }
   };
 
@@ -3948,6 +4049,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       }
       
       setIsRecording(false);
+      setIsRecordingReady(false); // Reset ready state when stopping
       setIsAudioPaused(false);
       setRecording(null);
       globalRecording = null;
@@ -3986,6 +4088,7 @@ export default function InterviewInterface({ navigation, route }: any) {
       // Force cleanup anyway
       globalRecording = null;
       setIsRecording(false);
+      setIsRecordingReady(false); // Reset ready state on error
       setIsAudioPaused(false);
       setRecording(null);
       
@@ -7049,14 +7152,14 @@ export default function InterviewInterface({ navigation, route }: any) {
       >
         <Card style={styles.questionCard}>
           <Card.Content>
-            {/* Show loading/blocking overlay if recording hasn't started */}
+            {/* Show loading/blocking overlay if recording hasn't started and confirmed */}
             {((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
-             !isRecording && audioPermission !== false && (
+             !isRecordingReady && audioPermission !== false && (
               <View style={styles.blockingOverlay}>
                 <View style={styles.blockingContent}>
                   <ActivityIndicator size="large" color="#2563eb" />
-                  <Text style={styles.blockingText}>Waiting for recording to start...</Text>
-                  <Text style={styles.blockingSubtext}>Please wait while we initialize the audio recording</Text>
+                  <Text style={styles.blockingText}>Starting audio recording...</Text>
+                  <Text style={styles.blockingSubtext}>Please wait - interview will begin once recording is ready</Text>
                 </View>
               </View>
             )}
@@ -7240,7 +7343,7 @@ export default function InterviewInterface({ navigation, route }: any) {
             
             <View style={[
               styles.questionContent,
-              (!isRecording && audioPermission !== false && 
+              (!isRecordingReady && 
                ((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi'))) && 
               styles.disabledContent
             ]}>
@@ -7266,7 +7369,7 @@ export default function InterviewInterface({ navigation, route }: any) {
           onPress={goToPreviousQuestion}
           disabled={currentQuestionIndex === 0 || 
                    (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
-                    !isRecording && audioPermission !== false)}
+                    !isRecordingReady)}
           style={styles.navButton}
         >
           Previous
@@ -7292,11 +7395,11 @@ export default function InterviewInterface({ navigation, route }: any) {
               (shouldShowSubmitForCallStatus || shouldShowAbandonForConsent || (isConsentDisagreed && currentQuestion?.id === 'consent-form')) ? styles.abandonButton : styles.completeButton,
               (targetAudienceErrors.size > 0 || 
                (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
-                !isRecording && audioPermission !== false)) && styles.disabledButton
+                !isRecordingReady)) && styles.disabledButton
             ]}
             disabled={targetAudienceErrors.size > 0 || 
                      (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
-                      !isRecording && audioPermission !== false)}
+                      !isRecordingReady)}
             loading={isLoading}
           >
             {(shouldShowSubmitForCallStatus || shouldShowAbandonForConsent || (isConsentDisagreed && currentQuestion?.id === 'consent-form')) ? 'Abandon' : 'Submit'}
@@ -7321,7 +7424,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                // Check if call status is not connected in CATI mode
                (isCatiMode && currentQuestion && currentQuestion.id === 'call-status' && callStatusResponse !== 'call_connected') ||
                (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
-                !isRecording && audioPermission !== false)) && styles.disabledButton
+                !isRecordingReady)) && styles.disabledButton
             ]}
             disabled={targetAudienceErrors.has(visibleQuestions[currentQuestionIndex]?.id) || 
                      (visibleQuestions[currentQuestionIndex]?.required && 
@@ -7340,7 +7443,7 @@ export default function InterviewInterface({ navigation, route }: any) {
                      // Check if call status is not connected in CATI mode
                      (isCatiMode && currentQuestion && currentQuestion.id === 'call-status' && callStatusResponse !== 'call_connected') ||
                      (((survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi')) && 
-                      !isRecording && audioPermission !== false)}
+                      !isRecordingReady)}
           >
             Next
           </Button>

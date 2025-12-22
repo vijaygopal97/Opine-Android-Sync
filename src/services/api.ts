@@ -5,13 +5,25 @@ import { offlineStorage } from './offlineStorage';
 
 const API_BASE_URL = 'https://opine.exypnossolutions.com';
 
+// Network condition types for emulation
+export type NetworkCondition = 
+  | 'good_stable'      // Good Stable Internet (no throttling)
+  | 'below_average'    // Below Average internet Speed
+  | 'slow_unstable'    // Slow & Unstable internet (keeps disconnecting)
+  | 'very_slow';       // Very Slow internet
+
 class ApiService {
   private baseURL: string;
   private offlineDataCacheModule: any = null;
   private forceOfflineMode: boolean = false; // Toggle for testing offline mode
+  private networkCondition: NetworkCondition = 'good_stable'; // Network condition emulation
+  private requestInterceptorId: number | null = null;
+  private responseInterceptorId: number | null = null;
+  private interceptorsSetup: boolean = false;
 
   constructor() {
     this.baseURL = API_BASE_URL;
+    // Don't setup interceptors in constructor - wait until network condition is set
   }
 
   // Toggle offline mode for testing
@@ -22,6 +34,145 @@ class ApiService {
 
   isForceOfflineMode(): boolean {
     return this.forceOfflineMode;
+  }
+
+  // Set network condition for emulation
+  setNetworkCondition(condition: NetworkCondition) {
+    this.networkCondition = condition;
+    console.log(`🌐 Network condition set to: ${condition}`);
+    // Re-setup interceptors with new condition
+    this.setupNetworkInterceptors();
+  }
+
+  getNetworkCondition(): NetworkCondition {
+    return this.networkCondition;
+  }
+
+  // Setup axios interceptors to simulate network conditions
+  private setupNetworkInterceptors() {
+    // Remove existing interceptors if any
+    if (this.requestInterceptorId !== null) {
+      axios.interceptors.request.eject(this.requestInterceptorId);
+      this.requestInterceptorId = null;
+    }
+    if (this.responseInterceptorId !== null) {
+      axios.interceptors.response.eject(this.responseInterceptorId);
+      this.responseInterceptorId = null;
+    }
+
+    // Only add interceptors if not using good_stable (no throttling needed)
+    if (this.networkCondition === 'good_stable') {
+      this.interceptorsSetup = false;
+      return;
+    }
+
+    // Request interceptor - add delay before request
+    this.requestInterceptorId = axios.interceptors.request.use(
+      async (config) => {
+        // Add delay based on network condition
+        const delay = this.getRequestDelay();
+        if (delay > 0) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
+        // For unstable connections, randomly fail requests
+        if (this.networkCondition === 'slow_unstable') {
+          const shouldFail = Math.random() < 0.15; // 15% chance of failure
+          if (shouldFail) {
+            const cancelError: any = new Error('Network connection unstable - request cancelled');
+            cancelError.code = 'ECONNABORTED';
+            cancelError.isCancel = true;
+            return Promise.reject(cancelError);
+          }
+        }
+
+        return config;
+      },
+      (error) => {
+        return Promise.reject(error);
+      }
+    );
+
+    // Response interceptor - add delay and simulate slow transfer
+    this.responseInterceptorId = axios.interceptors.response.use(
+      async (response) => {
+        // Add delay to simulate slow data transfer
+        const delay = this.getResponseDelay(response);
+        if (delay > 0) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
+        // For unstable connections, randomly fail responses
+        if (this.networkCondition === 'slow_unstable') {
+          const shouldFail = Math.random() < 0.1; // 10% chance of failure after response
+          if (shouldFail) {
+            const cancelError: any = new Error('Network connection lost during transfer');
+            cancelError.code = 'ECONNABORTED';
+            cancelError.isCancel = true;
+            return Promise.reject(cancelError);
+          }
+        }
+
+        return response;
+      },
+      async (error) => {
+        // For unstable connections, add delay before rejecting
+        if (this.networkCondition === 'slow_unstable' && !error.config?.__retryCount) {
+          const delay = this.getRequestDelay();
+          if (delay > 0) {
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    this.interceptorsSetup = true;
+  }
+
+  // Get delay for request based on network condition
+  private getRequestDelay(): number {
+    switch (this.networkCondition) {
+      case 'very_slow':
+        return 2000 + Math.random() * 3000; // 2-5 seconds
+      case 'slow_unstable':
+        return 1000 + Math.random() * 2000; // 1-3 seconds
+      case 'below_average':
+        return 500 + Math.random() * 1000; // 0.5-1.5 seconds
+      case 'good_stable':
+      default:
+        return 0;
+    }
+  }
+
+  // Get delay for response based on network condition and response size
+  private getResponseDelay(response: any): number {
+    // Estimate response size (rough calculation)
+    const responseSize = JSON.stringify(response.data || {}).length;
+    const sizeInKB = responseSize / 1024;
+
+    let baseDelay = 0;
+    let sizeMultiplier = 1;
+
+    switch (this.networkCondition) {
+      case 'very_slow':
+        baseDelay = 1000; // 1 second base
+        sizeMultiplier = 50; // 50ms per KB
+        break;
+      case 'slow_unstable':
+        baseDelay = 500; // 0.5 second base
+        sizeMultiplier = 30; // 30ms per KB
+        break;
+      case 'below_average':
+        baseDelay = 200; // 0.2 second base
+        sizeMultiplier = 10; // 10ms per KB
+        break;
+      case 'good_stable':
+      default:
+        return 0;
+    }
+
+    return baseDelay + (sizeInKB * sizeMultiplier);
   }
 
   // Helper to safely get offline cache (lazy load with error handling)

@@ -19,6 +19,7 @@ import {
   FAB,
   Snackbar,
   ActivityIndicator,
+  Menu,
 } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -62,44 +63,98 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     rejected: 0,
     pendingApproval: 0
   });
-  // COMMENTED OUT: Force Offline Mode - Can be re-enabled for debugging
-  // const [forceOfflineMode, setForceOfflineMode] = useState(false);
+  // Force Offline Mode - Enabled for debugging
+  const [forceOfflineMode, setForceOfflineMode] = useState(false);
+  
+  // Network Condition Emulation - Enabled for debugging
+  const [networkCondition, setNetworkCondition] = useState<'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow'>('good_stable');
+  const [networkMenuVisible, setNetworkMenuVisible] = useState(false);
   
   // Get safe area insets for bottom navigation
   const insets = useSafeAreaInsets();
 
-  // COMMENTED OUT: Load force offline mode state
-  // useEffect(() => {
-  //   const loadForceOfflineMode = async () => {
-  //     try {
-  //       const stored = await AsyncStorage.getItem('forceOfflineMode');
-  //       const enabled = stored === 'true';
-  //       setForceOfflineMode(enabled);
-  //       apiService.setForceOfflineMode(enabled);
-  //     } catch (error) {
-  //       console.error('Error loading force offline mode:', error);
-  //     }
-  //   };
-  //   loadForceOfflineMode();
-  // }, []);
+  // Load force offline mode state
+  useEffect(() => {
+    const loadForceOfflineMode = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('forceOfflineMode');
+        const enabled = stored === 'true';
+        setForceOfflineMode(enabled);
+        apiService.setForceOfflineMode(enabled);
+      } catch (error) {
+        console.error('Error loading force offline mode:', error);
+      }
+    };
+    loadForceOfflineMode();
+  }, []);
 
-  // COMMENTED OUT: Toggle force offline mode function
-  // const toggleForceOfflineMode = async () => {
-  //   const newValue = !forceOfflineMode;
-  //   setForceOfflineMode(newValue);
-  //   apiService.setForceOfflineMode(newValue);
-  //   try {
-  //     await AsyncStorage.setItem('forceOfflineMode', String(newValue));
-  //     showSnackbar(
-  //       newValue 
-  //         ? '🔴 Force Offline Mode ENABLED - All API calls will be blocked' 
-  //         : '🟢 Force Offline Mode DISABLED - Normal mode restored',
-  //       newValue ? 'info' : 'success'
-  //     );
-  //   } catch (error) {
-  //     console.error('Error saving force offline mode:', error);
-  //   }
-  // };
+  // Load network condition state
+  useEffect(() => {
+    const loadNetworkCondition = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('networkCondition');
+        if (stored && ['good_stable', 'below_average', 'slow_unstable', 'very_slow'].includes(stored)) {
+          const condition = stored as 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow';
+          setNetworkCondition(condition);
+          apiService.setNetworkCondition(condition);
+        }
+      } catch (error) {
+        console.error('Error loading network condition:', error);
+      }
+    };
+    loadNetworkCondition();
+  }, []);
+
+  // Toggle force offline mode function
+  const toggleForceOfflineMode = async () => {
+    const newValue = !forceOfflineMode;
+    setForceOfflineMode(newValue);
+    apiService.setForceOfflineMode(newValue);
+    try {
+      await AsyncStorage.setItem('forceOfflineMode', String(newValue));
+      showSnackbar(
+        newValue 
+          ? '🔴 Force Offline Mode ENABLED - All API calls will be blocked' 
+          : '🟢 Force Offline Mode DISABLED - Normal mode restored',
+        newValue ? 'info' : 'success'
+      );
+    } catch (error) {
+      console.error('Error saving force offline mode:', error);
+    }
+  };
+
+  // Change network condition function
+  const changeNetworkCondition = async (condition: 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow') => {
+    setNetworkCondition(condition);
+    apiService.setNetworkCondition(condition);
+    setNetworkMenuVisible(false);
+    try {
+      await AsyncStorage.setItem('networkCondition', condition);
+      const conditionNames: Record<string, string> = {
+        'good_stable': 'Good Stable Internet',
+        'below_average': 'Below Average Internet',
+        'slow_unstable': 'Slow & Unstable Internet',
+        'very_slow': 'Very Slow Internet',
+      };
+      showSnackbar(
+        `🌐 Network condition: ${conditionNames[condition]}`,
+        'info'
+      );
+    } catch (error) {
+      console.error('Error saving network condition:', error);
+    }
+  };
+
+  // Get network condition display name
+  const getNetworkConditionName = (condition: string): string => {
+    const names: Record<string, string> = {
+      'good_stable': 'Good Stable',
+      'below_average': 'Below Average',
+      'slow_unstable': 'Slow & Unstable',
+      'very_slow': 'Very Slow',
+    };
+    return names[condition] || condition;
+  };
   
   // Animation effects for loading screen
   useEffect(() => {
@@ -828,22 +883,69 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
-      {/* COMMENTED OUT: Force Offline Mode Toggle Button - Can be re-enabled for debugging */}
-      {/* <View style={styles.offlineToggleContainer}>
+      {/* Debug Controls - Force Offline Mode & Network Condition - Enabled for debugging */}
+      <View style={styles.debugControlsContainer}>
         <TouchableOpacity
-          style={[styles.offlineToggleButton, forceOfflineMode && styles.offlineToggleButtonActive]}
+          style={[styles.debugControlButton, forceOfflineMode && styles.debugControlButtonActive]}
           onPress={toggleForceOfflineMode}
         >
           <Ionicons 
             name={forceOfflineMode ? "cloud-offline" : "cloud"} 
-            size={20} 
+            size={18} 
             color={forceOfflineMode ? "#fff" : "#666"} 
           />
-          <Text style={[styles.offlineToggleText, forceOfflineMode && styles.offlineToggleTextActive]}>
-            {forceOfflineMode ? "🔴 Force Offline" : "🟢 Online Mode"}
+          <Text style={[styles.debugControlText, forceOfflineMode && styles.debugControlTextActive]}>
+            {forceOfflineMode ? "🔴 Offline" : "🟢 Online"}
           </Text>
         </TouchableOpacity>
-      </View> */}
+
+        <Menu
+          visible={networkMenuVisible}
+          onDismiss={() => setNetworkMenuVisible(false)}
+          anchor={
+            <TouchableOpacity
+              style={[styles.debugControlButton, networkCondition !== 'good_stable' && styles.debugControlButtonActive]}
+              onPress={() => setNetworkMenuVisible(true)}
+            >
+              <Ionicons 
+                name="speedometer" 
+                size={18} 
+                color={networkCondition !== 'good_stable' ? "#fff" : "#666"} 
+              />
+              <Text style={[styles.debugControlText, networkCondition !== 'good_stable' && styles.debugControlTextActive]}>
+                🌐 {getNetworkConditionName(networkCondition)}
+              </Text>
+              <Ionicons 
+                name="chevron-down" 
+                size={16} 
+                color={networkCondition !== 'good_stable' ? "#fff" : "#666"} 
+                style={{ marginLeft: 4 }}
+              />
+            </TouchableOpacity>
+          }
+        >
+          <Menu.Item 
+            onPress={() => changeNetworkCondition('good_stable')} 
+            title="Good Stable Internet"
+            titleStyle={networkCondition === 'good_stable' ? { fontWeight: 'bold' } : {}}
+          />
+          <Menu.Item 
+            onPress={() => changeNetworkCondition('below_average')} 
+            title="Below Average Internet"
+            titleStyle={networkCondition === 'below_average' ? { fontWeight: 'bold' } : {}}
+          />
+          <Menu.Item 
+            onPress={() => changeNetworkCondition('slow_unstable')} 
+            title="Slow & Unstable Internet"
+            titleStyle={networkCondition === 'slow_unstable' ? { fontWeight: 'bold' } : {}}
+          />
+          <Menu.Item 
+            onPress={() => changeNetworkCondition('very_slow')} 
+            title="Very Slow Internet"
+            titleStyle={networkCondition === 'very_slow' ? { fontWeight: 'bold' } : {}}
+          />
+        </Menu>
+      </View>
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
         start={{ x: 0, y: 0 }}
@@ -1336,39 +1438,42 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 }
 
 const styles = StyleSheet.create({
-  // COMMENTED OUT: Force Offline Mode styles - Can be re-enabled for debugging
-  // offlineToggleContainer: {
-  //   paddingHorizontal: 16,
-  //   paddingTop: 8,
-  //   paddingBottom: 4,
-  //   backgroundColor: '#f5f5f5',
-  //   borderBottomWidth: 1,
-  //   borderBottomColor: '#e0e0e0',
-  // },
-  // offlineToggleButton: {
-  //   flexDirection: 'row',
-  //   alignItems: 'center',
-  //   justifyContent: 'center',
-  //   paddingVertical: 8,
-  //   paddingHorizontal: 16,
-  //   backgroundColor: '#fff',
-  //   borderRadius: 8,
-  //   borderWidth: 1,
-  //   borderColor: '#ddd',
-  // },
-  // offlineToggleButtonActive: {
-  //   backgroundColor: '#dc2626',
-  //   borderColor: '#b91c1c',
-  // },
-  // offlineToggleText: {
-  //   marginLeft: 8,
-  //   fontSize: 14,
-  //   fontWeight: '600',
-  //   color: '#666',
-  // },
-  // offlineToggleTextActive: {
-  //   color: '#fff',
-  // },
+  // Debug Controls styles - Force Offline Mode & Network Condition - Enabled for debugging
+  debugControlsContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+    backgroundColor: '#f5f5f5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    gap: 8,
+  },
+  debugControlButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  debugControlButtonActive: {
+    backgroundColor: '#dc2626',
+    borderColor: '#b91c1c',
+  },
+  debugControlText: {
+    marginLeft: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+  },
+  debugControlTextActive: {
+    color: '#fff',
+  },
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
