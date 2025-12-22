@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -9,7 +9,10 @@ import {
   Alert,
   Image,
   Animated,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Text,
@@ -50,6 +53,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   const [pendingInterviewsCount, setPendingInterviewsCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [lastSyncResult, setLastSyncResult] = useState<{ synced: number; failed: number } | null>(null);
   const [isSyncingSurveys, setIsSyncingSurveys] = useState(false);
   const [expandedSurveys, setExpandedSurveys] = useState<Set<string>>(new Set());
   const [loadingAnimation] = useState(new Animated.Value(0));
@@ -252,10 +257,26 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   }, []);
 
   // Refresh stats, pending count and offline interviews when screen comes into focus
+  // BUT: Only reload if it's been more than 2 seconds since last reload to prevent excessive reloads
+  const lastFocusReloadRef = useRef<number>(0);
+  const FOCUS_RELOAD_COOLDOWN_MS = 2000; // 2 seconds cooldown between focus reloads
+  
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
+    const unsubscribe = navigation.addListener('focus', async () => {
+      const now = Date.now();
+      const timeSinceLastReload = now - lastFocusReloadRef.current;
+      
+      // Only reload if it's been more than the cooldown period
+      // This prevents excessive reloads when navigating back and forth
+      if (timeSinceLastReload < FOCUS_RELOAD_COOLDOWN_MS) {
+        console.log(`⏭️ Skipping dashboard reload - too soon since last reload (${Math.round(timeSinceLastReload)}ms ago)`);
+        return;
+      }
+      
       console.log('🔄 Dashboard focused - reloading stats and offline interviews...');
-      // Refresh stats if online
+      lastFocusReloadRef.current = now;
+      
+      // Refresh stats if online (lightweight operation)
       const refreshStats = async () => {
         const isOnline = await apiService.isOnline();
         if (isOnline) {
@@ -271,11 +292,236 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
         }
       };
       refreshStats();
-      loadPendingInterviewsCount();
+      
+      // Load pending interviews count first
+      await loadPendingInterviewsCount();
+      
+      // CRITICAL: If online and there are pending interviews, trigger immediate sync
+      // Get fresh pending count from storage (not state) to ensure accuracy
+      const pendingInterviews = await offlineStorage.getPendingInterviews();
+      const freshPendingCount = pendingInterviews.length;
+      const isOnline = await apiService.isOnline();
+      
+      if (isOnline && freshPendingCount > 0 && !isSyncing) {
+        console.log(`🔄 Dashboard focused with ${freshPendingCount} pending interviews - triggering immediate sync`);
+        // Trigger sync in background (non-blocking)
+        performBackgroundSync('dashboard_focus').catch(error => {
+          console.error('Error triggering sync on dashboard focus:', error);
+        });
+      } else if (!isOnline) {
+        console.log(`📴 Dashboard focused but device is offline - sync will run when online`);
+      } else if (freshPendingCount === 0) {
+        console.log(`✅ Dashboard focused - no pending interviews to sync`);
+      }
+      
       loadOfflineInterviews();
     });
     return unsubscribe;
   }, [navigation]);
+
+  // Automatic background sync - Phase 4
+  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSyncTimeRef = useRef<number>(0);
+  const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  const MIN_SYNC_GAP_MS = 30 * 1000; // Minimum 30 seconds between syncs
+
+  // Background sync function (silent, no UI blocking)
+  const performBackgroundSync = async (reason: string) => {
+    // Don't sync if already syncing
+    if (isSyncing || syncService.isSyncInProgress()) {
+      console.log(`⏭️ Skipping background sync (${reason}) - sync already in progress`);
+      return;
+    }
+
+    // Check minimum time gap
+    const now = Date.now();
+    if (now - lastSyncTimeRef.current < MIN_SYNC_GAP_MS) {
+      console.log(`⏭️ Skipping background sync (${reason}) - too soon since last sync`);
+      return;
+    }
+
+    // Check if online
+    const isOnline = await apiService.isOnline();
+    if (!isOnline) {
+      console.log(`⏭️ Skipping background sync (${reason}) - device is offline`);
+      return;
+    }
+
+    // Check if there are pending interviews
+    const pendingInterviews = await offlineStorage.getPendingInterviews();
+    if (pendingInterviews.length === 0) {
+      console.log(`⏭️ Skipping background sync (${reason}) - no pending interviews`);
+      return;
+    }
+
+    console.log(`🔄 Starting background sync (${reason}) - ${pendingInterviews.length} pending interviews`);
+    lastSyncTimeRef.current = now;
+
+    try {
+      setIsSyncing(true);
+      const result = await syncService.syncOfflineInterviews();
+      
+      if (result.success && result.syncedCount > 0) {
+        console.log(`✅ Background sync completed: ${result.syncedCount} synced, ${result.failedCount} failed`);
+        setLastSyncTime(new Date());
+        setLastSyncResult({ synced: result.syncedCount, failed: result.failedCount });
+        
+        // Update data incrementally without full reload
+        // Only reload what's necessary to reflect sync changes
+        await loadOfflineInterviews(); // Update offline interviews list (removes synced ones)
+        await loadPendingInterviewsCount(); // Update pending count
+        // Don't reload full dashboard data - stats will update on next focus or periodic refresh
+      } else if (result.failedCount > 0) {
+        console.log(`⚠️ Background sync completed with errors: ${result.syncedCount} synced, ${result.failedCount} failed`);
+        setLastSyncTime(new Date());
+        setLastSyncResult({ synced: result.syncedCount, failed: result.failedCount });
+        // Only update offline interviews to show failed status
+        await loadOfflineInterviews();
+        await loadPendingInterviewsCount();
+      } else if (result.syncedCount === 0 && result.failedCount === 0) {
+        // No pending interviews - still update time to show sync ran
+        setLastSyncTime(new Date());
+        setLastSyncResult({ synced: 0, failed: 0 });
+      }
+    } catch (error: any) {
+      console.error('❌ Background sync error:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Monitor network state in real-time using NetInfo
+  const wasOfflineRef = useRef<boolean>(true); // Track previous state
+  
+  useEffect(() => {
+    // Set initial network state
+    NetInfo.fetch().then(state => {
+      const isConnected = state.isConnected && state.isInternetReachable !== false;
+      wasOfflineRef.current = isOffline;
+      setIsOffline(!isConnected);
+      console.log(`🌐 Initial network state: ${isConnected ? 'ONLINE' : 'OFFLINE'}`);
+    });
+
+    // Subscribe to network state changes
+    const unsubscribe = NetInfo.addEventListener(state => {
+      const isConnected = state.isConnected && state.isInternetReachable !== false;
+      const wasOffline = wasOfflineRef.current;
+      wasOfflineRef.current = !isConnected;
+      setIsOffline(!isConnected);
+      
+      console.log(`🌐 Network state changed: ${isConnected ? 'ONLINE' : 'OFFLINE'}`);
+
+      // If we just came online, trigger sync immediately
+      if (wasOffline && isConnected) {
+        console.log('🔄 Device came online - triggering background sync');
+        performBackgroundSync('network_online').catch(error => {
+          console.error('Error triggering sync on network online:', error);
+        });
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []); // Only run once on mount
+
+  // Periodic check for pending interviews when online (backup mechanism)
+  useEffect(() => {
+    if (isOffline || isSyncing) {
+      return; // Don't run if offline or already syncing
+    }
+
+    const checkAndSync = async () => {
+      // Double-check we're still online
+      const netState = await NetInfo.fetch();
+      const isConnected = netState.isConnected && netState.isInternetReachable !== false;
+      
+      if (!isConnected) {
+        setIsOffline(true);
+        return;
+      }
+
+      // Get fresh pending count from storage
+      const pendingInterviews = await offlineStorage.getPendingInterviews();
+      const freshPendingCount = pendingInterviews.length;
+      
+      if (freshPendingCount > 0) {
+        // Check if it's been more than 30 seconds since last sync attempt
+        const now = Date.now();
+        if (now - lastSyncTimeRef.current > MIN_SYNC_GAP_MS) {
+          console.log(`🔄 Periodic check: ${freshPendingCount} pending interviews - triggering sync`);
+          performBackgroundSync('periodic_check').catch(error => {
+            console.error('Error triggering sync on periodic check:', error);
+          });
+        }
+      }
+    };
+
+    // Check every 30 seconds when online
+    const interval = setInterval(checkAndSync, 30000);
+    
+    // Initial check after 5 seconds
+    const initialTimeout = setTimeout(checkAndSync, 5000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(initialTimeout);
+    };
+  }, [isOffline, isSyncing]); // Re-run when network state or sync state changes
+
+  // Periodic background sync (every 5 minutes when online)
+  useEffect(() => {
+    const setupPeriodicSync = async () => {
+      const isOnline = await apiService.isOnline();
+      if (isOnline) {
+        // Clear existing interval if any
+        if (syncIntervalRef.current) {
+          clearInterval(syncIntervalRef.current);
+        }
+
+        // Set up periodic sync
+        syncIntervalRef.current = setInterval(() => {
+          performBackgroundSync('periodic');
+        }, SYNC_INTERVAL_MS);
+
+        console.log(`⏰ Periodic sync enabled (every ${SYNC_INTERVAL_MS / 1000 / 60} minutes)`);
+      }
+    };
+
+    setupPeriodicSync();
+
+    // Re-setup when network condition changes
+    const checkInterval = setInterval(async () => {
+      const isOnline = await apiService.isOnline();
+      if (isOnline && !syncIntervalRef.current) {
+        setupPeriodicSync();
+      } else if (!isOnline && syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => {
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+      }
+      clearInterval(checkInterval);
+    };
+  }, []);
+
+  // Sync when app comes to foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        console.log('📱 App came to foreground - triggering background sync');
+        performBackgroundSync('app_foreground');
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   const loadPendingInterviewsCount = async () => {
     try {
@@ -459,18 +705,27 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
       
       if (result.success && result.syncedCount > 0) {
         showSnackbar(`Successfully synced ${result.syncedCount} interview(s)`, 'success');
+        setLastSyncTime(new Date());
+        setLastSyncResult({ synced: result.syncedCount, failed: result.failedCount });
         await loadOfflineInterviews(); // Reload offline interviews to update the list
         await loadPendingInterviewsCount();
-        await loadDashboardData(); // Refresh dashboard data
+        // Don't reload full dashboard data - only update stats if needed (lightweight)
+        // Full dashboard reload is expensive and not needed after manual sync
       } else if (result.failedCount > 0) {
         showSnackbar(`Synced ${result.syncedCount}, failed ${result.failedCount}. Check details.`, 'error');
+        setLastSyncTime(new Date());
+        setLastSyncResult({ synced: result.syncedCount, failed: result.failedCount });
         await loadOfflineInterviews(); // Reload offline interviews to show updated status
         await loadPendingInterviewsCount();
       } else if (result.syncedCount === 0 && result.failedCount === 0) {
         showSnackbar('No pending interviews to sync', 'info');
+        setLastSyncTime(new Date());
+        setLastSyncResult({ synced: 0, failed: 0 });
         await loadOfflineInterviews(); // Still reload to ensure UI is up to date
       } else {
         showSnackbar('Sync failed. Please check your internet connection.', 'error');
+        setLastSyncTime(new Date());
+        setLastSyncResult({ synced: 0, failed: 0 });
         await loadOfflineInterviews(); // Reload to show any status changes
       }
     } catch (error: any) {
@@ -498,10 +753,10 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
               await offlineStorage.deleteSyncedInterview(interviewId);
               console.log('✅ Deleted offline interview:', interviewId);
               showSnackbar('Offline interview deleted', 'success');
-              // Reload offline interviews and dashboard data
+              // Only update what's necessary - don't reload full dashboard
               await loadOfflineInterviews();
               await loadPendingInterviewsCount();
-              await loadDashboardData();
+              // Stats will update on next focus or periodic refresh
             } catch (error) {
               console.error('Error deleting offline interview:', error);
               showSnackbar('Failed to delete interview', 'error');
@@ -720,6 +975,27 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     }
   };
 
+  const formatTimeAgo = (date: Date | null) => {
+    if (!date) return '';
+    try {
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffSecs = Math.floor(diffMs / 1000);
+      const diffMins = Math.floor(diffSecs / 60);
+      const diffHours = Math.floor(diffMins / 60);
+      const diffDays = Math.floor(diffHours / 24);
+
+      if (diffSecs < 60) return 'just now';
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString();
+    } catch (error) {
+      console.error('Error formatting time ago:', error);
+      return '';
+    }
+  };
+
   const handleStartInterview = async (survey: Survey) => {
     // Check if this is a CATI interview (multi_mode with cati assignment or direct cati mode)
     const isCatiMode = survey.mode === 'cati' || (survey.mode === 'multi_mode' && survey.assignedMode === 'cati');
@@ -883,8 +1159,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
-      {/* Debug Controls - Force Offline Mode & Network Condition - Enabled for debugging */}
-      <View style={styles.debugControlsContainer}>
+      {/* Debug Controls - Force Offline Mode & Network Condition - COMMENTED OUT (can be re-enabled for debugging) */}
+      {/* <View style={styles.debugControlsContainer}>
         <TouchableOpacity
           style={[styles.debugControlButton, forceOfflineMode && styles.debugControlButtonActive]}
           onPress={toggleForceOfflineMode}
@@ -945,7 +1221,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             titleStyle={networkCondition === 'very_slow' ? { fontWeight: 'bold' } : {}}
           />
         </Menu>
-      </View>
+      </View> */}
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
         start={{ x: 0, y: 0 }}
@@ -1303,6 +1579,42 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
               >
                 {isSyncing ? 'Syncing...' : `Sync Offline Interviews${pendingInterviewsCount > 0 ? ` (${pendingInterviewsCount})` : ''}`}
               </Button>
+              
+              {/* Sync Status Indicator */}
+              <View style={styles.syncStatusContainer}>
+                {isSyncing ? (
+                  <View style={styles.syncStatusRow}>
+                    <ActivityIndicator size="small" color="#f59e0b" />
+                    <Text style={styles.syncStatusText}>Syncing in background...</Text>
+                  </View>
+                ) : lastSyncTime ? (
+                  <View style={styles.syncStatusRow}>
+                    <Ionicons 
+                      name={lastSyncResult && lastSyncResult.failed > 0 ? "warning" : lastSyncResult && lastSyncResult.synced > 0 ? "checkmark-circle" : "information-circle"} 
+                      size={14} 
+                      color={lastSyncResult && lastSyncResult.failed > 0 ? "#dc2626" : lastSyncResult && lastSyncResult.synced > 0 ? "#059669" : "#6b7280"} 
+                    />
+                    <Text style={styles.syncStatusText}>
+                      {lastSyncResult && lastSyncResult.synced > 0 
+                        ? `Last sync: ${lastSyncResult.synced} synced${lastSyncResult.failed > 0 ? `, ${lastSyncResult.failed} failed` : ''}`
+                        : lastSyncResult && lastSyncResult.failed > 0
+                        ? `Last sync: ${lastSyncResult.failed} failed`
+                        : 'Auto-sync active'}
+                      {' • '}
+                      {formatTimeAgo(lastSyncTime)}
+                    </Text>
+                  </View>
+                ) : pendingInterviewsCount > 0 ? (
+                  <View style={styles.syncStatusRow}>
+                    <Ionicons name={isOffline ? "time-outline" : "sync-outline"} size={14} color={isOffline ? "#6b7280" : "#10b981"} />
+                    <Text style={styles.syncStatusText}>
+                      {isOffline 
+                        ? `Auto-sync will run when online (${pendingInterviewsCount} pending)`
+                        : `Auto-sync active (${pendingInterviewsCount} pending)`}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
             </View>
           )}
           
@@ -1438,42 +1750,42 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 }
 
 const styles = StyleSheet.create({
-  // Debug Controls styles - Force Offline Mode & Network Condition - Enabled for debugging
-  debugControlsContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 4,
-    backgroundColor: '#f5f5f5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    gap: 8,
-  },
-  debugControlButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  debugControlButtonActive: {
-    backgroundColor: '#dc2626',
-    borderColor: '#b91c1c',
-  },
-  debugControlText: {
-    marginLeft: 6,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#666',
-  },
-  debugControlTextActive: {
-    color: '#fff',
-  },
+  // Debug Controls styles - Force Offline Mode & Network Condition - COMMENTED OUT (can be re-enabled for debugging)
+  // debugControlsContainer: {
+  //   flexDirection: 'row',
+  //   paddingHorizontal: 16,
+  //   paddingTop: 8,
+  //   paddingBottom: 4,
+  //   backgroundColor: '#f5f5f5',
+  //   borderBottomWidth: 1,
+  //   borderBottomColor: '#e0e0e0',
+  //   gap: 8,
+  // },
+  // debugControlButton: {
+  //   flex: 1,
+  //   flexDirection: 'row',
+  //   alignItems: 'center',
+  //   justifyContent: 'center',
+  //   paddingVertical: 8,
+  //   paddingHorizontal: 12,
+  //   backgroundColor: '#fff',
+  //   borderRadius: 8,
+  //   borderWidth: 1,
+  //   borderColor: '#ddd',
+  // },
+  // debugControlButtonActive: {
+  //   backgroundColor: '#dc2626',
+  //   borderColor: '#b91c1c',
+  // },
+  // debugControlText: {
+  //   marginLeft: 6,
+  //   fontSize: 13,
+  //   fontWeight: '600',
+  //   color: '#666',
+  // },
+  // debugControlTextActive: {
+  //   color: '#fff',
+  // },
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
@@ -1927,6 +2239,20 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.5,
+  },
+  syncStatusContainer: {
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  syncStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  syncStatusText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontStyle: 'italic',
   },
   offlineBadge: {
     fontSize: 12,

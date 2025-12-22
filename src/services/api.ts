@@ -935,10 +935,24 @@ class ApiService {
       );
       return { success: true, response: response.data.data };
     } catch (error: any) {
-      console.error('Complete interview error:', error);
+      // Check if this is a duplicate submission (409 Conflict)
+      // This is not really an error - interview already exists on server
+      const isDuplicate = error.response?.status === 409 || 
+                         error.response?.data?.isDuplicate === true ||
+                         (error.response?.data?.message && 
+                          error.response.data.message.toLowerCase().includes('duplicate'));
+      
+      if (isDuplicate) {
+        console.log('ℹ️ Complete interview - duplicate detected (interview already exists on server)');
+        console.log('ℹ️ This is expected behavior - interview was already successfully submitted');
+      } else {
+        console.error('Complete interview error:', error);
+      }
+      
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to complete interview',
+        isDuplicate: isDuplicate, // Include flag for duplicate detection
       };
     }
   }

@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -26,11 +27,15 @@ export interface OfflineInterview {
   startTime: string;
   endTime?: string;
   duration: number;
-  audioUri?: string | null;
+  audioUri?: string | null; // Original URI (for reference)
+  audioOfflinePath?: string | null; // Copied file path (safe storage)
+  audioUploadStatus?: 'pending' | 'uploading' | 'uploaded' | 'failed';
+  audioUploadError?: string | null;
   metadata: {
     qualityMetrics?: any;
     callStatus?: string; // For CATI
     supervisorID?: string; // For CATI
+    audioUrl?: string; // Server audio URL after upload
     [key: string]: any;
   };
   status: 'pending' | 'syncing' | 'synced' | 'failed';
@@ -349,6 +354,106 @@ class OfflineStorageService {
    */
   generateInterviewId(): string {
     return `offline_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Copy audio file to permanent offline storage location
+   * This ensures audio files are not deleted by OS cleanup
+   */
+  async copyAudioFileToOfflineStorage(audioUri: string, interviewId: string): Promise<string> {
+    try {
+      // Check if FileSystem is available
+      if (!FileSystem) {
+        throw new Error('FileSystem is not available. Make sure expo-file-system is properly installed.');
+      }
+      
+      // Check if documentDirectory is available (it should always be available in Expo)
+      if (!FileSystem.documentDirectory) {
+        // Try to use cacheDirectory as fallback (though documentDirectory should always exist)
+        console.warn('⚠️ FileSystem.documentDirectory is not available, checking cacheDirectory...');
+        if (!FileSystem.cacheDirectory) {
+          throw new Error('Neither FileSystem.documentDirectory nor FileSystem.cacheDirectory is available.');
+        }
+        console.warn('⚠️ Using cacheDirectory as fallback for audio storage');
+      }
+      
+      // Use documentDirectory if available, otherwise fallback to cacheDirectory
+      const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+      if (!baseDir) {
+        throw new Error('No valid directory available for audio storage');
+      }
+      
+      // Create offline audio directory if it doesn't exist
+      const offlineAudioDir = `${baseDir}offline_audio/`;
+      const dirInfo = await FileSystem.getInfoAsync(offlineAudioDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(offlineAudioDir, { intermediates: true });
+        console.log('✅ Created offline audio directory:', offlineAudioDir);
+      }
+      
+      // Check if source file exists
+      const sourceInfo = await FileSystem.getInfoAsync(audioUri);
+      if (!sourceInfo.exists) {
+        throw new Error(`Source audio file does not exist: ${audioUri}`);
+      }
+      
+      // Generate unique filename
+      const extension = audioUri.split('.').pop() || 'm4a';
+      const filename = `audio_${interviewId}_${Date.now()}.${extension}`;
+      const destPath = `${offlineAudioDir}${filename}`;
+      
+      // Copy file to offline storage
+      await FileSystem.copyAsync({
+        from: audioUri,
+        to: destPath,
+      });
+      
+      // Verify copy was successful
+      const destInfo = await FileSystem.getInfoAsync(destPath);
+      if (!destInfo.exists) {
+        throw new Error('Audio file copy failed - destination file does not exist');
+      }
+      
+      console.log('✅ Audio file copied to offline storage:', destPath);
+      console.log('📊 Audio file size:', destInfo.size, 'bytes');
+      return destPath;
+    } catch (error: any) {
+      console.error('❌ Error copying audio file:', error);
+      console.error('❌ FileSystem object:', FileSystem ? 'exists' : 'undefined');
+      console.error('❌ FileSystem.documentDirectory:', FileSystem?.documentDirectory || 'undefined');
+      console.error('❌ FileSystem.cacheDirectory:', FileSystem?.cacheDirectory || 'undefined');
+      throw new Error(`Failed to copy audio file to offline storage: ${error.message}`);
+    }
+  }
+
+  /**
+   * Delete audio file from offline storage
+   */
+  async deleteAudioFileFromOfflineStorage(audioOfflinePath: string): Promise<void> {
+    try {
+      // Check if FileSystem is available
+      if (!FileSystem) {
+        console.warn('⚠️ FileSystem is not available, cannot delete audio file');
+        return;
+      }
+      
+      // Check if file exists before attempting to delete
+      const fileInfo = await FileSystem.getInfoAsync(audioOfflinePath);
+      if (fileInfo.exists) {
+        await FileSystem.deleteAsync(audioOfflinePath, { idempotent: true });
+        console.log('✅ Deleted audio file from offline storage:', audioOfflinePath);
+      } else {
+        console.log('ℹ️ Audio file does not exist, skipping deletion:', audioOfflinePath);
+      }
+    } catch (error: any) {
+      console.error('❌ Error deleting audio file:', error);
+      // Don't throw - cleanup is not critical, but log for debugging
+      console.error('❌ FileSystem object:', FileSystem ? 'exists' : 'undefined');
+      if (FileSystem) {
+        console.error('❌ FileSystem.documentDirectory:', FileSystem.documentDirectory || 'undefined');
+        console.error('❌ FileSystem.cacheDirectory:', FileSystem.cacheDirectory || 'undefined');
+      }
+    }
   }
 
   // ========== Sync Queue Management ==========

@@ -1322,8 +1322,16 @@ export default function InterviewInterface({ navigation, route }: any) {
     }
     
     const maxLanguages = Math.max(...Array.from(languageCounts), 0) + 1;
+    
+    // For survey "68fd1915d41841da463f0d46", use specific language labels
+    const surveyId = survey?._id || survey?.id;
+    if (surveyId === '68fd1915d41841da463f0d46') {
+      const languageLabels = ['English', 'Bengali', 'Hindi'];
+      return Array.from({ length: maxLanguages }, (_, i) => languageLabels[i] || `Language ${i + 1}`);
+    }
+    
     return Array.from({ length: maxLanguages }, (_, i) => `Language ${i + 1}`);
-  }, [currentQuestion]);
+  }, [currentQuestion, survey]);
 
   // Fetch interviewer's first name for consent form
   useEffect(() => {
@@ -3311,369 +3319,183 @@ export default function InterviewInterface({ navigation, route }: any) {
       // This handles cases where we know the reason and don't need user input
       const shouldSkipModal = reasonOverride === 'consent_refused' || reasonOverride === 'not_voter';
       
-      if (isCatiMode && catiQueueId) {
-        // CATI mode - use CATI abandon endpoint
-        // Check if this is consent refusal
-        const consentResponse = responses['consent-form'];
-        const isConsentRefused = consentResponse === '2' || consentResponse === 2 || reasonOverride === 'consent_refused';
-        
-        // If reasonOverride is provided (e.g., 'consent_refused', 'not_voter'), use it
-        const reasonToSend = reasonOverride || (isConsentRefused ? 'consent_refused' : (callStatus === 'failed' ? (abandonReason || null) : abandonReason));
-        const notesToSend = reasonOverride === 'consent_refused' ? 'Consent form: No' : 
-                           reasonOverride === 'not_voter' ? 'Not a registered voter in this assembly constituency' :
-                           (abandonNotes && abandonNotes.trim() ? abandonNotes : undefined);
-        const dateToSend = (abandonReason === 'call_later' && callLaterDate && callLaterDate.trim()) ? callLaterDate : undefined;
-        
-        // Get call status for stats (if call was connected but consent refused)
-        const callStatusResponse = responses['call-status'];
-        const callStatusForStats = isConsentRefused ? null : callStatusResponse; // Don't pass call status if consent refused (call was connected)
-        
-        const result = await apiService.abandonCatiInterview(
-          catiQueueId,
-          reasonToSend || undefined,
-          notesToSend || undefined,
-          dateToSend || undefined,
-          callStatusForStats || undefined
-        );
-        
-        if (result.success) {
-          const message = isConsentRefused ? 'Interview abandoned. Consent refusal recorded for reporting.' :
-                         reasonOverride === 'not_voter' ? 'Interview abandoned. Not a registered voter.' :
-                         'Interview abandoned';
-          showSnackbar(message);
-          navigation.navigate('Dashboard');
-        } else {
-          // CATI interviews require internet - don't save offline
-          const errorMsg = result.message || 'Failed to abandon interview';
-          showSnackbar(errorMsg);
-        }
-      } else if (sessionId) {
-        // CAPI mode - use standard abandon endpoint with responses
-        // Check if online FIRST - if offline, save directly without API call
-        const isOnline = await apiService.isOnline();
-        if (!isOnline && !isCatiMode) {
-          // Offline mode - save directly without attempting API call
-          console.log('📴 Offline mode detected - saving abandonment offline');
-          
-          // Build final responses array for offline save
-          const finalResponses: any[] = [];
-          
-          allQuestions.forEach((question: any) => {
-            // Skip AC selection and Polling Station questions
-            const questionId = question.id || '';
-            const questionText = (question.text || '').toLowerCase();
-            const isACSelection = questionId === 'ac-selection' || 
-                                 questionText.includes('assembly constituency') ||
-                                 questionText.includes('select assembly constituency');
-            const isPollingStation = questionId === 'polling-station-selection' ||
-                                    question.type === 'polling_station' ||
-                                    question.isPollingStationSelection ||
-                                    questionText.includes('polling station') ||
-                                    questionText.includes('select polling station');
-            
-            if (isACSelection || isPollingStation) {
-              return; // Skip these questions
-            }
-            
-            let processedResponse = responses[question.id];
-            
-            // Handle "Others" option text input
-            if ((question.type === 'multiple_choice' || question.type === 'single_choice') && question.options) {
-              const othersOption = question.options.find((opt: any) => {
-                const optText = opt.text || '';
-                return isOthersOption(optText);
-              });
-              const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
-              
-              if (othersOptionValue) {
-                if (question.type === 'multiple_choice' && Array.isArray(processedResponse)) {
-                  const hasOthers = processedResponse.includes(othersOptionValue);
-                  if (hasOthers) {
-                    const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
-                    if (othersText) {
-                      processedResponse = processedResponse.map((val: string) => {
-                        if (val === othersOptionValue) {
-                          return `Others: ${othersText}`;
-                        }
-                        return val;
-                      });
-                    }
-                  }
-                } else if (processedResponse === othersOptionValue) {
-                  const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
-                  if (othersText) {
-                    processedResponse = `Others: ${othersText}`;
-                  }
-                }
-              }
-            }
-            
-            finalResponses.push({
-              sectionIndex: question.sectionIndex,
-              questionIndex: question.questionIndex,
-              questionId: question.id,
-              questionType: question.type,
-              questionText: question.text,
-              questionDescription: question.description,
-              questionOptions: question.options?.map((opt: any) => opt.text || opt.value) || [],
-              response: processedResponse || (question.type === 'multiple_choice' ? [] : ''),
-              responseTime: 0,
-              isRequired: question.required || false,
-              isSkipped: !hasResponseContent(processedResponse)
-            });
-          });
-          
-          // Use reasonOverride if provided, otherwise use abandonReason state
-          const finalAbandonReason = reasonOverride || (abandonReason === 'other' ? abandonNotes.trim() : abandonReason);
-          const finalAbandonNotes: string | undefined = reasonOverride === 'not_voter' ? 'Not a registered voter in this assembly constituency' :
-                                   reasonOverride === 'consent_refused' ? 'Consent form: No' :
-                                   (abandonReason === 'other' ? abandonNotes : undefined);
-          
-          try {
-            await saveInterviewOffline({
-              responses,
-              finalResponses,
-              isCompleted: false,
-              abandonReason: finalAbandonReason,
-              abandonNotes: finalAbandonNotes,
-            });
-            
-            Alert.alert(
-              'Interview Saved Offline',
-              'Your interview abandonment has been saved locally. It will be synced to the server when you have internet connection.',
-              [
-                {
-                  text: 'OK',
-                  onPress: () => {
-                    setShowAbandonConfirm(false);
-                    setAbandonReason('');
-                    setAbandonNotes('');
-                    navigation.navigate('Dashboard');
-                  }
-                }
-              ]
-            );
-            return; // Exit early - don't attempt API call
-          } catch (offlineError: any) {
-            console.error('Error saving offline:', offlineError);
-            showSnackbar('Failed to abandon interview and save offline. Please try again when you have internet.');
-            return; // Exit early even on error
-          }
-        }
-        
-        // Online mode - proceed with API call
-          console.log('📋 Current responses state:', Object.keys(responses).length, 'responses');
-          console.log('📋 Response keys:', Object.keys(responses));
-          
-          // Build final responses array (similar to completeInterview)
-          // Filter out AC selection and Polling Station questions (backend will also filter, but we do it here too for clarity)
-          const finalResponses: any[] = [];
-          
-          allQuestions.forEach((question: any) => {
-            // Skip AC selection and Polling Station questions (they're excluded from terminated responses)
-            const questionId = question.id || '';
-            const questionText = (question.text || '').toLowerCase();
-            const isACSelection = questionId === 'ac-selection' || 
-                                 questionText.includes('assembly constituency') ||
-                                 questionText.includes('select assembly constituency');
-            const isPollingStation = questionId === 'polling-station-selection' ||
-                                    question.type === 'polling_station' ||
-                                    question.isPollingStationSelection ||
-                                    questionText.includes('polling station') ||
-                                    questionText.includes('select polling station');
-            
-            if (isACSelection || isPollingStation) {
-              return; // Skip these questions
-            }
-            
-            let processedResponse = responses[question.id];
-            
-            // Handle "Others" option text input
-            if ((question.type === 'multiple_choice' || question.type === 'single_choice') && question.options) {
-              const othersOption = question.options.find((opt: any) => {
-                const optText = opt.text || '';
-                return isOthersOption(optText);
-              });
-              const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
-              
-              if (othersOptionValue) {
-                if (question.type === 'multiple_choice' && Array.isArray(processedResponse)) {
-                  const hasOthers = processedResponse.includes(othersOptionValue);
-                  if (hasOthers) {
-                    const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
-                    if (othersText) {
-                      processedResponse = processedResponse.map((val: string) => {
-                        if (val === othersOptionValue) {
-                          return `Others: ${othersText}`;
-                        }
-                        return val;
-                      });
-                    }
-                  }
-                } else if (processedResponse === othersOptionValue) {
-                  const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
-                  if (othersText) {
-                    processedResponse = `Others: ${othersText}`;
-                  }
-                }
-              }
-            }
-            
-            const questionOptions = question.options ? 
-              question.options.map((option: any) => {
-                if (typeof option === 'object') {
-                  return option.text || option.value || option;
-                }
-                return option;
-              }) : [];
-            
-            finalResponses.push({
-              sectionIndex: question.sectionIndex,
-              questionIndex: question.questionIndex,
-              questionId: question.id,
-              questionType: question.type,
-              questionText: question.text,
-              questionDescription: question.description,
-              questionOptions: questionOptions,
-              response: processedResponse || (question.type === 'multiple_choice' ? [] : ''),
-              responseTime: 0,
-              isRequired: question.required || false,
-              isSkipped: !hasResponseContent(processedResponse)
-            });
-          });
-          
-          // Use reasonOverride if provided, otherwise use abandonReason state
-          // This handles cases like 'consent_refused' and 'not_voter' where we know the reason
-          const finalAbandonReason = reasonOverride || (abandonReason === 'other' ? abandonNotes.trim() : abandonReason);
-          const finalAbandonNotes: string | undefined = reasonOverride === 'not_voter' ? 'Not a registered voter in this assembly constituency' :
-                                   reasonOverride === 'consent_refused' ? 'Consent form: No' :
-                                   (abandonReason === 'other' ? abandonNotes : undefined);
-          
-          const metadata = {
-            selectedAC: selectedAC || null,
-            selectedPollingStation: selectedPollingStation || null,
-            location: locationData || null,
-            qualityMetrics: {
-              averageResponseTime: 0,
-              backNavigationCount: 0,
-              dataQualityScore: 0,
-              totalPauseTime: 0,
-              totalPauses: 0
-            },
-            setNumber: selectedSetNumber || null,
-            abandonedReason: finalAbandonReason,
-            abandonmentNotes: finalAbandonNotes || undefined
-          };
-          
-          try {
-          const result = await apiService.abandonInterview(sessionId, finalResponses, metadata);
-          
-          if (result.success) {
-            setShowAbandonConfirm(false);
-            setAbandonReason('');
-            setAbandonNotes('');
-            if (result.response?.data?.responseId) {
-              showSnackbar(`Interview abandoned. Response saved (ID: ${result.response.data.responseId})`);
-            } else {
-              showSnackbar('Interview abandoned');
-            }
-            navigation.navigate('Dashboard');
-          } else {
-            // API returned error - check if network error
-            const isNetworkError = !await apiService.isOnline();
-            if (isNetworkError && !isCatiMode) {
-              // Save offline (CAPI only)
-              try {
-                await saveInterviewOffline({
-                  responses,
-                  finalResponses,
-                  isCompleted: false,
-                  abandonReason: finalAbandonReason,
-                  abandonNotes: finalAbandonNotes,
-                });
-                
-                Alert.alert(
-                  'Interview Saved Offline',
-                  'Your interview abandonment has been saved locally. It will be synced to the server when you have internet connection.',
-                  [
-                    {
-                      text: 'OK',
-                      onPress: () => {
-                        setShowAbandonConfirm(false);
-                        setAbandonReason('');
-                        setAbandonNotes('');
-                        navigation.navigate('Dashboard');
-                      }
-                    }
-                  ]
-                );
-              } catch (offlineError: any) {
-                console.error('Error saving offline:', offlineError);
-                showSnackbar('Failed to abandon interview and save offline. Please try again when you have internet.');
-              }
-          } else {
-            showSnackbar(result.message || 'Failed to abandon interview');
-            }
-          }
-        } catch (error: any) {
-          console.error('Error abandoning interview:', error);
-          
-          // Check if it's a network error
-          const isNetworkError = error.message?.includes('Network') || 
-                                error.message?.includes('timeout') ||
-                                error.code === 'NETWORK_ERROR' ||
-                                !await apiService.isOnline();
-          
-          if (isNetworkError && !isCatiMode) {
-            // Save offline (CAPI only)
-            try {
-              // Use reasonOverride if provided, otherwise use abandonReason state
-              const finalAbandonReason = reasonOverride || (abandonReason === 'other' ? abandonNotes.trim() : abandonReason);
-              const finalAbandonNotes = reasonOverride === 'not_voter' ? 'Not a registered voter in this assembly constituency' :
-                                       reasonOverride === 'consent_refused' ? 'Consent form: No' :
-                                       (abandonReason === 'other' ? abandonNotes : undefined);
-              await saveInterviewOffline({
-                responses,
-                finalResponses: undefined, // Will be built from responses if needed
-                isCompleted: false,
-                abandonReason: finalAbandonReason,
-                abandonNotes: finalAbandonNotes,
-              });
-              
-              Alert.alert(
-                'Interview Saved Offline',
-                'Your interview abandonment has been saved locally. It will be synced to the server when you have internet connection.',
-                [
-                  {
-                    text: 'OK',
-                    onPress: () => {
-                      setShowAbandonConfirm(false);
-                      setAbandonReason('');
-                      setAbandonNotes('');
-                      navigation.navigate('Dashboard');
-                    }
-                  }
-                ]
-              );
-            } catch (offlineError: any) {
-              console.error('Error saving offline:', offlineError);
-              showSnackbar('Failed to abandon interview and save offline. Please try again when you have internet.');
-            }
-          } else {
-            const errorMsg = error.response?.data?.message || error.message || 'Failed to abandon interview';
-            showSnackbar(errorMsg);
-          }
-        }
-      } else {
-        showSnackbar('No active interview to abandon');
-        navigation.navigate('Dashboard');
+      // STEP 1: ALWAYS save offline FIRST (before any API calls)
+      console.log('💾 STEP 1: Saving abandonment to offline storage FIRST...');
+      
+      // Build final responses for offline save
+      const finalResponsesForOffline = buildFinalResponsesForOffline();
+      
+      // Use reasonOverride if provided, otherwise use abandonReason state
+      const finalAbandonReason = reasonOverride || (abandonReason === 'other' ? abandonNotes.trim() : abandonReason);
+      const finalAbandonNotes = reasonOverride === 'not_voter' ? 'Not a registered voter in this assembly constituency' :
+                               reasonOverride === 'consent_refused' ? 'Consent form: No' :
+                               (abandonReason === 'other' ? abandonNotes : undefined);
+      
+      // Save to offline storage FIRST
+      const interviewId = await saveInterviewOffline({
+        responses,
+        finalResponses: finalResponsesForOffline,
+        isCompleted: false,
+        abandonReason: finalAbandonReason,
+        abandonNotes: finalAbandonNotes,
+      });
+      
+      console.log('✅ Abandonment saved offline:', interviewId);
+      
+      // STEP 2: Close abandon modal and show brief success message
+      setShowAbandonConfirm(false);
+      setAbandonReason('');
+      setAbandonNotes('');
+      showSnackbar('✅ Abandonment saved! Syncing in background...', 'success');
+      
+      // Navigate back smoothly without full reset
+      setTimeout(() => {
+        navigation.goBack();
+      }, 500); // Small delay to show the success message
+      
+      // STEP 3: Abandonment is saved offline - sync service will handle submission
+      // CRITICAL: Do NOT attempt background submission here
+      // The sync service will handle ALL submissions to prevent race conditions
+      // This ensures proper coordination and prevents duplicate submissions
+      console.log('✅ Abandonment saved offline - sync service will handle submission');
+      console.log('✅ No background submission - sync service is the single source of truth');
+      
+      return; // Exit early - sync service will handle submission
+      
+    } catch (error: any) {
+      console.error('❌ Error abandoning interview:', error);
+      showSnackbar('Error saving abandonment. Please try again.');
+    }
+  };
+
+  // Background abandonment function for CATI interviews
+  const attemptCatiAbandonmentInBackground = async (
+    interviewId: string,
+    catiQueueId: string,
+    reasonOverride: string | null,
+    finalAbandonReason: string,
+    finalAbandonNotes: string | undefined
+  ): Promise<void> => {
+    try {
+      console.log(`🔄 Background CATI abandonment for interview: ${interviewId}`);
+      
+      const isOnline = await apiService.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - abandonment saved, will sync when online');
+        return;
       }
-    } catch (err: any) {
-      console.error('Error abandoning interview:', err);
-      const errorMsg = err.response?.data?.message || err.message || 'Failed to abandon interview';
-      showSnackbar(errorMsg);
-    } finally {
-      setIsLoading(false);
+
+      const interview = await offlineStorage.getOfflineInterviewById(interviewId);
+      if (!interview) {
+        throw new Error('Interview not found in offline storage');
+      }
+
+      await offlineStorage.updateInterviewStatus(interviewId, 'syncing');
+
+      const consentResponse = interview.responses['consent-form'];
+      const isConsentRefused = consentResponse === '2' || consentResponse === 2 || reasonOverride === 'consent_refused';
+      
+      const reasonToSend = reasonOverride || (isConsentRefused ? 'consent_refused' : finalAbandonReason);
+      const notesToSend = reasonOverride === 'consent_refused' ? 'Consent form: No' : 
+                         reasonOverride === 'not_voter' ? 'Not a registered voter in this assembly constituency' :
+                         (finalAbandonNotes || undefined);
+      const dateToSend = (finalAbandonReason === 'call_later' && interview.metadata?.callLaterDate) ? interview.metadata.callLaterDate : undefined;
+      
+      const callStatusResponse = interview.responses['call-status'];
+      const callStatusForStats = isConsentRefused ? null : callStatusResponse;
+
+      const result = await apiService.abandonCatiInterview(
+        catiQueueId,
+        reasonToSend || undefined,
+        notesToSend || undefined,
+        dateToSend || undefined,
+        callStatusForStats || undefined
+      );
+
+      // CRITICAL: Verify API response before considering it successful
+      if (!result || !result.success) {
+        throw new Error(result?.message || 'CATI abandonment failed');
+      }
+      
+      // CRITICAL: Do NOT mark as synced or delete here
+      // Let the sync service handle status updates and cleanup after proper verification
+      console.log('✅ Background CATI abandonment completed - sync service will verify and cleanup:', interviewId);
+      
+      // Update status back to pending so sync service can handle it properly
+      await offlineStorage.updateInterviewStatus(interviewId, 'pending');
+    } catch (error: any) {
+      console.error('❌ Background CATI abandonment error:', error);
+      await offlineStorage.updateInterviewStatus(interviewId, 'failed', error.message);
+    }
+  };
+
+  // Background abandonment function for CAPI interviews
+  const attemptCapiAbandonmentInBackground = async (
+    interviewId: string,
+    sessionId: string,
+    finalResponses: any[],
+    finalAbandonReason: string,
+    finalAbandonNotes: string | undefined
+  ): Promise<void> => {
+    try {
+      console.log(`🔄 Background CAPI abandonment for interview: ${interviewId}`);
+      
+      const isOnline = await apiService.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - abandonment saved, will sync when online');
+        return;
+      }
+
+      const interview = await offlineStorage.getOfflineInterviewById(interviewId);
+      if (!interview) {
+        throw new Error('Interview not found in offline storage');
+      }
+
+      await offlineStorage.updateInterviewStatus(interviewId, 'syncing');
+
+      const metadata = {
+        selectedAC: interview.selectedAC || null,
+        selectedPollingStation: interview.selectedPollingStation || null,
+        location: interview.locationData || null,
+        qualityMetrics: {
+          averageResponseTime: 0,
+          backNavigationCount: 0,
+          dataQualityScore: 0,
+          totalPauseTime: 0,
+          totalPauses: 0
+        },
+        setNumber: interview.selectedSetNumber || null,
+        abandonedReason: finalAbandonReason,
+        abandonmentNotes: finalAbandonNotes || undefined
+      };
+
+      const result = await apiService.abandonInterview(sessionId, finalResponses, metadata);
+
+      // CRITICAL: Verify API response before considering it successful
+      if (!result || !result.success) {
+        throw new Error(result?.message || 'CAPI abandonment failed');
+      }
+      
+      // CRITICAL: Verify that the abandonment was actually recorded on the server
+      const responseId = result.response?._id || 
+                         result.response?.id || 
+                         result.response?.mongoId || 
+                         result.response?.responseId;
+      
+      if (!result.response || !responseId) {
+        throw new Error('Abandonment returned success but no response ID - may have failed');
+      }
+      
+      // CRITICAL: Do NOT mark as synced or delete here
+      // Let the sync service handle status updates and cleanup after proper verification
+      console.log('✅ Background CAPI abandonment completed - sync service will verify and cleanup:', interviewId);
+      console.log('✅ Response ID:', responseId);
+      
+      // Update status back to pending so sync service can handle it properly
+      await offlineStorage.updateInterviewStatus(interviewId, 'pending');
+    } catch (error: any) {
+      console.error('❌ Background CAPI abandonment error:', error);
+      await offlineStorage.updateInterviewStatus(interviewId, 'failed', error.message);
     }
   };
 
@@ -4193,12 +4015,11 @@ export default function InterviewInterface({ navigation, route }: any) {
       isCompleted: boolean;
       abandonReason?: string;
       abandonNotes?: string;
+      audioUri?: string | null; // Optional: pass audio URI directly
     }
   ): Promise<string> => {
-    // CATI interviews should not be saved offline - they require internet
-    if (isCatiMode) {
-      throw new Error('CATI interviews cannot be saved offline - internet connection required');
-    }
+    // CATI interviews can now be saved offline as backup
+    // They will still require internet for final sync, but can be saved for safety
     
     try {
       const interviewId = offlineStorage.generateInterviewId();
@@ -4230,12 +4051,14 @@ export default function InterviewInterface({ navigation, route }: any) {
       
       console.log('📊 Saving interview with duration:', actualDuration, 'seconds');
       
-      // Ensure audio is stopped and saved - CRITICAL for offline mode
-      let finalAudioUri = audioUri;
-      if (isRecording || !audioUri) {
+      // Get audio URI - use provided one or current state
+      let finalAudioUri = interviewData.audioUri || audioUri;
+      
+      // Ensure audio is stopped and saved - CRITICAL for offline mode (only for CAPI)
+      if (!isCatiMode && (isRecording || !finalAudioUri)) {
         console.log('🔄 Stopping audio recording before saving offline...');
         console.log('   Current isRecording:', isRecording);
-        console.log('   Current audioUri:', audioUri);
+        console.log('   Current audioUri:', finalAudioUri);
         try {
           const stoppedUri = await stopAudioRecording();
           if (stoppedUri) {
@@ -4256,14 +4079,26 @@ export default function InterviewInterface({ navigation, route }: any) {
         console.log('✅ Using existing audio URI:', finalAudioUri);
       }
       
-      // Verify audio file exists if URI is present
-      if (finalAudioUri) {
+      // Copy audio file to offline storage (only for CAPI, CATI doesn't have audio)
+      let audioOfflinePath: string | null = null;
+      if (!isCatiMode && finalAudioUri) {
         try {
+          // Verify audio file exists
           const fileInfo = await FileSystem.getInfoAsync(finalAudioUri);
-          if (fileInfo.exists) {
+          if (fileInfo.exists && fileInfo.size > 0) {
             console.log('✅ Audio file exists at path:', finalAudioUri, 'Size:', fileInfo.size, 'bytes');
+            
+            // Copy to offline storage
+            try {
+              audioOfflinePath = await offlineStorage.copyAudioFileToOfflineStorage(finalAudioUri, interviewId);
+              console.log('✅ Audio file copied to offline storage:', audioOfflinePath);
+            } catch (copyError: any) {
+              console.error('❌ Error copying audio file to offline storage:', copyError);
+              // Continue anyway - interview will be saved without offline audio copy
+              // Original URI will still be stored
+            }
           } else {
-            console.error('❌ Audio file does NOT exist at path:', finalAudioUri);
+            console.error('❌ Audio file does NOT exist or is empty at path:', finalAudioUri);
             console.warn('⚠️ Saving interview without audio file');
             finalAudioUri = null; // Don't save invalid URI
           }
@@ -4271,6 +4106,8 @@ export default function InterviewInterface({ navigation, route }: any) {
           console.error('❌ Error checking audio file:', fileCheckError);
           // Continue anyway - file might exist but check failed
         }
+      } else if (isCatiMode) {
+        console.log('ℹ️ CATI interview - no audio recording');
       } else {
         console.warn('⚠️ No audio URI to save for offline interview');
       }
@@ -4281,9 +4118,9 @@ export default function InterviewInterface({ navigation, route }: any) {
         survey: null, // Don't store full survey - will be fetched from cache during sync using surveyId
         surveyName: survey.surveyName, // Store survey name for display
         sessionId: sessionId || undefined,
-        catiQueueId: undefined, // Not used for CAPI
-        callId: undefined, // Not used for CAPI
-        isCatiMode: false, // Always false for offline saved interviews
+        catiQueueId: isCatiMode ? (catiQueueId || undefined) : undefined,
+        callId: isCatiMode ? (callId || undefined) : undefined,
+        isCatiMode: isCatiMode, // Support both CAPI and CATI
         responses: interviewData.responses,
         locationData: locationData, // Includes GPS coordinates, address, city, state, etc.
         selectedAC: selectedAC || null,
@@ -4306,7 +4143,10 @@ export default function InterviewInterface({ navigation, route }: any) {
         startTime: startTime ? startTime.toISOString() : new Date().toISOString(),
         endTime: endTime.toISOString(),
         duration: actualDuration, // Use calculated duration
-        audioUri: finalAudioUri || null, // Use final audio URI
+        audioUri: finalAudioUri || null, // Original URI (for reference)
+        audioOfflinePath: audioOfflinePath || null, // Copied file path (safe storage)
+        audioUploadStatus: audioOfflinePath ? 'pending' : undefined, // Set status if audio exists
+        audioUploadError: null,
         metadata: {
           qualityMetrics: {
             averageResponseTime: 0,
@@ -4334,6 +4174,511 @@ export default function InterviewInterface({ navigation, route }: any) {
     } catch (error: any) {
       console.error('❌ Error saving interview offline:', error);
       throw error;
+    }
+  };
+
+  // Helper function: Build final responses array (used by both save and submit)
+  const buildFinalResponsesForSubmission = (): any[] => {
+    return allQuestions.map((question: any, index: number) => {
+      const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
+      const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
+      
+      let processedResponse: any;
+      if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
+        if (Array.isArray(response)) {
+          processedResponse = response;
+        } else if (response && response !== '') {
+          processedResponse = [response];
+        } else {
+          processedResponse = [];
+        }
+      } else {
+        processedResponse = response || '';
+      }
+      
+      let responseCodes: string | string[] | null = null;
+      let responseWithCodes: any = null;
+      
+      const othersOption = question.options?.find((opt: any) => {
+        const optText = opt.text || '';
+        return isOthersOption(optText);
+      });
+      const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
+      
+      if (question.type === 'multiple_choice' && question.options) {
+        if (Array.isArray(processedResponse)) {
+          responseCodes = [];
+          responseWithCodes = [];
+          processedResponse.forEach((respValue: string) => {
+            const selectedOption = question.options.find((opt: any) => {
+              const optValue = opt.value || opt.text;
+              return optValue === respValue;
+            });
+            if (selectedOption) {
+              const optText = selectedOption.text || '';
+              const optCode = selectedOption.code || null;
+              const isOthers = isOthersOption(optText);
+              if (isOthers) {
+                const othersText = othersTextInputs[`${question.id}_${respValue}`] || '';
+                if (othersText) {
+                  (responseCodes as string[]).push(optCode || respValue);
+                  (responseWithCodes as any[]).push({
+                    code: optCode || respValue,
+                    answer: othersText,
+                    optionText: optText
+                  });
+                } else {
+                  (responseCodes as string[]).push(optCode || respValue);
+                  (responseWithCodes as any[]).push({
+                    code: optCode || respValue,
+                    answer: optText,
+                    optionText: optText
+                  });
+                }
+              } else {
+                (responseCodes as string[]).push(optCode || respValue);
+                (responseWithCodes as any[]).push({
+                  code: optCode || respValue,
+                  answer: optText,
+                  optionText: optText
+                });
+              }
+            }
+          });
+        } else {
+          const selectedOption = question.options.find((opt: any) => {
+            const optValue = opt.value || opt.text;
+            return optValue === processedResponse;
+          });
+          if (selectedOption) {
+            const optText = selectedOption.text || '';
+            const optCode = selectedOption.code || null;
+            const isOthers = isOthersOption(optText);
+            if (isOthers) {
+              const othersText = othersTextInputs[`${question.id}_${processedResponse}`] || '';
+              if (othersText) {
+                responseCodes = optCode || processedResponse;
+                responseWithCodes = {
+                  code: optCode || processedResponse,
+                  answer: othersText,
+                  optionText: optText
+                };
+              } else {
+                responseCodes = optCode || processedResponse;
+                responseWithCodes = {
+                  code: optCode || processedResponse,
+                  answer: optText,
+                  optionText: optText
+                };
+              }
+            } else {
+              responseCodes = optCode || processedResponse;
+              responseWithCodes = {
+                code: optCode || processedResponse,
+                answer: optText,
+                optionText: optText
+              };
+            }
+          }
+        }
+      }
+      
+      let finalResponse = processedResponse;
+      if (question.type === 'multiple_choice' && responseWithCodes) {
+        if (Array.isArray(responseWithCodes)) {
+          const othersResponse = responseWithCodes.find((r: any) => r.optionText && isOthersOption(r.optionText) && r.answer !== r.optionText);
+          if (othersResponse) {
+            finalResponse = (processedResponse as string[]).map((val: string) => {
+              if (val === othersResponse.code || val === othersOptionValue) {
+                return `Others: ${othersResponse.answer}`;
+              }
+              return val;
+            });
+          }
+        } else if (responseWithCodes.optionText && isOthersOption(responseWithCodes.optionText) && responseWithCodes.answer !== responseWithCodes.optionText) {
+          finalResponse = `Others: ${responseWithCodes.answer}`;
+        }
+      }
+      
+      return {
+        sectionIndex: 0,
+        questionIndex: index,
+        questionId: question.id,
+        questionType: question.type,
+        questionText: question.text,
+        questionDescription: question.description,
+        questionOptions: question.options?.map((opt: any) => opt.value) || [],
+        response: finalResponse,
+        responseCodes: responseCodes,
+        responseWithCodes: responseWithCodes,
+        responseTime: 0,
+        isRequired: question.required,
+        isSkipped: !response
+      };
+    });
+  };
+
+  // Helper function: Build final responses for offline save (simpler format)
+  const buildFinalResponsesForOffline = (): any[] => {
+    return allQuestions.map((question: any, index: number) => {
+      const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
+      const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
+      
+      let processedResponse: any;
+      if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
+        if (Array.isArray(response)) {
+          processedResponse = response;
+        } else if (response && response !== '') {
+          processedResponse = [response];
+        } else {
+          processedResponse = [];
+        }
+      } else {
+        processedResponse = response || '';
+      }
+      
+      const othersOption = question.options?.find((opt: any) => {
+        const optText = opt.text || '';
+        return isOthersOption(optText);
+      });
+      const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
+      
+      let finalResponse = processedResponse;
+      if (othersOptionValue && (processedResponse === othersOptionValue || 
+          (Array.isArray(processedResponse) && processedResponse.includes(othersOptionValue)))) {
+        const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
+        if (othersText) {
+          if (Array.isArray(processedResponse)) {
+            finalResponse = processedResponse.map((r: any) => 
+              r === othersOptionValue ? `Others: ${othersText}` : r
+            );
+          } else {
+            finalResponse = `Others: ${othersText}`;
+          }
+        }
+      }
+      
+      return {
+        sectionIndex: question.sectionIndex || 0,
+        questionIndex: question.questionIndex !== undefined ? question.questionIndex : index,
+        questionId: question.id,
+        questionType: question.type,
+        questionText: question.text,
+        questionDescription: question.description,
+        questionOptions: question.options?.map((opt: any) => (typeof opt === 'object' ? opt.text : opt)) || [],
+        response: finalResponse,
+        responseTime: 0,
+        isRequired: question.required || false,
+        isSkipped: !response || (Array.isArray(response) && response.length === 0)
+      };
+    });
+  };
+
+  // Background submission function for CAPI interviews
+  const attemptCapiOnlineSubmission = async (
+    interviewId: string,
+    finalResponses: any[],
+    audioUri: string | null,
+    audioOfflinePath: string | null
+  ): Promise<void> => {
+    try {
+      console.log(`🔄 Background submission for interview: ${interviewId}`);
+      
+      // Check if online
+      const isOnline = await apiService.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - interview saved, will sync later');
+        return;
+      }
+
+      // Get interview from offline storage
+      const interview = await offlineStorage.getOfflineInterviewById(interviewId);
+      if (!interview) {
+        throw new Error('Interview not found in offline storage');
+      }
+
+      // Update status to syncing
+      await offlineStorage.updateInterviewStatus(interviewId, 'syncing');
+
+      // Upload audio if available (use offline path if available, otherwise original URI)
+      let audioUrl: string | null = null;
+      let audioFileSize: number = 0;
+      
+      const audioPathToUpload = audioOfflinePath || audioUri;
+      if (audioPathToUpload && !isCatiMode) {
+        try {
+          // Check if audio is already uploaded
+          if (interview.audioUploadStatus === 'uploaded' && interview.metadata?.audioUrl) {
+            audioUrl = interview.metadata.audioUrl;
+            console.log('✅ Using already uploaded audio:', audioUrl);
+          } else {
+            // Upload audio with retry
+            console.log('📤 Uploading audio file...');
+            interview.audioUploadStatus = 'uploading';
+            await offlineStorage.saveOfflineInterview(interview);
+
+            const uploadResult = await apiService.uploadAudioFile(
+              audioPathToUpload,
+              sessionId!,
+              survey._id
+            );
+
+            if (uploadResult.success && uploadResult.response?.audioUrl) {
+              audioUrl = uploadResult.response.audioUrl;
+              audioFileSize = uploadResult.response.size || 0;
+              interview.audioUploadStatus = 'uploaded';
+              interview.metadata = {
+                ...interview.metadata,
+                audioUrl: audioUrl,
+              };
+              await offlineStorage.saveOfflineInterview(interview);
+              console.log('✅ Audio uploaded successfully:', audioUrl);
+            } else {
+              throw new Error(uploadResult.message || 'Audio upload failed');
+            }
+          }
+        } catch (audioError: any) {
+          console.error('❌ Audio upload failed:', audioError);
+          interview.audioUploadStatus = 'failed';
+          interview.audioUploadError = audioError.message;
+          await offlineStorage.saveOfflineInterview(interview);
+          // Continue with submission even if audio upload failed
+          console.log('⚠️ Continuing with submission without audio');
+        }
+      }
+
+      // Extract metadata
+      const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+      let oldInterviewerID: string | null = null;
+      let supervisorID: string | null = null;
+      if (isTargetSurvey) {
+        const interviewerIdResponse = responses['interviewer-id'];
+        if (interviewerIdResponse !== null && interviewerIdResponse !== undefined && interviewerIdResponse !== '') {
+          oldInterviewerID = String(interviewerIdResponse);
+        }
+        const supervisorIdResponse = responses['supervisor-id'];
+        if (supervisorIdResponse !== null && supervisorIdResponse !== undefined && supervisorIdResponse !== '') {
+          supervisorID = String(supervisorIdResponse);
+        }
+      }
+
+      // Complete interview
+      const result = await apiService.completeInterview(sessionId!, {
+        responses: finalResponses,
+        qualityMetrics: {
+          averageResponseTime: 1,
+          backNavigationCount: 0,
+          dataQualityScore: 100,
+          totalPauseTime: 0,
+          totalPauses: 0
+        },
+        metadata: {
+          survey: survey._id,
+          interviewer: sessionData?.interviewer || 'current-user',
+          status: 'Pending_Approval',
+          sessionId: sessionId,
+          startTime: sessionData?.startTime || startTime || new Date(),
+          endTime: new Date(),
+          totalTimeSpent: duration,
+          interviewMode: survey.mode === 'multi_mode' ? (survey.assignedMode || 'capi') : (survey.mode || 'capi'),
+          deviceInfo: {
+            userAgent: 'React Native App',
+            platform: 'Mobile',
+            browser: 'React Native',
+            screenResolution: `${width}x${height}`,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+          },
+          audioRecording: audioUrl ? {
+            audioUrl: audioUrl,
+            hasAudio: true,
+            recordingDuration: Math.round(duration),
+            format: 'm4a',
+            codec: 'aac',
+            bitrate: 128000,
+            fileSize: audioFileSize,
+            uploadedAt: new Date().toISOString()
+          } : null,
+          location: locationData,
+          selectedAC: selectedAC,
+          selectedPollingStation: selectedPollingStation.stationName ? {
+            state: selectedPollingStation.state,
+            acNo: selectedPollingStation.acNo,
+            acName: selectedPollingStation.acName,
+            pcNo: selectedPollingStation.pcNo,
+            pcName: selectedPollingStation.pcName,
+            district: selectedPollingStation.district,
+            groupName: selectedPollingStation.groupName,
+            stationName: selectedPollingStation.stationName,
+            gpsLocation: selectedPollingStation.gpsLocation,
+            latitude: selectedPollingStation.latitude,
+            longitude: selectedPollingStation.longitude
+          } : null,
+          totalQuestions: allQuestions.length,
+          answeredQuestions: finalResponses.filter((r: any) => hasResponseContent(r.response)).length,
+          skippedQuestions: finalResponses.filter((r: any) => !hasResponseContent(r.response)).length,
+          completionPercentage: Math.round((finalResponses.filter((r: any) => hasResponseContent(r.response)).length / allQuestions.length) * 100),
+          setNumber: null,
+          OldinterviewerID: oldInterviewerID,
+          supervisorID: supervisorID
+        }
+      });
+
+      // CRITICAL: Verify API response before considering it successful
+      if (!result || !result.success) {
+        throw new Error(result?.message || 'Submission failed');
+      }
+      
+      // CRITICAL: Verify that the interview was actually created on the server
+      // Check for response ID to confirm server-side creation
+      const responseId = result.response?._id || 
+                         result.response?.id || 
+                         result.response?.mongoId || 
+                         result.response?.responseId;
+      
+      if (!result.response || !responseId) {
+        throw new Error('Submission returned success but no response ID - may have failed');
+      }
+      
+      // CRITICAL: Store responseId in interview metadata so sync service knows it's already submitted
+      const savedInterview = await offlineStorage.getOfflineInterviewById(interviewId);
+      if (savedInterview) {
+        savedInterview.metadata = {
+          ...savedInterview.metadata,
+          responseId: responseId,
+          serverResponseId: responseId,
+        };
+        await offlineStorage.saveOfflineInterview(savedInterview);
+        console.log('✅ Stored responseId in interview metadata:', responseId);
+      }
+      
+      // CRITICAL: Do NOT mark as synced or delete here
+      // Let the sync service handle status updates and cleanup after proper verification
+      // Just log success - the sync service will pick it up and verify it properly
+      console.log('✅ Background submission completed - sync service will verify and cleanup:', interviewId);
+      console.log('✅ Response ID:', responseId);
+      
+      // Update status back to pending so sync service can handle it properly
+      // The sync service will verify the submission and mark as synced
+      await offlineStorage.updateInterviewStatus(interviewId, 'pending');
+    } catch (error: any) {
+      console.error('❌ Background submission error:', error);
+      // Mark as failed, will retry later
+      await offlineStorage.updateInterviewStatus(interviewId, 'failed', error.message);
+    }
+  };
+
+  // Background submission function for CATI interviews
+  const attemptCatiOnlineSubmission = async (
+    interviewId: string,
+    finalResponses: any[],
+    catiQueueId: string
+  ): Promise<void> => {
+    try {
+      console.log(`🔄 Background CATI submission for interview: ${interviewId}`);
+      
+      // Check if online
+      const isOnline = await apiService.isOnline();
+      if (!isOnline) {
+        console.log('📴 Offline - CATI interview saved, will sync when online');
+        return;
+      }
+
+      // Get interview from offline storage
+      const interview = await offlineStorage.getOfflineInterviewById(interviewId);
+      if (!interview) {
+        throw new Error('Interview not found in offline storage');
+      }
+
+      // Update status to syncing
+      await offlineStorage.updateInterviewStatus(interviewId, 'syncing');
+
+      // Extract metadata
+      const answeredCount = finalResponses.filter((r: any) => hasResponseContent(r.response)).length;
+      const totalCount = allQuestions.length;
+      let finalSetNumber = selectedSetNumber;
+      
+      if (finalSetNumber === null && survey) {
+        const setNumbers = new Set<number>();
+        survey.sections?.forEach((section: any) => {
+          section.questions?.forEach((question: any) => {
+            if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
+              const wasAnswered = finalResponses.some((r: any) => r.questionId === question.id);
+              if (wasAnswered) {
+                setNumbers.add(question.setNumber);
+              }
+            }
+          });
+        });
+        const setArray = Array.from(setNumbers).sort((a, b) => a - b);
+        if (setArray.length > 0) {
+          finalSetNumber = setArray[0];
+        }
+      }
+
+      const callStatusResponse = responses['call-status'];
+      const finalCallStatus = callStatusResponse === 'call_connected' ? 'success' : (callStatusResponse || 'unknown');
+
+      const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
+      let oldInterviewerID: string | null = null;
+      let supervisorID: string | null = null;
+      if (isTargetSurvey) {
+        const interviewerIdResponse = responses['interviewer-id'];
+        if (interviewerIdResponse !== null && interviewerIdResponse !== undefined && interviewerIdResponse !== '') {
+          oldInterviewerID = String(interviewerIdResponse);
+        }
+        const supervisorIdResponse = responses['supervisor-id'];
+        if (supervisorIdResponse !== null && supervisorIdResponse !== undefined && supervisorIdResponse !== '') {
+          supervisorID = String(supervisorIdResponse);
+        }
+      }
+
+      // Complete CATI interview
+      const result = await apiService.completeCatiInterview(catiQueueId, {
+        sessionId: sessionId,
+        responses: finalResponses,
+        selectedAC: selectedAC || null,
+        selectedPollingStation: selectedPollingStation.stationName ? {
+          state: selectedPollingStation.state,
+          acNo: selectedPollingStation.acNo,
+          acName: selectedPollingStation.acName,
+          pcNo: selectedPollingStation.pcNo,
+          pcName: selectedPollingStation.pcName,
+          district: selectedPollingStation.district,
+          groupName: selectedPollingStation.groupName,
+          stationName: selectedPollingStation.stationName,
+          gpsLocation: selectedPollingStation.gpsLocation,
+          latitude: selectedPollingStation.latitude,
+          longitude: selectedPollingStation.longitude
+        } : null,
+        totalTimeSpent: duration,
+        startTime: sessionData?.startTime || startTime || new Date(),
+        endTime: new Date(),
+        totalQuestions: totalCount,
+        answeredQuestions: answeredCount,
+        completionPercentage: totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0,
+        setNumber: finalSetNumber,
+        OldinterviewerID: oldInterviewerID,
+        callStatus: finalCallStatus,
+        supervisorID: supervisorID
+      });
+
+      // CRITICAL: Verify API response before considering it successful
+      if (!result || !result.success) {
+        throw new Error(result?.message || 'CATI submission failed');
+      }
+      
+      // CRITICAL: Do NOT mark as synced or delete here
+      // Let the sync service handle status updates and cleanup after proper verification
+      // Just log success - the sync service will pick it up and verify it properly
+      console.log('✅ Background CATI submission completed - sync service will verify and cleanup:', interviewId);
+      
+      // Update status back to pending so sync service can handle it properly
+      // The sync service will verify the submission and mark as synced
+      await offlineStorage.updateInterviewStatus(interviewId, 'pending');
+    } catch (error: any) {
+      console.error('❌ Background CATI submission error:', error);
+      // Mark as failed, will retry later
+      await offlineStorage.updateInterviewStatus(interviewId, 'failed', error.message);
     }
   };
 
@@ -4604,738 +4949,75 @@ export default function InterviewInterface({ navigation, route }: any) {
       setIsLoading(true);
       setIsSubmitting(true);
       
-      // Check if offline BEFORE attempting API call
-      const isOnline = await apiService.isOnline();
-      if (!isOnline && !isCatiMode) {
-        // Offline mode - save directly without trying API call
-        console.log('📴 Offline mode detected - saving interview offline directly');
-        
-        // Stop audio recording first - CRITICAL for offline mode
-        let currentAudioUri = audioUri;
-        console.log('🔍 Audio state before saving offline:');
-        console.log('   isRecording:', isRecording);
-        console.log('   audioUri:', audioUri);
-        console.log('   globalRecording exists:', !!globalRecording);
-        
-        if (isRecording || !audioUri) {
-          console.log('🛑 Stopping audio recording before saving offline...');
-          try {
-            const stoppedUri = await stopAudioRecording();
-            if (stoppedUri) {
-              currentAudioUri = stoppedUri;
-              setAudioUri(stoppedUri); // Update state with final audio URI
-              console.log('✅ Audio stopped and URI saved:', currentAudioUri);
-            } else {
-              console.warn('⚠️ stopAudioRecording returned null, using existing audioUri:', audioUri);
-              currentAudioUri = audioUri;
-            }
-          } catch (audioStopError) {
-            console.error('❌ Error stopping audio:', audioStopError);
-            // Continue with existing audioUri if available
-            if (!currentAudioUri) {
-              console.warn('⚠️ No audio URI available after error');
-            }
-          }
-        } else {
-          console.log('✅ Using existing audio URI:', currentAudioUri);
-        }
-        
-        // Verify audio file exists
-        if (currentAudioUri) {
-          try {
-            const fileInfo = await FileSystem.getInfoAsync(currentAudioUri);
-            if (fileInfo.exists) {
-              console.log('✅ Audio file verified, size:', fileInfo.size, 'bytes');
-            } else {
-              console.error('❌ Audio file does NOT exist at:', currentAudioUri);
-              currentAudioUri = null; // Don't save invalid URI
-            }
-          } catch (fileCheckError) {
-            console.error('❌ Error checking audio file:', fileCheckError);
-            // Continue anyway - might be a permission issue
-          }
-        }
-        
-        // Build finalResponses from responses using the same logic as online completion
-        // This ensures all data (including "Others" text, response codes, etc.) is preserved
-        const finalResponsesToSave = allQuestions.map((question: any, index: number) => {
-          const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
-          const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
-          
-          // Process response similar to online completion
-          let processedResponse: any;
-          if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
-            if (Array.isArray(response)) {
-              processedResponse = response;
-            } else if (response && response !== '') {
-              processedResponse = [response];
-            } else {
-              processedResponse = [];
-            }
-          } else {
-            processedResponse = response || '';
-          }
-          
-          // Handle "Others" option text input
-          const othersOption = question.options?.find((opt: any) => {
-            const optText = opt.text || '';
-            return isOthersOption(optText);
-          });
-          const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
-          
-          // If response includes "Others" option, append the text input
-          let finalResponse = processedResponse;
-          if (othersOptionValue && (processedResponse === othersOptionValue || 
-              (Array.isArray(processedResponse) && processedResponse.includes(othersOptionValue)))) {
-            const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
-            if (othersText) {
-              if (Array.isArray(processedResponse)) {
-                finalResponse = processedResponse.map((r: any) => 
-                  r === othersOptionValue ? `Others: ${othersText}` : r
-                );
-              } else {
-                finalResponse = `Others: ${othersText}`;
-              }
-            }
-          }
-          
-          return {
-            sectionIndex: question.sectionIndex || 0,
-            questionIndex: question.questionIndex !== undefined ? question.questionIndex : index,
-            questionId: question.id,
-            questionType: question.type,
-            questionText: question.text,
-            questionDescription: question.description,
-            questionOptions: question.options?.map((opt: any) => (typeof opt === 'object' ? opt.text : opt)) || [],
-            response: finalResponse,
-            responseTime: 0,
-            isRequired: question.required || false,
-            isSkipped: !response || (Array.isArray(response) && response.length === 0)
-          };
-        });
-        
-        await saveInterviewOffline({
-          responses,
-          finalResponses: finalResponsesToSave,
-          isCompleted: true,
-        });
-        
-        Alert.alert(
-          'Interview Saved Offline',
-          'Your interview has been saved locally. It will be synced to the server when you have internet connection. You can sync it from the dashboard.',
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                navigation.reset({
-                  index: 0,
-                  routes: [{ name: 'Dashboard' }],
-                });
-              }
-            }
-          ]
-        );
-        setIsLoading(false);
-        setIsSubmitting(false);
-        return;
-      }
+      console.log('💾 STEP 1: Saving interview to offline storage FIRST (before any API calls)...');
       
-      // Stop audio recording and get audio URI
-      // Stop audio recording and upload if available (only for CAPI mode)
-      let audioUrl = null;
-      let audioFileSize = 0;
-      
-      if (!isCatiMode) {
-        // Only process audio for CAPI mode
-        let currentAudioUri = audioUri;
-        console.log('Current audioUri state:', audioUri);
-        console.log('Is recording:', isRecording);
-        
-        if (isRecording) {
-          // Stop recording and get the real audio file
-          console.log('Stopping audio recording...');
-          currentAudioUri = await stopAudioRecording();
-          setAudioUri(currentAudioUri); // Update state with final audio URI
-          console.log('Audio file path from stopRecording:', currentAudioUri);
-        }
-        
-        console.log('Final currentAudioUri:', currentAudioUri);
-        
-        // Upload audio file if available (only if online)
-        if (currentAudioUri && isOnline) {
-          console.log('Uploading audio file...', currentAudioUri);
-          
-          try {
-            // Check if file exists before uploading
-            const fileInfo = await FileSystem.getInfoAsync(currentAudioUri);
-            if (!fileInfo.exists) {
-              console.error('Audio file does not exist at path:', currentAudioUri);
-              showSnackbar('Audio file not found, continuing without audio');
-            } else {
-              console.log('Audio file exists, size:', fileInfo.size);
-              const uploadResult = await apiService.uploadAudioFile(currentAudioUri, sessionId, survey._id);
-              if (uploadResult.success) {
-                audioUrl = uploadResult.response.audioUrl;
-                audioFileSize = uploadResult.response.size || 0;
-                console.log('Audio uploaded successfully:', audioUrl, 'Size:', audioFileSize);
-                showSnackbar('Audio recording uploaded successfully');
-              } else {
-                console.error('Failed to upload audio:', uploadResult.message);
-                showSnackbar('Failed to upload audio, continuing without audio');
-              }
-            }
-          } catch (uploadError: any) {
-            console.error('Error during audio upload:', uploadError);
-            showSnackbar('Failed to upload audio, continuing without audio');
-          }
-        } else {
-          console.log('No audio file to upload');
-        }
-      }
-      
-      // Prepare final response data for ALL questions (including skipped ones)
-      const finalResponses = allQuestions.map((question: any, index: number) => {
-        // For multiple_choice with allowMultiple, default to array; otherwise default to empty string
-        const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
-        const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
-        
-        // Process response to include option codes and handle "Others" text input
-        // Ensure processedResponse is an array for multiple_choice with allowMultiple
-        let processedResponse: any;
-        if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
-          // Ensure it's an array - if it's not, try to convert it
-          if (Array.isArray(response)) {
-            processedResponse = response;
-          } else if (response && response !== '') {
-            // If it's a single value, convert to array
-            processedResponse = [response];
-          } else {
-            // Empty array
-            processedResponse = [];
-          }
-        } else {
-          processedResponse = response || '';
-        }
-        let responseCodes: string | string[] | null = null;
-        let responseWithCodes: any = null;
-        
-        // Find "Others" option value for this question
-        const othersOption = question.options?.find((opt: any) => {
-          const optText = opt.text || '';
-          return isOthersOption(optText);
-        });
-        const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
-        
-        if (question.type === 'multiple_choice' && question.options) {
-          if (Array.isArray(processedResponse)) {
-            // Multiple selection
-            responseCodes = [];
-            responseWithCodes = [];
-            
-            processedResponse.forEach((respValue: string) => {
-              const selectedOption = question.options.find((opt: any) => {
-                const optValue = opt.value || opt.text;
-                return optValue === respValue;
-              });
-              
-              if (selectedOption) {
-                const optText = selectedOption.text || '';
-                const optCode = selectedOption.code || null;
-                const isOthers = isOthersOption(optText);
-                
-                if (isOthers) {
-                  // Get the "Others" text input value
-                  const othersText = othersTextInputs[`${question.id}_${respValue}`] || '';
-                  if (othersText) {
-                    // Save with code but answer is the text input
-                    (responseCodes as string[]).push(optCode || respValue);
-                    (responseWithCodes as any[]).push({
-                      code: optCode || respValue,
-                      answer: othersText,
-                      optionText: optText
-                    });
-                  } else {
-                    // No text provided, just save the option
-                    (responseCodes as string[]).push(optCode || respValue);
-                    (responseWithCodes as any[]).push({
-                      code: optCode || respValue,
-                      answer: optText,
-                      optionText: optText
-                    });
-                  }
-                } else {
-                  // Regular option
-                  (responseCodes as string[]).push(optCode || respValue);
-                  (responseWithCodes as any[]).push({
-                    code: optCode || respValue,
-                    answer: optText,
-                    optionText: optText
-                  });
-                }
-              }
-            });
-          } else {
-            // Single selection
-            const selectedOption = question.options.find((opt: any) => {
-              const optValue = opt.value || opt.text;
-              return optValue === processedResponse;
-            });
-            
-            if (selectedOption) {
-              const optText = selectedOption.text || '';
-              const optCode = selectedOption.code || null;
-              const isOthers = isOthersOption(optText);
-              
-              if (isOthers) {
-                // Get the "Others" text input value
-                const othersText = othersTextInputs[`${question.id}_${processedResponse}`] || '';
-                if (othersText) {
-                  responseCodes = optCode || processedResponse;
-                  responseWithCodes = {
-                    code: optCode || processedResponse,
-                    answer: othersText,
-                    optionText: optText
-                  };
-                } else {
-                  responseCodes = optCode || processedResponse;
-                  responseWithCodes = {
-                    code: optCode || processedResponse,
-                    answer: optText,
-                    optionText: optText
-                  };
-                }
-              } else {
-                responseCodes = optCode || processedResponse;
-                responseWithCodes = {
-                  code: optCode || processedResponse,
-                  answer: optText,
-                  optionText: optText
-                };
-              }
-            }
-          }
-        }
-        
-        // For "Others" option, update the response to include the specified text
-        let finalResponse = processedResponse;
-        if (question.type === 'multiple_choice' && responseWithCodes) {
-          // Check if any response has "Others" with specified text
-          if (Array.isArray(responseWithCodes)) {
-            const othersResponse = responseWithCodes.find((r: any) => r.optionText && isOthersOption(r.optionText) && r.answer !== r.optionText);
-            if (othersResponse) {
-              // Replace the "Others" value with the specified text in the response array
-              finalResponse = (processedResponse as string[]).map((val: string) => {
-                if (val === othersResponse.code || val === othersOptionValue) {
-                  return `Others: ${othersResponse.answer}`;
-                }
-                return val;
-              });
-            }
-          } else if (responseWithCodes.optionText && isOthersOption(responseWithCodes.optionText) && responseWithCodes.answer !== responseWithCodes.optionText) {
-            // Single selection with "Others" specified text
-            finalResponse = `Others: ${responseWithCodes.answer}`;
-          }
-        }
-        
-        return {
-          sectionIndex: 0,
-          questionIndex: index,
-          questionId: question.id,
-          questionType: question.type,
-          questionText: question.text,
-          questionDescription: question.description,
-          questionOptions: question.options?.map((opt: any) => opt.value) || [],
-          response: finalResponse, // Use finalResponse which includes "Others: [specified text]"
-          responseCodes: responseCodes, // Include option codes
-          responseWithCodes: responseWithCodes, // Include structured response with codes
-          responseTime: 0,
-          isRequired: question.required,
-          isSkipped: !response // True if no response provided
-        };
-      });
-
-      // Extract interviewer ID and supervisor ID from responses (for survey 68fd1915d41841da463f0d46)
-      const isTargetSurvey = survey && (survey._id === '68fd1915d41841da463f0d46' || survey.id === '68fd1915d41841da463f0d46');
-      let oldInterviewerID: string | null = null;
-      let supervisorID: string | null = null;
-      if (isTargetSurvey) {
-        const interviewerIdResponse = responses['interviewer-id'];
-        if (interviewerIdResponse !== null && interviewerIdResponse !== undefined && interviewerIdResponse !== '') {
-          oldInterviewerID = String(interviewerIdResponse);
-        }
-        
-        const supervisorIdResponse = responses['supervisor-id'];
-        if (supervisorIdResponse !== null && supervisorIdResponse !== undefined && supervisorIdResponse !== '') {
-          supervisorID = String(supervisorIdResponse);
-        }
-      }
-
-      let result;
-      
-      if (isCatiMode && catiQueueId) {
-        // CATI mode - use CATI complete endpoint
-        // Backend expects flat structure, not nested in metadata
-        const answeredCount = finalResponses.filter((r: any) => hasResponseContent(r.response)).length;
-        const totalCount = allQuestions.length;
-        
-        // CRITICAL: Use selectedSetNumber directly - it was fetched from API when interview started
-        // This ensures we use the correct set that was actually shown to the user
-        let finalSetNumber = selectedSetNumber;
-        
-        console.log('🔵 Completing CATI interview - selectedSetNumber:', selectedSetNumber);
-        console.log('🔵 Completing CATI interview - finalSetNumber:', finalSetNumber);
-        
-        if (finalSetNumber === null && isCatiMode && survey) {
-          console.warn('⚠️ selectedSetNumber is null, trying to determine from answered questions');
-          // Fallback: Try to determine set number from questions that were answered
-          const setNumbers = new Set<number>();
-          survey.sections?.forEach((section: any) => {
-            section.questions?.forEach((question: any) => {
-              if (question.setsForThisQuestion && question.setNumber !== null && question.setNumber !== undefined) {
-                // Check if this question was answered
-                const wasAnswered = finalResponses.some((r: any) => r.questionId === question.id);
-                if (wasAnswered) {
-                  setNumbers.add(question.setNumber);
-                }
-              }
-            });
-          });
-          const setArray = Array.from(setNumbers).sort((a, b) => a - b);
-          if (setArray.length > 0) {
-            finalSetNumber = setArray[0]; // Use the first set that was answered
-            console.warn('⚠️ Determined setNumber from answered questions:', finalSetNumber);
-          } else {
-            console.error('❌ Could not determine setNumber from answered questions');
-          }
-        }
-        
-        
-        // Extract call status from responses
-        const callStatusResponse = responses['call-status'];
-        // Determine final call status: if call_connected was selected, use 'success', otherwise use the selected status
-        const finalCallStatus = callStatusResponse === 'call_connected' ? 'success' : (callStatusResponse || 'unknown');
-        
-        result = await apiService.completeCatiInterview(catiQueueId, {
-          sessionId: sessionId,
-          responses: finalResponses,
-          selectedAC: selectedAC || null,
-          selectedPollingStation: selectedPollingStation.stationName ? {
-            state: selectedPollingStation.state,
-            acNo: selectedPollingStation.acNo,
-            acName: selectedPollingStation.acName,
-            pcNo: selectedPollingStation.pcNo,
-            pcName: selectedPollingStation.pcName,
-            district: selectedPollingStation.district,
-            groupName: selectedPollingStation.groupName,
-            stationName: selectedPollingStation.stationName,
-            gpsLocation: selectedPollingStation.gpsLocation,
-            latitude: selectedPollingStation.latitude,
-            longitude: selectedPollingStation.longitude
-          } : null,
-          totalTimeSpent: duration,
-          startTime: sessionData?.startTime || startTime || new Date(),
-          endTime: new Date(),
-          totalQuestions: totalCount,
-          answeredQuestions: answeredCount,
-          completionPercentage: totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0,
-          setNumber: finalSetNumber, // Save which Set was shown in this CATI interview
-          OldinterviewerID: oldInterviewerID, // Save old interviewer ID
-          callStatus: finalCallStatus, // Send call status to backend
-          supervisorID: supervisorID // Save supervisor ID
-        });
-      } else {
-        // CAPI mode - use standard complete endpoint
-        result = await apiService.completeInterview(sessionId, {
-          responses: finalResponses,
-          qualityMetrics: {
-            averageResponseTime: 1,
-            backNavigationCount: 0,
-            dataQualityScore: 100,
-            totalPauseTime: 0,
-            totalPauses: 0
-          },
-          metadata: {
-            survey: survey._id,
-            interviewer: sessionData?.interviewer || 'current-user',
-            status: 'Pending_Approval',
-            sessionId: sessionId,
-            startTime: sessionData?.startTime || new Date(),
-            endTime: new Date(),
-            totalTimeSpent: duration,
-            interviewMode: survey.mode === 'multi_mode' ? (survey.assignedMode || 'capi') : (survey.mode || 'capi'),
-            deviceInfo: {
-              userAgent: 'React Native App',
-              platform: 'Mobile',
-              browser: 'React Native',
-              screenResolution: `${width}x${height}`,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-            },
-            audioRecording: {
-              audioUrl: audioUrl,
-              hasAudio: !!audioUrl,
-              recordingDuration: Math.round(duration), // Use total interview duration
-              format: 'm4a',
-              codec: 'aac',
-              bitrate: 128000,
-              fileSize: audioFileSize, // Use actual file size from upload response
-              uploadedAt: audioUrl ? new Date().toISOString() : null
-            },
-            location: locationData,
-            selectedAC: selectedAC,
-            selectedPollingStation: selectedPollingStation.stationName ? {
-              state: selectedPollingStation.state,
-              acNo: selectedPollingStation.acNo,
-              acName: selectedPollingStation.acName,
-              pcNo: selectedPollingStation.pcNo,
-              pcName: selectedPollingStation.pcName,
-              district: selectedPollingStation.district,
-              groupName: selectedPollingStation.groupName,
-              stationName: selectedPollingStation.stationName,
-              gpsLocation: selectedPollingStation.gpsLocation,
-              latitude: selectedPollingStation.latitude,
-              longitude: selectedPollingStation.longitude
-            } : null,
-            totalQuestions: allQuestions.length,
-            answeredQuestions: finalResponses.filter((r: any) => hasResponseContent(r.response)).length,
-            skippedQuestions: finalResponses.filter((r: any) => !hasResponseContent(r.response)).length,
-            completionPercentage: Math.round((finalResponses.filter((r: any) => hasResponseContent(r.response)).length / allQuestions.length) * 100),
-            setNumber: null, // Sets don't apply to CAPI - always null
-            OldinterviewerID: oldInterviewerID, // Save old interviewer ID
-            supervisorID: supervisorID // Save supervisor ID
-          }
-        });
-      }
-
-      if (result.success) {
-        Alert.alert(
-          'Interview Completed',
-          'Interview Completed and submitted for Quality Review.',
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                // Reset navigation stack to prevent going back to interview
-                navigation.reset({
-                  index: 0,
-                  routes: [{ name: 'Dashboard' }],
-                });
-              }
-            }
-          ]
-        );
-      } else {
-        // API call returned failure - check if it's a network error and save offline for CAPI
-        const errorMessage = result.message || 'Failed to complete interview';
-        const isNetworkError = errorMessage.includes('Network') || 
-                              errorMessage.includes('network') ||
-                              !await apiService.isOnline();
-        
-        if (isNetworkError && !isCatiMode) {
-          // Save offline (CAPI only) - don't show error, show success message instead
-          try {
-            // Stop audio if still recording
-            let currentAudioUri = audioUri;
-            if (isRecording) {
-              console.log('Stopping audio recording before saving offline (fallback)...');
-              currentAudioUri = await stopAudioRecording();
-              setAudioUri(currentAudioUri);
-            }
-            
-            // Build finalResponses using the same logic as the main offline save
-            const finalResponsesToSave = allQuestions.map((question: any, index: number) => {
-              const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
-              const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
-              
-              // Process response similar to online completion
-              let processedResponse: any;
-              if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
-                if (Array.isArray(response)) {
-                  processedResponse = response;
-                } else if (response && response !== '') {
-                  processedResponse = [response];
-                } else {
-                  processedResponse = [];
-                }
-              } else {
-                processedResponse = response || '';
-              }
-              
-              // Handle "Others" option text input
-              const othersOption = question.options?.find((opt: any) => {
-                const optText = opt.text || '';
-                return isOthersOption(optText);
-              });
-              const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
-              
-              let finalResponse = processedResponse;
-              if (othersOptionValue && (processedResponse === othersOptionValue || 
-                  (Array.isArray(processedResponse) && processedResponse.includes(othersOptionValue)))) {
-                const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
-                if (othersText) {
-                  if (Array.isArray(processedResponse)) {
-                    finalResponse = processedResponse.map((r: any) => 
-                      r === othersOptionValue ? `Others: ${othersText}` : r
-                    );
-                  } else {
-                    finalResponse = `Others: ${othersText}`;
-                  }
-                }
-              }
-              
-              return {
-                sectionIndex: question.sectionIndex || 0,
-                questionIndex: question.questionIndex !== undefined ? question.questionIndex : index,
-                questionId: question.id,
-                questionType: question.type,
-                questionText: question.text,
-                questionDescription: question.description,
-                questionOptions: question.options?.map((opt: any) => (typeof opt === 'object' ? opt.text : opt)) || [],
-                response: finalResponse,
-                responseTime: 0,
-                isRequired: question.required || false,
-                isSkipped: !response || (Array.isArray(response) && response.length === 0)
-              };
-            });
-            
-            await saveInterviewOffline({
-              responses,
-              finalResponses: finalResponsesToSave,
-              isCompleted: true,
-            });
-              
-            Alert.alert(
-              'Interview Saved Offline',
-              'Your interview has been saved locally. It will be synced to the server when you have internet connection. You can sync it from the dashboard.',
-              [
-                {
-                  text: 'OK',
-                  onPress: () => {
-                    navigation.reset({
-                      index: 0,
-                      routes: [{ name: 'Dashboard' }],
-                    });
-                  }
-                }
-              ]
-            );
-            setIsLoading(false);
-            setIsSubmitting(false);
-            return; // Exit early - don't show error
-          } catch (offlineError: any) {
-            console.error('Error saving offline:', offlineError);
-            showSnackbar('Failed to complete interview and save offline. Please try again when you have internet.');
-      }
-        } else {
-          // CATI interviews require internet or other error - show error
-          const errorMsg = result.message || 'Failed to complete interview';
-          showSnackbar(errorMsg);
-        }
-      }
-    } catch (error: any) {
-      console.error('Error completing interview:', error);
-      
-      // Check if it's a network error - only save offline for CAPI
-      const isNetworkError = error?.message?.includes('Network') || 
-                            error?.message?.includes('network') ||
-                            error?.code === 'NETWORK_ERROR' ||
-                            !await apiService.isOnline();
-      
-      if (isNetworkError && !isCatiMode) {
-        // Save offline (CAPI only)
+      // STEP 1: ALWAYS save offline FIRST (before any API calls)
+      // Stop audio recording if still recording (only for CAPI)
+      let currentAudioUri = audioUri;
+      if (!isCatiMode && (isRecording || !audioUri)) {
+        console.log('🛑 Stopping audio recording before saving...');
         try {
-          // Stop audio if still recording
-          let currentAudioUri = audioUri;
-          if (isRecording) {
-            console.log('Stopping audio recording before saving offline (catch block)...');
-            currentAudioUri = await stopAudioRecording();
-            setAudioUri(currentAudioUri);
+          const stoppedUri = await stopAudioRecording();
+          if (stoppedUri) {
+            currentAudioUri = stoppedUri;
+            setAudioUri(stoppedUri);
+            console.log('✅ Audio stopped and URI saved:', currentAudioUri);
+          } else {
+            console.warn('⚠️ stopAudioRecording returned null, using existing audioUri:', audioUri);
+            currentAudioUri = audioUri;
           }
-          
-          // Build finalResponses using the same logic
-          const finalResponsesToSave = allQuestions.map((question: any, index: number) => {
-            const defaultResponse = (question.type === 'multiple_choice' && question.settings?.allowMultiple) ? [] : '';
-            const response = responses[question.id] !== undefined ? responses[question.id] : defaultResponse;
-            
-            let processedResponse: any;
-            if (question.type === 'multiple_choice' && question.settings?.allowMultiple) {
-              if (Array.isArray(response)) {
-                processedResponse = response;
-              } else if (response && response !== '') {
-                processedResponse = [response];
-              } else {
-                processedResponse = [];
-              }
-            } else {
-              processedResponse = response || '';
-            }
-            
-            const othersOption = question.options?.find((opt: any) => {
-              const optText = opt.text || '';
-              return isOthersOption(optText);
-            });
-            const othersOptionValue = othersOption ? (othersOption.value || othersOption.text) : null;
-            
-            let finalResponse = processedResponse;
-            if (othersOptionValue && (processedResponse === othersOptionValue || 
-                (Array.isArray(processedResponse) && processedResponse.includes(othersOptionValue)))) {
-              const othersText = othersTextInputs[`${question.id}_${othersOptionValue}`] || '';
-              if (othersText) {
-                if (Array.isArray(processedResponse)) {
-                  finalResponse = processedResponse.map((r: any) => 
-                    r === othersOptionValue ? `Others: ${othersText}` : r
-                  );
-                } else {
-                  finalResponse = `Others: ${othersText}`;
-                }
-              }
-            }
-            
-            return {
-              sectionIndex: question.sectionIndex || 0,
-              questionIndex: question.questionIndex !== undefined ? question.questionIndex : index,
-              questionId: question.id,
-              questionType: question.type,
-              questionText: question.text,
-              questionDescription: question.description,
-              questionOptions: question.options?.map((opt: any) => (typeof opt === 'object' ? opt.text : opt)) || [],
-              response: finalResponse,
-              responseTime: 0,
-              isRequired: question.required || false,
-              isSkipped: !response || (Array.isArray(response) && response.length === 0)
-            };
-          });
-          
-          await saveInterviewOffline({
-            responses,
-            finalResponses: finalResponsesToSave,
-            isCompleted: true,
-          });
-            
-          Alert.alert(
-            'Interview Saved Offline',
-            'Your interview has been saved locally. It will be synced to the server when you have internet connection. You can sync it from the dashboard.',
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  navigation.reset({
-                    index: 0,
-                    routes: [{ name: 'Dashboard' }],
-                  });
-                }
-              }
-            ]
-          );
-          return; // Exit early after saving offline
-        } catch (offlineError: any) {
-          console.error('Error saving offline:', offlineError);
-          showSnackbar('Failed to complete interview and save offline. Please try again when you have internet.');
+        } catch (audioStopError) {
+          console.error('❌ Error stopping audio:', audioStopError);
+          if (!currentAudioUri) {
+            console.warn('⚠️ No audio URI available after error');
+          }
         }
       } else {
-        const errorMsg = error.response?.data?.message || error.message || 'Failed to complete interview';
-        showSnackbar(errorMsg);
+        console.log('✅ Using existing audio URI:', currentAudioUri);
       }
-    } finally {
+      
+      // Build final responses for offline save
+      const finalResponsesForOffline = buildFinalResponsesForOffline();
+      
+      // Save to offline storage FIRST
+      const interviewId = await saveInterviewOffline({
+        responses,
+        finalResponses: finalResponsesForOffline,
+        isCompleted: true,
+        audioUri: currentAudioUri,
+      });
+      
+      // Get the saved interview to retrieve audio offline path
+      const savedInterview = await offlineStorage.getOfflineInterviewById(interviewId);
+      const audioOfflinePath = savedInterview?.audioOfflinePath || null;
+      
+      console.log('✅ Interview saved offline:', interviewId);
+      console.log('✅ Audio offline path:', audioOfflinePath);
+      
+      setIsLoading(false);
+      setIsSubmitting(false);
+      
+      // STEP 2: Show brief success message and navigate smoothly (no full reset)
+      showSnackbar('✅ Interview saved! Syncing in background...', 'success');
+      
+      // Navigate back smoothly without resetting the navigation stack
+      // This prevents full dashboard reload
+      setTimeout(() => {
+        navigation.goBack();
+      }, 500); // Small delay to show the success message
+      
+      // STEP 3: Interview is saved offline - sync service will handle submission
+      // CRITICAL: Do NOT attempt background submission here
+      // The sync service will handle ALL submissions to prevent race conditions
+      // This ensures proper coordination and prevents duplicate submissions
+      console.log('✅ Interview saved offline - sync service will handle submission');
+      console.log('✅ No background submission - sync service is the single source of truth');
+      
+      return; // Exit early - sync service will handle submission
+      
+    } catch (error: any) {
+      console.error('❌ Error completing interview:', error);
+      showSnackbar('Error saving interview. Please try again.');
       setIsLoading(false);
       setIsSubmitting(false);
     }
@@ -6264,25 +5946,26 @@ export default function InterviewInterface({ navigation, route }: any) {
                               });
                             }
                           } else if (isOthers) {
-                            // If "Others" is selected, clear all other selections (mutual exclusivity)
-                            currentAnswers = [optionValue];
-                            // Clear "None" if it exists
+                            // "Others" can now be combined with other options (if multi-select is allowed)
+                            // Only remove "None" if it exists (keep "None" exclusive)
                             if (noneOptionValue && currentAnswers.includes(noneOptionValue)) {
                               currentAnswers = currentAnswers.filter((a: string) => a !== noneOptionValue);
+                            }
+                            // Add "Others" to existing selections (allow combination)
+                            if (!currentAnswers.includes(optionValue)) {
+                              // Check if we've reached the maximum selections limit
+                              if (maxSelections && currentAnswers.length >= maxSelections) {
+                                showSnackbar(`Maximum ${maxSelections} selection${maxSelections > 1 ? 's' : ''} allowed`);
+                                return;
+                              }
+                              // Add to end to preserve selection order (order in which options were first selected)
+                              currentAnswers.push(optionValue);
                             }
                           } else {
-                            // If any other option is selected, remove "None" and "Others" if they exist
+                            // If any other option is selected, remove "None" if it exists (keep "None" exclusive)
+                            // But allow "Others" to remain (can be combined with other options)
                             if (noneOptionValue && currentAnswers.includes(noneOptionValue)) {
                               currentAnswers = currentAnswers.filter((a: string) => a !== noneOptionValue);
-                            }
-                            if (othersOptionValue && currentAnswers.includes(othersOptionValue)) {
-                              currentAnswers = currentAnswers.filter((a: string) => a !== othersOptionValue);
-                              // Clear "Others" text input
-                              setOthersTextInputs(prev => {
-                                const updated = { ...prev };
-                                delete updated[`${questionId}_${othersOptionValue}`];
-                                return updated;
-                              });
                             }
                             
                             // Check if we've reached the maximum selections limit
@@ -6960,143 +6643,259 @@ export default function InterviewInterface({ navigation, route }: any) {
         <View style={styles.headerTop}>
           {/* Recording Indicator / Call Status and Abandon button */}
           <View style={styles.headerActions}>
-            {/* Language Selector - Left side */}
-            {detectAvailableLanguages && Array.isArray(detectAvailableLanguages) && detectAvailableLanguages.length > 1 && (
-              <>
-                <View ref={languageDropdownRef} collapsable={false}>
-                  <Pressable
-                    onPress={() => {
-                      setLanguageMenuVisible(true);
-                      // Reset animations before starting
-                      languageDropdownAnimation.setValue(0);
-                      languageDropdownOpacity.setValue(0);
-                      // Animate dropdown opening
-                      Animated.parallel([
-                        Animated.timing(languageDropdownAnimation, {
-                          toValue: 1,
-                          duration: 200,
-                          useNativeDriver: true,
-                        }),
-                        Animated.timing(languageDropdownOpacity, {
-                          toValue: 1,
-                          duration: 200,
-                          useNativeDriver: true,
-                        }),
-                      ]).start();
-                    }}
-                    style={styles.translationToggleCompact}
-                  >
-              <Text style={styles.translationToggleLabelCompact}>🌐</Text>
-                    <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 12 }]}>
-                      {detectAvailableLanguages[selectedLanguageIndex] || 'Language 1'}
-                    </Text>
-                    <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 10 }]}>▼</Text>
-                  </Pressable>
-                </View>
+            {/* Language Selector and Call Status Container - Vertical layout for CATI */}
+            {isCatiMode ? (
+              <View style={styles.catiLanguageAndStatusContainer}>
+                {/* Language Selector */}
+                {detectAvailableLanguages && Array.isArray(detectAvailableLanguages) && detectAvailableLanguages.length > 1 && (
+                  <>
+                    <View ref={languageDropdownRef} collapsable={false}>
+                      <Pressable
+                        onPress={() => {
+                          setLanguageMenuVisible(true);
+                          // Reset animations before starting
+                          languageDropdownAnimation.setValue(0);
+                          languageDropdownOpacity.setValue(0);
+                          // Animate dropdown opening
+                          Animated.parallel([
+                            Animated.timing(languageDropdownAnimation, {
+                              toValue: 1,
+                              duration: 200,
+                              useNativeDriver: true,
+                            }),
+                            Animated.timing(languageDropdownOpacity, {
+                              toValue: 1,
+                              duration: 200,
+                              useNativeDriver: true,
+                            }),
+                          ]).start();
+                        }}
+                        style={styles.translationToggleCompact}
+                      >
+                        <Text style={styles.translationToggleLabelCompact}>🌐</Text>
+                        <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 12 }]}>
+                          {detectAvailableLanguages[selectedLanguageIndex] || 'Language 1'}
+                        </Text>
+                        <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 10 }]}>▼</Text>
+                      </Pressable>
+                    </View>
 
-                {/* Custom Dropdown Modal */}
-                <Modal
-                  visible={languageMenuVisible}
-                  transparent={true}
-                  animationType="none"
-                  onRequestClose={() => {
-                    handleCloseLanguageDropdown();
-                  }}
-                >
-                  <View style={styles.languageDropdownBackdrop}>
-                    <Pressable
-                      style={StyleSheet.absoluteFill}
-                      onPress={() => {
+                    {/* Custom Dropdown Modal */}
+                    <Modal
+                      visible={languageMenuVisible}
+                      transparent={true}
+                      animationType="none"
+                      onRequestClose={() => {
                         handleCloseLanguageDropdown();
                       }}
-                    />
-                    <Animated.View
-                      style={[
-                        styles.languageDropdownContainer,
-                        {
-                          opacity: languageDropdownOpacity,
-                          transform: [
-                            {
-                              translateY: languageDropdownAnimation.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [-10, 0],
-                              }),
-                            },
-                            {
-                              scale: languageDropdownAnimation.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [0.95, 1],
-                              }),
-                            },
-                          ],
-                        },
-                      ]}
                     >
-                      <FlatList
-                        data={detectAvailableLanguages}
-                        keyExtractor={(_, index) => `lang-${index}`}
-                        renderItem={({ item, index }) => (
-                          <Pressable
-                            onPress={() => {
-                              setSelectedLanguageIndex(index);
-                              handleCloseLanguageDropdown();
-                            }}
-                            style={({ pressed }) => [
-                              styles.languageDropdownItem,
-                              selectedLanguageIndex === index && styles.languageDropdownItemSelected,
-                              pressed && styles.languageDropdownItemPressed,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.languageDropdownItemText,
-                                selectedLanguageIndex === index && styles.languageDropdownItemTextSelected,
+                      <View style={styles.languageDropdownBackdrop}>
+                        <Pressable
+                          style={StyleSheet.absoluteFill}
+                          onPress={() => {
+                            handleCloseLanguageDropdown();
+                          }}
+                        />
+                        <Animated.View
+                          style={[
+                            styles.languageDropdownContainer,
+                            {
+                              opacity: languageDropdownOpacity,
+                              transform: [
+                                {
+                                  translateY: languageDropdownAnimation.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [-10, 0],
+                                  }),
+                                },
+                                {
+                                  scale: languageDropdownAnimation.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [0.95, 1],
+                                  }),
+                                },
+                              ],
+                            },
+                          ]}
+                        >
+                          <FlatList
+                            data={detectAvailableLanguages}
+                            keyExtractor={(_, index) => `lang-${index}`}
+                            renderItem={({ item, index }) => (
+                              <Pressable
+                                onPress={() => {
+                                  setSelectedLanguageIndex(index);
+                                  handleCloseLanguageDropdown();
+                                }}
+                                style={({ pressed }) => [
+                                  styles.languageDropdownItem,
+                                  selectedLanguageIndex === index && styles.languageDropdownItemSelected,
+                                  pressed && styles.languageDropdownItemPressed,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.languageDropdownItemText,
+                                    selectedLanguageIndex === index && styles.languageDropdownItemTextSelected,
+                                  ]}
+                                >
+                                  {item || `Language ${index + 1}`}
+                                </Text>
+                                {selectedLanguageIndex === index && (
+                                  <Text style={styles.languageDropdownCheckmark}>✓</Text>
+                                )}
+                              </Pressable>
+                            )}
+                            ItemSeparatorComponent={() => <View style={styles.languageDropdownSeparator} />}
+                          />
+                        </Animated.View>
+                      </View>
+                    </Modal>
+                  </>
+                )}
+                
+                {/* CATI Call Status - Below language dropdown */}
+                <View style={styles.callStatusContainer}>
+                  {/* Show loading animation when call is processing (idle or calling) */}
+                  {(callStatus === 'idle' || callStatus === 'calling' || !callStatus) && (
+                    <View style={styles.callStatusIndicator}>
+                      <ActivityIndicator size="small" color="#2563eb" />
+                      <Text style={styles.callStatusText}>Processing call...</Text>
+                    </View>
+                  )}
+                  {callStatus === 'connected' && (
+                    <View style={styles.callStatusIndicator}>
+                      <View style={[styles.callStatusDot, { backgroundColor: '#059669' }]} />
+                      <Text style={styles.callStatusText}>Call Started</Text>
+                    </View>
+                  )}
+                  {callStatus === 'failed' && (
+                    <View style={styles.callStatusIndicator}>
+                      <View style={[styles.callStatusDot, { backgroundColor: '#ef4444' }]} />
+                      <Text style={styles.callStatusText}>Call Failed</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            ) : (
+              /* Language Selector - Horizontal layout for CAPI */
+              detectAvailableLanguages && Array.isArray(detectAvailableLanguages) && detectAvailableLanguages.length > 1 && (
+                <>
+                  <View ref={languageDropdownRef} collapsable={false}>
+                    <Pressable
+                      onPress={() => {
+                        setLanguageMenuVisible(true);
+                        // Reset animations before starting
+                        languageDropdownAnimation.setValue(0);
+                        languageDropdownOpacity.setValue(0);
+                        // Animate dropdown opening
+                        Animated.parallel([
+                          Animated.timing(languageDropdownAnimation, {
+                            toValue: 1,
+                            duration: 200,
+                            useNativeDriver: true,
+                          }),
+                          Animated.timing(languageDropdownOpacity, {
+                            toValue: 1,
+                            duration: 200,
+                            useNativeDriver: true,
+                          }),
+                        ]).start();
+                      }}
+                      style={styles.translationToggleCompact}
+                    >
+                      <Text style={styles.translationToggleLabelCompact}>🌐</Text>
+                      <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 12 }]}>
+                        {detectAvailableLanguages[selectedLanguageIndex] || 'Language 1'}
+                      </Text>
+                      <Text style={[styles.translationToggleLabelCompact, { marginLeft: 4, fontSize: 10 }]}>▼</Text>
+                    </Pressable>
+                  </View>
+
+                  {/* Custom Dropdown Modal */}
+                  <Modal
+                    visible={languageMenuVisible}
+                    transparent={true}
+                    animationType="none"
+                    onRequestClose={() => {
+                      handleCloseLanguageDropdown();
+                    }}
+                  >
+                    <View style={styles.languageDropdownBackdrop}>
+                      <Pressable
+                        style={StyleSheet.absoluteFill}
+                        onPress={() => {
+                          handleCloseLanguageDropdown();
+                        }}
+                      />
+                      <Animated.View
+                        style={[
+                          styles.languageDropdownContainer,
+                          {
+                            opacity: languageDropdownOpacity,
+                            transform: [
+                              {
+                                translateY: languageDropdownAnimation.interpolate({
+                                  inputRange: [0, 1],
+                                  outputRange: [-10, 0],
+                                }),
+                              },
+                              {
+                                scale: languageDropdownAnimation.interpolate({
+                                  inputRange: [0, 1],
+                                  outputRange: [0.95, 1],
+                                }),
+                              },
+                            ],
+                          },
+                        ]}
+                      >
+                        <FlatList
+                          data={detectAvailableLanguages}
+                          keyExtractor={(_, index) => `lang-${index}`}
+                          renderItem={({ item, index }) => (
+                            <Pressable
+                              onPress={() => {
+                                setSelectedLanguageIndex(index);
+                                handleCloseLanguageDropdown();
+                              }}
+                              style={({ pressed }) => [
+                                styles.languageDropdownItem,
+                                selectedLanguageIndex === index && styles.languageDropdownItemSelected,
+                                pressed && styles.languageDropdownItemPressed,
                               ]}
                             >
-                              {item || `Language ${index + 1}`}
-                            </Text>
-                            {selectedLanguageIndex === index && (
-                              <Text style={styles.languageDropdownCheckmark}>✓</Text>
-                            )}
-                          </Pressable>
-                        )}
-                        ItemSeparatorComponent={() => <View style={styles.languageDropdownSeparator} />}
-                      />
-                    </Animated.View>
-            </View>
-                </Modal>
-              </>
+                              <Text
+                                style={[
+                                  styles.languageDropdownItemText,
+                                  selectedLanguageIndex === index && styles.languageDropdownItemTextSelected,
+                                ]}
+                              >
+                                {item || `Language ${index + 1}`}
+                              </Text>
+                              {selectedLanguageIndex === index && (
+                                <Text style={styles.languageDropdownCheckmark}>✓</Text>
+                              )}
+                            </Pressable>
+                          )}
+                          ItemSeparatorComponent={() => <View style={styles.languageDropdownSeparator} />}
+                        />
+                      </Animated.View>
+                    </View>
+                  </Modal>
+                </>
+              )
             )}
             
-            {/* CATI Call Status */}
-            {isCatiMode && (
-              <View style={styles.callStatusContainer}>
-            {callStatus === 'calling' && (
-              <View style={styles.callStatusIndicator}>
-                <ActivityIndicator size="small" color="#2563eb" />
-                <Text style={styles.callStatusText}>Calling...</Text>
-              </View>
-            )}
-            {callStatus === 'connected' && (
-              <View style={styles.callStatusIndicator}>
-                <View style={[styles.callStatusDot, { backgroundColor: '#059669' }]} />
-                <Text style={styles.callStatusText}>Call Started</Text>
-              </View>
-            )}
-                {callStatus === 'failed' && (
-                  <View style={styles.callStatusIndicator}>
-                    <View style={[styles.callStatusDot, { backgroundColor: '#ef4444' }]} />
-                    <Text style={styles.callStatusText}>Call Failed</Text>
-                  </View>
-                )}
-                {catiRespondent && (
-                  <View style={styles.respondentInfoContainer}>
-                    <Text style={styles.respondentName}>
-                      {catiRespondent.name ? catiRespondent.name.split(' ')[0] : ''}
-                    </Text>
-                    <Text style={styles.respondentPhone}>{catiRespondent.phone}</Text>
-                  </View>
-                )}
+            {/* CATI Respondent Info - Name and AC only (no phone) */}
+            {isCatiMode && catiRespondent && (
+              <View style={styles.respondentInfoContainer}>
+                <Text style={styles.respondentName}>
+                  {catiRespondent.name ? catiRespondent.name.split(' ')[0] : ''}
+                </Text>
+                <Text style={styles.respondentAC}>
+                  {selectedAC || acFromSessionData || catiRespondent.ac || catiRespondent.assemblyConstituency || catiRespondent.acName || catiRespondent.assemblyConstituencyName || 'N/A'}
+                </Text>
               </View>
             )}
             
@@ -8210,7 +8009,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
   },
+  catiLanguageAndStatusContainer: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    marginRight: 8,
+  },
   callStatusContainer: {
+    marginTop: 8, // Add space below language dropdown
     marginRight: 8,
     alignItems: 'flex-end',
   },
@@ -8239,6 +8044,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#374151',
     marginBottom: 2,
+  },
+  respondentAC: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
   },
   respondentPhone: {
     fontSize: 11,
