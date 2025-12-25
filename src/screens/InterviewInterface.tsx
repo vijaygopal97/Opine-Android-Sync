@@ -2549,9 +2549,12 @@ export default function InterviewInterface({ navigation, route }: any) {
         setLoadingStations(true);
         // Use state from selectedPollingStation, survey, or default to 'West Bengal'
         const state = selectedPollingStation.state || survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
+        // CRITICAL FIX: Use AC code (acNo) instead of AC name to prevent name conflicts
+        // (e.g., "Kashipur" vs "Kashipur-Belgachhia")
+        const acIdentifier = selectedPollingStation.acNo || selectedPollingStation.acName;
         const response = await apiService.getPollingStationsByGroup(
           state,
-          selectedPollingStation.acName,
+          acIdentifier,
           selectedPollingStation.groupName,
           selectedPollingStation.roundNumber
         );
@@ -2662,9 +2665,11 @@ export default function InterviewInterface({ navigation, route }: any) {
       // If not found in station list, try to fetch from API/cache
       if (!stationLat || !stationLng) {
         try {
+        // CRITICAL FIX: Use AC code (acNo) instead of AC name to prevent name conflicts
+        const acIdentifier = selectedPollingStation.acNo || selectedPollingStation.acName;
         const response = await apiService.getPollingStationGPS(
           state,
-          selectedPollingStation.acName,
+          acIdentifier,
           selectedPollingStation.groupName,
           selectedPollingStation.stationName
         );
