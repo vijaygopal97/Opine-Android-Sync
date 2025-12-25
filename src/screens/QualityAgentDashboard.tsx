@@ -7,6 +7,7 @@ import {
   RefreshControl,
   Alert,
   Image,
+  Animated,
 } from 'react-native';
 import {
   Text,
@@ -43,10 +44,78 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
   const [assignmentExpiresAt, setAssignmentExpiresAt] = useState<Date | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
   const [isGettingNextAssignment, setIsGettingNextAssignment] = useState(false);
+  
+  // Loading animation states (similar to Interviewer Dashboard)
+  const [loadingAnimation] = useState(new Animated.Value(0));
+  const [pulseAnimation] = useState(new Animated.Value(1));
+  const [rotationAnimation] = useState(new Animated.Value(0));
+  const [loadingTextIndex, setLoadingTextIndex] = useState(0);
 
   useEffect(() => {
     loadDashboardData();
   }, []);
+
+  // Animation effects for loading screen (similar to Interviewer Dashboard)
+  useEffect(() => {
+    if (isLoading) {
+      // Start pulsing animation
+      const pulseAnim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnimation, {
+            toValue: 1.2,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnimation, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+
+      // Start rotation animation
+      const rotateAnim = Animated.loop(
+        Animated.timing(rotationAnimation, {
+          toValue: 1,
+          duration: 2000,
+          useNativeDriver: true,
+        })
+      );
+
+      // Start loading bar animation
+      const loadingBarAnim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(loadingAnimation, {
+            toValue: 1,
+            duration: 1500,
+            useNativeDriver: false,
+          }),
+          Animated.timing(loadingAnimation, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: false,
+          }),
+        ])
+      );
+
+      // Rotate loading text
+      const textRotateInterval = setInterval(() => {
+        setLoadingTextIndex((prev) => (prev + 1) % 4);
+      }, 2000);
+
+      pulseAnim.start();
+      rotateAnim.start();
+      loadingBarAnim.start();
+
+      return () => {
+        pulseAnim.stop();
+        rotateAnim.stop();
+        loadingBarAnim.stop();
+        clearInterval(textRotateInterval);
+      };
+    }
+  }, [isLoading]);
 
   // Timer for assignment expiration
   useEffect(() => {
@@ -80,11 +149,15 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
     return () => clearInterval(interval);
   }, [assignmentExpiresAt, currentAssignment]);
 
-  const loadDashboardData = async () => {
-    setIsLoading(true);
+  const loadDashboardData = async (showLoading: boolean = true) => {
+    // OPTIMIZED: Allow silent refresh (don't show loading screen when refreshing after submission)
+    if (showLoading) {
+      setIsLoading(true);
+    }
     try {
-      // Get all-time stats for total reviewed (same as web app)
-      const allTimeResponse = await apiService.getQualityAgentAnalytics({ timeRange: 'all' });
+      // OPTIMIZED: Use lightweight stats endpoint - only get overview stats, skip expensive aggregations
+      // Pass lightweight=true to get only totalReviewed count quickly
+      const allTimeResponse = await apiService.getQualityAgentAnalytics({ timeRange: 'all', lightweight: 'true' });
       if (allTimeResponse.success && allTimeResponse.data?.overview) {
         setTotalReviewed(allTimeResponse.data.overview.totalReviewed || 0);
       } else {
@@ -92,10 +165,14 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
       }
     } catch (error) {
       console.error('Error loading dashboard data:', error);
-      showSnackbar('Failed to load dashboard data');
+      if (showLoading) {
+        showSnackbar('Failed to load dashboard data');
+      }
       setTotalReviewed(0);
     } finally {
-      setIsLoading(false);
+      if (showLoading) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -123,38 +200,67 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
   const handleStartQualityCheck = async () => {
     try {
       setIsGettingNextAssignment(true);
-      const result = await apiService.getNextReviewAssignment();
       
-      if (!result.success) {
-        showSnackbar(result.message || 'Failed to get next assignment');
-        return;
-      }
-
-      if (!result.data || !result.data.interview) {
-        showSnackbar(result.data?.message || 'No responses available for review');
-        return;
-      }
-
-      // Set the assigned response
-      console.log('🔍 QualityAgentDashboard - Interview data received:', {
-        responseId: result.data.interview?.responseId,
-        hasInterviewer: !!result.data.interview?.interviewer,
-        interviewerId: result.data.interview?.interviewer?._id?.toString(),
-        interviewerName: result.data.interview?.interviewer ? `${result.data.interview.interviewer.firstName} ${result.data.interview.interviewer.lastName}` : 'null',
-        interviewerMemberId: result.data.interview?.interviewer?.memberId || 'null',
-        interviewerData: result.data.interview?.interviewer
-      });
-      setCurrentAssignment(result.data.interview);
-      setAssignmentExpiresAt(result.data.expiresAt ? new Date(result.data.expiresAt) : null);
-      setSelectedInterview(result.data.interview);
+      // OPTIMIZED: Clear any previous assignment state first to ensure clean start
+      setCurrentAssignment(null);
+      setAssignmentExpiresAt(null);
+      setSelectedInterview(null);
+      
+      // OPTIMIZED: Open modal immediately, fetch data in background
+      // This matches the web behavior - modal opens instantly, data loads async
       setShowResponseDetails(true);
       
-      showSnackbar('Response assigned. You have 30 minutes to complete the review.');
+      // Start API call in background
+      const resultPromise = apiService.getNextReviewAssignment();
+      
+      // Don't await - let it fetch in background while modal is visible
+      resultPromise
+        .then((result) => {
+          setIsGettingNextAssignment(false);
+          
+          if (!result.success) {
+            setShowResponseDetails(false);
+            setSelectedInterview(null);
+            showSnackbar(result.message || 'Failed to get next assignment');
+            return;
+          }
+
+          if (!result.data || !result.data.interview) {
+            setShowResponseDetails(false);
+            setSelectedInterview(null);
+            showSnackbar(result.data?.message || 'No responses available for review');
+            return;
+          }
+
+          // Set the assigned response
+          console.log('🔍 QualityAgentDashboard - Interview data received:', {
+            responseId: result.data.interview?.responseId,
+            hasInterviewer: !!result.data.interview?.interviewer,
+            interviewerId: result.data.interview?.interviewer?._id?.toString(),
+            interviewerName: result.data.interview?.interviewer ? `${result.data.interview.interviewer.firstName} ${result.data.interview.interviewer.lastName}` : 'null',
+            interviewerMemberId: result.data.interview?.interviewer?.memberId || 'null',
+            interviewerData: result.data.interview?.interviewer
+          });
+          setCurrentAssignment(result.data.interview);
+          setAssignmentExpiresAt(result.data.expiresAt ? new Date(result.data.expiresAt) : null);
+          setSelectedInterview(result.data.interview);
+          
+          showSnackbar('Response assigned. You have 30 minutes to complete the review.');
+        })
+        .catch((error: any) => {
+          console.error('Error getting next assignment:', error);
+          setIsGettingNextAssignment(false);
+          setShowResponseDetails(false);
+          setSelectedInterview(null);
+          showSnackbar(error.response?.data?.message || 'Failed to get next assignment. Please try again.');
+        });
+      
     } catch (error: any) {
       console.error('Error getting next assignment:', error);
-      showSnackbar(error.response?.data?.message || 'Failed to get next assignment. Please try again.');
-    } finally {
       setIsGettingNextAssignment(false);
+      setShowResponseDetails(false);
+      setSelectedInterview(null);
+      showSnackbar(error.response?.data?.message || 'Failed to get next assignment. Please try again.');
     }
   };
 
@@ -194,13 +300,20 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
       const result = await apiService.submitVerification(verificationData);
       
       if (result.success) {
-        showSnackbar('Verification submitted successfully');
+        // OPTIMIZED: Close modal and show success message FIRST, then refresh stats in background
         setCurrentAssignment(null);
         setAssignmentExpiresAt(null);
         setSelectedInterview(null);
         setShowResponseDetails(false);
-        // Refresh stats
-        await loadDashboardData();
+        
+        // Show success message immediately
+        showSnackbar('Verification submitted successfully');
+        
+        // Refresh stats in background (non-blocking) - don't show loading screen
+        loadDashboardData(false).catch((error) => {
+          console.error('Error refreshing dashboard after submission:', error);
+          // Silently fail - stats will refresh on next manual refresh
+        });
       } else {
         showSnackbar(result.message || 'Failed to submit verification');
       }
@@ -212,11 +325,108 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
 
 
   if (isLoading) {
+    const loadingTexts = [
+      'Loading your dashboard...',
+      'Fetching statistics...',
+      'Preparing interface...',
+      'Almost ready...',
+    ];
+
+    const rotateInterpolate = rotationAnimation.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['0deg', '360deg'],
+    });
+
+    const pulseScale = pulseAnimation;
+
+    const loadingBarWidth = loadingAnimation.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['0%', '100%'],
+    });
+
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#001D48" />
-        <Text style={styles.loadingText}>Loading dashboard...</Text>
-      </View>
+      <SafeAreaView style={styles.loadingContainer}>
+        <StatusBar style="dark" />
+        <View style={styles.loadingContent}>
+          {/* Animated Logo/Icon */}
+          <Animated.View
+            style={[
+              styles.loadingLogoContainer,
+              {
+                transform: [
+                  { scale: pulseScale },
+                ],
+              },
+            ]}
+          >
+            <View style={styles.loadingLogoCircle}>
+              <Animated.View
+                style={[
+                  styles.loadingLogoInner,
+                  {
+                    transform: [{ rotate: rotateInterpolate }],
+                  },
+                ]}
+              >
+                <Image
+                  source={require('../../assets/icon.png')}
+                  style={styles.loadingLogoIcon}
+                  resizeMode="cover"
+                />
+              </Animated.View>
+            </View>
+          </Animated.View>
+
+          {/* Loading Text */}
+          <Text style={styles.loadingTitleText}>
+            {loadingTexts[loadingTextIndex]}
+          </Text>
+
+          {/* Animated Dots */}
+          <View style={styles.loadingDotsContainer}>
+            {[0, 1, 2].map((index) => {
+              const dotOpacity = pulseAnimation.interpolate({
+                inputRange: [1, 1.2],
+                outputRange: [0.3, 0.9],
+              });
+
+              return (
+                <Animated.View
+                  key={index}
+                  style={[
+                    styles.loadingDot,
+                    {
+                      opacity: dotOpacity,
+                      transform: [
+                        {
+                          scale: pulseAnimation.interpolate({
+                            inputRange: [1, 1.2],
+                            outputRange: [1, 1.2],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                />
+              );
+            })}
+          </View>
+
+          {/* Loading Progress Bar */}
+          <View style={styles.loadingProgressContainer}>
+            <View style={styles.loadingProgressTrack}>
+              <Animated.View
+                style={[
+                  styles.loadingProgressBar,
+                  {
+                    width: loadingBarWidth,
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -331,10 +541,11 @@ export default function QualityAgentDashboard({ navigation, user, onLogout }: Qu
       </ScrollView>
 
       {/* Response Details Modal */}
-      {showResponseDetails && selectedInterview && (
+      {/* OPTIMIZED: Show modal immediately, even if interview data is still loading */}
+      {showResponseDetails && (
         <ResponseDetailsModal
           visible={showResponseDetails}
-          interview={selectedInterview}
+          interview={selectedInterview || null} // Can be null while loading
           onClose={handleCloseModal}
           onSubmit={handleVerificationSubmit}
           assignmentExpiresAt={assignmentExpiresAt}
@@ -360,14 +571,83 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     flex: 1,
+    backgroundColor: '#ffffff',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#6b7280',
+  loadingContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    width: '100%',
+    maxWidth: 400,
+    flex: 1,
+  },
+  loadingLogoContainer: {
+    marginBottom: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingLogoCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#f0f4f8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+  },
+  loadingLogoInner: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  loadingLogoIcon: {
+    width: '100%',
+    height: '100%',
+  },
+  loadingTitleText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#1f2937',
+    marginBottom: 32,
+    textAlign: 'center',
+    lineHeight: 24,
+    paddingHorizontal: 20,
+  },
+  loadingDotsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 32,
+    gap: 8,
+  },
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#001D48',
+  },
+  loadingProgressContainer: {
+    width: '100%',
+    maxWidth: 200,
+    alignItems: 'center',
+  },
+  loadingProgressTrack: {
+    width: '100%',
+    height: 2,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 1,
+    overflow: 'hidden',
+  },
+  loadingProgressBar: {
+    height: '100%',
+    backgroundColor: '#001D48',
+    borderRadius: 1,
   },
   header: {
     paddingTop: 50,

@@ -1979,6 +1979,35 @@ class ApiService {
     }
   }
 
+  // Get quality agent statistics (lightweight endpoint - optimized for dashboard loading)
+  async getQualityAgentStats() {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.get(`${this.baseURL}/api/survey-responses/quality-agent-stats`, { headers });
+      
+      if (response.data.success) {
+        return { 
+          success: true, 
+          stats: response.data.data || {}
+        };
+      } else {
+        return {
+          success: false,
+          message: response.data.message || 'Failed to fetch quality agent statistics',
+        };
+      }
+    } catch (error: any) {
+      console.error('Get quality agent stats error:', error);
+      console.error('Error response:', error.response?.data);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to fetch quality agent statistics',
+        error: error.response?.data
+      };
+    }
+  }
+
+  // Get quality agent analytics (full analytics endpoint - use for detailed analytics only)
   async getQualityAgentAnalytics(params?: any) {
     try {
       const headers = await this.getHeaders();

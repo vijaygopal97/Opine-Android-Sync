@@ -65,6 +65,7 @@ export default function ResponseDetailsModal({
   const [audioDuration, setAudioDuration] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1.0); // Playback speed (1.0 = normal, 0.5 = half, 2.0 = double)
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false); // OPTIMIZED: Track audio loading state
   const sliderRef = useRef<View>(null);
   const [sliderWidth, setSliderWidth] = useState(0);
   const [catiCallDetails, setCatiCallDetails] = useState<any>(null);
@@ -155,6 +156,7 @@ export default function ResponseDetailsModal({
     }
   }, []);
 
+  // OPTIMIZED: Lazy load audio and CATI details - don't block modal opening
   useEffect(() => {
     if (visible && interview) {
       // Debug: Log interviewer data when modal opens
@@ -170,38 +172,28 @@ export default function ResponseDetailsModal({
         fullInterviewer: JSON.stringify(interview.interviewer, null, 2)
       });
       
-      // Load audio if CAPI interview has audio recording
-      // Check for signedUrl first (preferred for S3), then fallback to audioUrl
-      const signedUrl = interview.metadata?.audioRecording?.signedUrl || 
-                       interview.audioRecording?.signedUrl ||
-                       interview.signedUrl;
-      const audioUrl = interview.metadata?.audioRecording?.audioUrl || 
-                      interview.audioUrl || 
-                      interview.audioRecording?.url ||
-                      interview.audioRecording?.audioUrl;
+      // OPTIMIZED: Don't load audio immediately - lazy load when user clicks play
+      // This prevents blocking the modal opening
+      // Audio will be loaded on-demand in playAudio() function
       
-      // Use signedUrl if available, otherwise use audioUrl
-      const audioSource = signedUrl || audioUrl;
-      
-      if (interview.interviewMode === 'capi' && audioSource) {
-        loadAudio(audioSource).catch((error) => {
-          // Silently handle error - audio will show "No Recording Found"
-          console.error('Audio loading failed:', error);
-        });
-      }
-      
-      // Fetch CATI call details if CATI interview
+      // OPTIMIZED: Lazy load CATI details after modal is visible (non-blocking)
+      // Use setTimeout to defer this until after modal renders
       if (interview.interviewMode === 'cati' && interview.call_id) {
-        fetchCatiCallDetails(interview.call_id);
+        // Defer CATI details fetch to avoid blocking modal opening
+        setTimeout(() => {
+          fetchCatiCallDetails(interview.call_id);
+        }, 100); // Small delay to let modal render first
       }
     } else {
       // Stop and cleanup audio when modal closes
       cleanupAudio();
+      cleanupCatiAudio();
     }
 
     return () => {
       // Cleanup audio on unmount
       cleanupAudio();
+      cleanupCatiAudio();
     };
   }, [visible, interview?.responseId]); // Removed cleanupAudio from dependencies
 
@@ -575,17 +567,20 @@ export default function ResponseDetailsModal({
           }
         }
       });
+      
+      setIsLoadingAudio(false); // OPTIMIZED: Clear loading state on success
     } catch (error) {
       console.error('Error loading audio:', error);
       // Don't show error snackbar - just mark as no recording available
       setAudioSound(null);
+      setIsLoadingAudio(false); // OPTIMIZED: Clear loading state on error
     }
   };
 
   const playAudio = async () => {
     try {
       if (!audioSound) {
-        // Try to get audio URL from various possible locations
+        // OPTIMIZED: Lazy load audio only when user clicks play
         // Check for signedUrl first (preferred for S3), then fallback to audioUrl
         const signedUrl = interview.metadata?.audioRecording?.signedUrl || 
                          interview.audioRecording?.signedUrl ||
@@ -597,11 +592,22 @@ export default function ResponseDetailsModal({
         // Use signedUrl if available, otherwise use audioUrl
         const audioSource = signedUrl || audioUrl;
         if (audioSource) {
-          await loadAudio(audioSource);
-          // After loading, play it
-          if (audioSound) {
-            await audioSound.setRateAsync(playbackRate, true);
-            await audioSound.playAsync();
+          setIsLoadingAudio(true); // Show loading state
+          try {
+            await loadAudio(audioSource);
+            // After loading, check if audioSound was set and play it
+            // Use audioSoundRef to get the latest value
+            const currentAudio = audioSoundRef.current;
+            if (currentAudio) {
+              await currentAudio.setRateAsync(playbackRate, true);
+              await currentAudio.playAsync();
+              setIsPlaying(true);
+            }
+          } catch (loadError) {
+            console.error('Error loading audio:', loadError);
+            // Don't show snackbar - just log the error
+          } finally {
+            setIsLoadingAudio(false);
           }
           return;
         }
@@ -625,6 +631,7 @@ export default function ResponseDetailsModal({
       }
     } catch (error) {
       console.error('Error playing audio:', error);
+      setIsLoadingAudio(false);
       // Don't show snackbar - just log the error
     }
   };
@@ -1338,6 +1345,7 @@ export default function ResponseDetailsModal({
 
   // Helper function to find response by matching question text (without translations)
   const findResponseByQuestionText = (targetQuestionText: string) => {
+    if (!interview) return null;
     const responses = interview.responses || [];
     const targetMainText = getMainText(targetQuestionText).toLowerCase().trim();
     
@@ -1352,6 +1360,7 @@ export default function ResponseDetailsModal({
 
   // Helper function to find response by matching survey question (finds question in survey, then matches response)
   const findResponseBySurveyQuestion = (keywords: string[], survey: any, requireAll: boolean = false, excludeKeywords: string[] = []) => {
+    if (!interview) return null;
     // First, find the question in the survey
     const surveyQuestion = findQuestionInSurveyByKeywords(keywords, survey, requireAll);
     if (!surveyQuestion) return null;
@@ -1372,6 +1381,7 @@ export default function ResponseDetailsModal({
 
   // Helper function to find response by question text keywords (fallback method)
   const findResponseByKeywords = (keywords: string[], requireAll: boolean = false, excludeKeywords: string[] = []) => {
+    if (!interview) return null;
     const responses = interview.responses || [];
     const normalizedKeywords = keywords.map(k => k.toLowerCase());
     const normalizedExclude = excludeKeywords.map(k => k.toLowerCase());
@@ -1563,10 +1573,39 @@ export default function ResponseDetailsModal({
     };
   };
 
+  // OPTIMIZED: Handle null interview gracefully (while loading)
+  if (!interview) {
+    // Show loading state if modal is visible but interview data not yet loaded
+    if (visible) {
+      return (
+        <Modal
+          visible={visible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={onClose}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Loading Response Details...</Text>
+                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                  <Ionicons name="close" size={24} color="#666" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#001D48" />
+                <Text style={styles.loadingText}>Fetching response details...</Text>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      );
+    }
+    return null;
+  }
+
   const survey = interview?.survey || interview?.survey?.survey || null;
   const verificationResponses = getVerificationResponses();
-
-  if (!interview) return null;
 
   const statusBarHeight = Platform.OS === 'ios' ? 0 : StatusBar.currentHeight || 0;
 
@@ -1685,11 +1724,12 @@ export default function ResponseDetailsModal({
                       <Button
                         mode="contained"
                         onPress={playAudio}
-                        icon={isPlaying ? "pause" : "play"}
+                        icon={isLoadingAudio ? undefined : (isPlaying ? "pause" : "play")}
                         style={styles.audioButton}
-                        disabled={!audioSound}
+                        disabled={isLoadingAudio}
+                        loading={isLoadingAudio}
                       >
-                        {isPlaying ? 'Pause' : 'Play'}
+                        {isLoadingAudio ? 'Loading...' : (isPlaying ? 'Pause' : 'Play')}
                       </Button>
                     )}
                   </View>
@@ -2378,6 +2418,48 @@ export default function ResponseDetailsModal({
 }
 
 const styles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    width: '90%',
+    maxWidth: 500,
+    maxHeight: '90%',
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+    minHeight: 200,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: '#6b7280',
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: '#ffffff',
