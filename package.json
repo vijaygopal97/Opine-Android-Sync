@@ -1,6 +1,6 @@
 {
   "name": "convergent-android",
-  "version": "10",
+  "version": "11",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
