@@ -94,17 +94,24 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   }, []);
 
   // Load network condition state
+  // CRITICAL FIX: Always reset to 'good_stable' since UI is commented out
+  // This ensures no network throttling is active
   useEffect(() => {
     const loadNetworkCondition = async () => {
       try {
-        const stored = await AsyncStorage.getItem('networkCondition');
-        if (stored && ['good_stable', 'below_average', 'slow_unstable', 'very_slow'].includes(stored)) {
-          const condition = stored as 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow';
-          setNetworkCondition(condition);
-          apiService.setNetworkCondition(condition);
-        }
+        // Always reset to 'good_stable' to ensure no throttling
+        // (UI is commented out, so users can't change it anyway)
+        const condition: 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow' = 'good_stable';
+        setNetworkCondition(condition);
+        apiService.setNetworkCondition(condition);
+        // Clear any stored slow condition
+        await AsyncStorage.removeItem('networkCondition');
+        console.log('✅ Network condition reset to: good_stable (no throttling)');
       } catch (error) {
         console.error('Error loading network condition:', error);
+        // Fallback: ensure it's set to good_stable
+        setNetworkCondition('good_stable');
+        apiService.setNetworkCondition('good_stable');
       }
     };
     loadNetworkCondition();

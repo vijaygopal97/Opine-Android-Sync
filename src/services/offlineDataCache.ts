@@ -171,32 +171,44 @@ class OfflineDataCacheService {
             ? cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim().replace(/\s+/g, ' ')
             : '';
           
-          // Check if the cached AC name matches our search identifier (exact or partial)
-          if (cachedACName && (
-            normalizedCachedName === normalizedSearchName ||
-            normalizedCachedName.includes(normalizedSearchName) ||
-            normalizedSearchName.includes(normalizedCachedName)
-          )) {
-            console.log(`📦 Found cached groups by AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
+          // CRITICAL FIX: Prioritize exact matches to prevent substring conflicts (e.g., "Kashipur" vs "Kashipur-Belgachhia")
+          // Check exact match first
+          if (cachedACName && normalizedCachedName === normalizedSearchName) {
+            console.log(`📦 Found cached groups by exact AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
             return cachedData as PollingGroup;
           }
           
-          // Also check if cached key is AC code and we can match by name
-          // Try to match if cachedACIdentifier is numeric (AC code) and we have ac_name match
+          // Try exact match after removing parentheses
+          const cachedWithoutParens = normalizedCachedName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+          const searchWithoutParens = normalizedSearchName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+          if (cachedACName && cachedWithoutParens === searchWithoutParens && cachedWithoutParens !== '') {
+            console.log(`📦 Found cached groups by exact AC name match (no parens): "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
+            return cachedData as PollingGroup;
+          }
+          
+          // Partial match - ONLY if search term is longer or similar length (prevents conflicts)
+          // This prevents "Kashipur" from matching "Kashipur-Belgachhia"
+          if (cachedACName) {
+            const lengthDiff = Math.abs(cachedWithoutParens.length - searchWithoutParens.length);
+            if (searchWithoutParens.length >= cachedWithoutParens.length && 
+                cachedWithoutParens.includes(searchWithoutParens) && 
+                lengthDiff <= 3) {
+              console.log(`📦 Found cached groups by partial AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
+              return cachedData as PollingGroup;
+            }
+          }
+          
+          // Also check if cached key is AC code and we can match by name (exact match only)
           if (/^\d+$/.test(cachedACIdentifier) && cachedACName) {
-            if (normalizedCachedName === normalizedSearchName ||
-                normalizedCachedName.includes(normalizedSearchName) ||
-                normalizedSearchName.includes(normalizedCachedName)) {
+            if (normalizedCachedName === normalizedSearchName || cachedWithoutParens === searchWithoutParens) {
               console.log(`📦 Found cached groups by AC code match: "${acIdentifier}" -> code "${cachedACIdentifier}" (name: "${cachedACName}")`);
               return cachedData as PollingGroup;
             }
           }
           
-          // Also try matching the cache key itself (in case it's stored with a variation of the name)
+          // Also try matching the cache key itself (exact match only)
           const normalizedCachedKey = cachedACIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim().replace(/\s+/g, ' ');
-          if (normalizedCachedKey === normalizedSearchName ||
-              normalizedCachedKey.includes(normalizedSearchName) ||
-              normalizedSearchName.includes(normalizedCachedKey)) {
+          if (normalizedCachedKey === normalizedSearchName || normalizedCachedKey === searchWithoutParens) {
             console.log(`📦 Found cached groups by cache key match: "${acIdentifier}" -> "${cachedACIdentifier}" (key: ${cachedKey})`);
             return cachedData as PollingGroup;
           }
@@ -306,31 +318,44 @@ class OfflineDataCacheService {
             ? cachedACName.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim().replace(/\s+/g, ' ')
             : '';
           
-          // Check if the cached AC name matches our search identifier (exact or partial)
-          if (cachedACName && (
-            normalizedCachedName === normalizedSearchName ||
-            normalizedCachedName.includes(normalizedSearchName) ||
-            normalizedSearchName.includes(normalizedCachedName)
-          )) {
-            console.log(`📦 Found cached stations by AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
+          // CRITICAL FIX: Prioritize exact matches to prevent substring conflicts (e.g., "Kashipur" vs "Kashipur-Belgachhia")
+          // Check exact match first
+          if (cachedACName && normalizedCachedName === normalizedSearchName) {
+            console.log(`📦 Found cached stations by exact AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
             return cachedData as PollingStation;
           }
           
-          // Also check if cached key is AC code and we can match by name
+          // Try exact match after removing parentheses
+          const cachedWithoutParens = normalizedCachedName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+          const searchWithoutParens = normalizedSearchName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+          if (cachedACName && cachedWithoutParens === searchWithoutParens && cachedWithoutParens !== '') {
+            console.log(`📦 Found cached stations by exact AC name match (no parens): "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
+            return cachedData as PollingStation;
+          }
+          
+          // Partial match - ONLY if search term is longer or similar length (prevents conflicts)
+          // This prevents "Kashipur" from matching "Kashipur-Belgachhia"
+          if (cachedACName) {
+            const lengthDiff = Math.abs(cachedWithoutParens.length - searchWithoutParens.length);
+            if (searchWithoutParens.length >= cachedWithoutParens.length && 
+                cachedWithoutParens.includes(searchWithoutParens) && 
+                lengthDiff <= 3) {
+              console.log(`📦 Found cached stations by partial AC name match: "${acIdentifier}" -> "${cachedACName}" (key: ${cachedKey})`);
+              return cachedData as PollingStation;
+            }
+          }
+          
+          // Also check if cached key is AC code and we can match by name (exact match only)
           if (/^\d+$/.test(cachedACIdentifier) && cachedACName) {
-            if (normalizedCachedName === normalizedSearchName ||
-                normalizedCachedName.includes(normalizedSearchName) ||
-                normalizedSearchName.includes(normalizedCachedName)) {
+            if (normalizedCachedName === normalizedSearchName || cachedWithoutParens === searchWithoutParens) {
               console.log(`📦 Found cached stations by AC code match: "${acIdentifier}" -> code "${cachedACIdentifier}" (name: "${cachedACName}")`);
               return cachedData as PollingStation;
             }
           }
           
-          // Also try matching the cache key itself
+          // Also try matching the cache key itself (exact match only)
           const normalizedCachedKey = cachedACIdentifier.toLowerCase().replace(/\s*\([^)]*\)\s*/g, '').trim().replace(/\s+/g, ' ');
-          if (normalizedCachedKey === normalizedSearchName ||
-              normalizedCachedKey.includes(normalizedSearchName) ||
-              normalizedSearchName.includes(normalizedCachedKey)) {
+          if (normalizedCachedKey === normalizedSearchName || normalizedCachedKey === searchWithoutParens) {
             console.log(`📦 Found cached stations by cache key match: "${acIdentifier}" -> "${cachedACIdentifier}" (key: ${cachedKey})`);
             return cachedData as PollingStation;
           }

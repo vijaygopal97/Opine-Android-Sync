@@ -187,16 +187,23 @@ class BundledDataService {
           return ac.acCode;
         }
 
-        // Partial match
-        if (normalizedACName.includes(normalizedSearchName) ||
-            normalizedSearchName.includes(normalizedACName.replace(/\s*\([^)]*\)\s*/g, '').trim())) {
+        // Try without parentheses (exact match after removing parens)
+        const acNameWithoutParens = normalizedACName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+        const searchWithoutParens = normalizedSearchName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+        if (acNameWithoutParens === searchWithoutParens && acNameWithoutParens !== '') {
           return ac.acCode;
         }
 
-        // Try without parentheses
-        const acNameWithoutParens = normalizedACName.replace(/\s*\([^)]*\)\s*/g, '').trim();
-        const searchWithoutParens = normalizedSearchName.replace(/\s*\([^)]*\)\s*/g, '').trim();
-        if (acNameWithoutParens === searchWithoutParens) {
+        // Partial match - ONLY if search term is longer or similar length (prevents "Para" matching "Hariharpara")
+        // CRITICAL FIX: Prioritize exact matches to prevent substring conflicts
+        // This prevents "Para" from matching "Hariharpara" and "Kashipur" from matching "Kashipur-Belgachhia"
+        const lengthDiff = Math.abs(acNameWithoutParens.length - searchWithoutParens.length);
+        
+        // Only allow partial match if search term is longer or similar length (within 3 chars)
+        // This prevents short names from matching longer names that contain them
+        if (searchWithoutParens.length >= acNameWithoutParens.length && 
+            acNameWithoutParens.includes(searchWithoutParens) && 
+            lengthDiff <= 3) {
           return ac.acCode;
         }
       }
@@ -251,16 +258,23 @@ class BundledDataService {
         return acNo;
       }
 
-      // Partial match
-      if (normalizedStoredName.includes(normalizedSearchName) ||
-          normalizedSearchName.includes(normalizedStoredName.replace(/\s*\([^)]*\)\s*/g, '').trim())) {
+      // Try without parentheses (exact match after removing parens)
+      const storedWithoutParens = normalizedStoredName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      const searchWithoutParens = normalizedSearchName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      if (storedWithoutParens === searchWithoutParens && storedWithoutParens !== '') {
         return acNo;
       }
 
-      // Try without parentheses
-      const storedWithoutParens = normalizedStoredName.replace(/\s*\([^)]*\)\s*/g, '').trim();
-      const searchWithoutParens = normalizedSearchName.replace(/\s*\([^)]*\)\s*/g, '').trim();
-      if (storedWithoutParens === searchWithoutParens) {
+      // Partial match - ONLY if search term is longer or similar length (prevents "Para" matching "Hariharpara")
+      // CRITICAL FIX: Prioritize exact matches to prevent substring conflicts
+      // This prevents "Para" from matching "Hariharpara" and "Kashipur" from matching "Kashipur-Belgachhia"
+      const lengthDiff = Math.abs(storedWithoutParens.length - searchWithoutParens.length);
+      
+      // Only allow partial match if search term is longer or similar length (within 3 chars)
+      // This prevents short names from matching longer names that contain them
+      if (searchWithoutParens.length >= storedWithoutParens.length && 
+          storedWithoutParens.includes(searchWithoutParens) && 
+          lengthDiff <= 3) {
         return acNo;
       }
     }
@@ -311,20 +325,23 @@ class BundledDataService {
       return data[state][acNo];
     }
 
-    // STEP 4: Last resort - try direct case-insensitive name matching
+    // STEP 4: Last resort - try direct case-insensitive name matching (EXACT MATCHES ONLY)
+    // CRITICAL: Only exact matches here to prevent "Para" matching "Hariharpara"
     const normalizedSearch = String(acIdentifier).trim().toLowerCase().replace(/\s+/g, '');
     for (const [acNo, acData] of Object.entries(data[state])) {
       if (!acData.ac_name) continue;
 
       const normalizedStoredName = acData.ac_name.trim().toLowerCase().replace(/\s+/g, '');
+      // Exact match only - no partial matching
       if (normalizedStoredName === normalizedSearch) {
         console.log(`📦 Direct name match found AC: ${acNo} for "${acIdentifier}"`);
         return acData;
       }
 
-      // Also try without parentheses
+      // Also try without parentheses (exact match only)
       const nameWithoutParens = acData.ac_name?.replace(/\s*\([^)]*\)\s*/g, '').trim().toLowerCase().replace(/\s+/g, '');
-      if (nameWithoutParens === normalizedSearch) {
+      const searchWithoutParens = normalizedSearch.replace(/\s*\([^)]*\)\s*/g, '').trim();
+      if (nameWithoutParens === searchWithoutParens && nameWithoutParens !== '') {
         console.log(`📦 Name match (no parens) found AC: ${acNo} for "${acIdentifier}"`);
         return acData;
       }

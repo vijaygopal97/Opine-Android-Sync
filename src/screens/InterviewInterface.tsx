@@ -2380,8 +2380,15 @@ export default function InterviewInterface({ navigation, route }: any) {
       try {
         setLoadingRoundNumbers(true);
         const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
-        console.log('🔍 Fetching round numbers for AC:', selectedAC, 'in state:', state);
-        const response = await apiService.getRoundNumbersByAC(state, selectedAC);
+        // CRITICAL FIX: Use AC code (acNo) instead of AC name
+        const acIdentifier = selectedPollingStation.acNo || selectedAC;
+        if (!acIdentifier) {
+          console.warn('⚠️ No AC identifier available for fetching round numbers');
+          setAvailableRoundNumbers([]);
+          return;
+        }
+        console.log(`🔍 Fetching round numbers for AC Code: ${acIdentifier} (name: ${selectedAC}) in state: ${state}`);
+        const response = await apiService.getRoundNumbersByAC(state, acIdentifier);
         
         if (response.success && response.data?.rounds) {
           const rounds = response.data.rounds || [];
@@ -2416,8 +2423,16 @@ export default function InterviewInterface({ navigation, route }: any) {
         setLoadingGroups(true);
         // Use survey's acAssignmentState or default to 'West Bengal'
         const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
-        console.log('🔍 Fetching groups for AC:', selectedAC, 'Round:', selectedPollingStation.roundNumber, 'in state:', state);
-        const response = await apiService.getGroupsByAC(state, selectedAC, selectedPollingStation.roundNumber);
+        // CRITICAL FIX: Use AC code (acNo) if available, otherwise extract from selectedAC
+        let acIdentifier: string = selectedAC;
+        if (selectedPollingStation.acNo) {
+          acIdentifier = selectedPollingStation.acNo; // Use numeric AC code
+          console.log(`🔍 Fetching groups for AC Code: ${acIdentifier} (name: ${selectedAC}) Round: ${selectedPollingStation.roundNumber} in state: ${state}`);
+        } else {
+          console.warn(`⚠️ AC code not found, using AC name: ${selectedAC} (may cause conflicts!)`);
+          console.log(`🔍 Fetching groups for AC Name: ${selectedAC} Round: ${selectedPollingStation.roundNumber} in state: ${state}`);
+        }
+        const response = await apiService.getGroupsByAC(state, acIdentifier, selectedPollingStation.roundNumber);
         
         if (response.success) {
           // Backend returns { success: true, data: { groups: [...], ac_name: ..., etc } }
@@ -2549,9 +2564,15 @@ export default function InterviewInterface({ navigation, route }: any) {
         setLoadingStations(true);
         // Use state from selectedPollingStation, survey, or default to 'West Bengal'
         const state = selectedPollingStation.state || survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
-        // CRITICAL FIX: Use AC code (acNo) instead of AC name to prevent name conflicts
-        // (e.g., "Kashipur" vs "Kashipur-Belgachhia")
-        const acIdentifier = selectedPollingStation.acNo || selectedPollingStation.acName;
+        // CRITICAL FIX: Use ONLY AC code (acNo) - NEVER use AC name to prevent conflicts
+        // (e.g., "Para" vs "Hariharpara", "Kashipur" vs "Kashipur-Belgachhia")
+        if (!selectedPollingStation.acNo) {
+          console.error('❌ ERROR: AC code (acNo) is missing! Cannot fetch polling stations without AC code.');
+          Alert.alert('Error', 'AC code is missing. Please reselect the Assembly Constituency.');
+          setAvailablePollingStations([]);
+          return;
+        }
+        const acIdentifier = selectedPollingStation.acNo; // Use ONLY numeric AC code
         const response = await apiService.getPollingStationsByGroup(
           state,
           acIdentifier,
@@ -2882,7 +2903,7 @@ export default function InterviewInterface({ navigation, route }: any) {
     }
   };
 
-  const handleResponseChange = (questionId: string, response: any) => {
+  const handleResponseChange = (questionId: string, response: any, acObject?: any) => {
     // Prevent interaction if recording hasn't started and confirmed (for CAPI mode only)
     if (!isCatiMode) {
       const shouldRecordAudio = (survey.mode === 'capi') || (survey.mode === 'multi_mode' && survey.assignedMode === 'capi');
@@ -2906,11 +2927,69 @@ export default function InterviewInterface({ navigation, route }: any) {
     if (questionId === 'ac-selection') {
       setSelectedAC(response);
       
-      // Update selectedPollingStation with AC name
+      // CRITICAL FIX: Extract AC code from the selected AC object
+      // Priority: 1. acObject parameter (from dropdown), 2. Find from assignedACs/allACs arrays
+      const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
+      let selectedACCode: string | null = null;
+      let selectedACName: string = response;
+      
+      // First priority: Use acObject if provided (from dropdown selection)
+      if (acObject && typeof acObject === 'object' && acObject.acCode) {
+        selectedACCode = acObject.acCode;
+        selectedACName = acObject.acName || response;
+        console.log(`✅ AC code extracted from dropdown object: ${selectedACCode}`);
+      } else {
+        // Fallback: Find AC object from assignedACs first
+        if (assignedACs && assignedACs.length > 0) {
+          const acObj = assignedACs.find((ac: any) => {
+            if (typeof ac === 'string') return ac === response;
+            return ac.acName === response || ac.name === response || ac.displayText === response;
+          });
+          if (acObj && typeof acObj === 'object' && acObj.acCode) {
+            selectedACCode = acObj.acCode;
+            selectedACName = acObj.acName || response;
+            console.log(`✅ AC code found from assignedACs: ${selectedACCode}`);
+          }
+        }
+        
+        // If not found, try allACs
+        if (!selectedACCode && allACs && allACs.length > 0) {
+          const acObj = allACs.find((ac: any) => ac.acName === response || ac.name === response || ac.displayText === response);
+          if (acObj && acObj.acCode) {
+            selectedACCode = acObj.acCode;
+            selectedACName = acObj.acName || response;
+            console.log(`✅ AC code found from allACs: ${selectedACCode}`);
+          }
+        }
+      }
+      
+      // Extract numeric AC code (e.g., "WB245" -> "245", "WB012" -> "12")
+      let numericACCode: string | null = null;
+      if (selectedACCode) {
+        // Remove state prefix (e.g., "WB" from "WB245")
+        const stateCodeMatch = selectedACCode.match(/^([A-Z]{2})(\d+)$/);
+        if (stateCodeMatch) {
+          const numericPart = stateCodeMatch[2];
+          // Remove leading zeros (e.g., "012" -> "12", "001" -> "1")
+          numericACCode = numericPart.replace(/^0+/, '') || numericPart;
+        } else {
+          // If no prefix, try to extract numeric part directly
+          const numericMatch = selectedACCode.match(/\d+/);
+          if (numericMatch) {
+            numericACCode = numericMatch[0].replace(/^0+/, '') || numericMatch[0];
+          }
+        }
+      }
+      
+      console.log(`🔍 AC Selected: "${selectedACName}" → Code: ${selectedACCode} → Numeric: ${numericACCode}`);
+      
+      // Update selectedPollingStation with AC name AND code
       setSelectedPollingStation((prev: any) => ({
         ...prev,
-        acName: response,
-        state: survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal'
+        acName: selectedACName,
+        acNo: numericACCode, // CRITICAL: Store numeric AC code for direct lookup
+        acCode: selectedACCode, // Store full AC code for reference
+        state: state
       }));
       
       // Fetch AC data to check for bye-election status (for survey "68fd1915d41841da463f0d46")
@@ -2942,22 +3021,8 @@ export default function InterviewInterface({ navigation, route }: any) {
           console.error('Error fetching MP/MLA on AC selection:', err);
         });
       }
-      // Reset polling station selection when AC changes
-      const state = survey?.acAssignmentState || sessionData?.acAssignmentState || 'West Bengal';
-      setSelectedPollingStation({
-        state: state,
-        acName: response,
-        acNo: null,
-        pcNo: null,
-        pcName: null,
-        district: null,
-        roundNumber: null,
-        groupName: null,
-        stationName: null,
-        gpsLocation: null,
-        latitude: null,
-        longitude: null
-      });
+      // Note: selectedPollingStation is already updated above (lines 2987-2993) with AC code extraction
+      // No need to reset here - the state, acName, and acNo are already set correctly
       // Clear groups and polling stations - they will be fetched by useEffect
       setAvailableRoundNumbers([]);
       setAvailableGroups([]);
@@ -5451,7 +5516,8 @@ export default function InterviewInterface({ navigation, route }: any) {
                               selectedAC === ac.acName && styles.bottomSheetItemSelected
                             ]}
                             onPress={() => {
-                              handleResponseChange('ac-selection', ac.acName);
+                              // Pass AC object to handler so we can extract acCode immediately
+                              handleResponseChange('ac-selection', ac.acName, ac);
                               setShowACDropdown(false);
                               setACSearchTerm('');
                             }}
