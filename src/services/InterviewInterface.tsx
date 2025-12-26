@@ -64,7 +64,10 @@ const getPartyLogo = (optionText: string | null | undefined, questionText?: stri
     }
   }
   
-  const API_BASE_URL = 'https://convo.convergentview.com';
+  // Set API URL based on environment
+  const API_BASE_URL = __DEV__ 
+    ? 'https://opine.exypnossolutions.com'  // Development server
+    : 'https://convo.convergentview.com';    // Production server
   const text = String(optionText).toLowerCase();
   const mainText = getMainText(optionText).toLowerCase();
   

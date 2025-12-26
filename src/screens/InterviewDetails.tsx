@@ -148,7 +148,11 @@ const InterviewDetails: React.FC<InterviewDetailsProps> = ({ route, navigation }
         }
       } else {
         setIsLoadingAudio(true);
-        const fullAudioUrl = audioUrl.startsWith('http') ? audioUrl : `https://convo.convergentview.com${audioUrl}`;
+        // Set API URL based on environment
+        const API_BASE_URL = __DEV__ 
+          ? 'https://opine.exypnossolutions.com'  // Development server
+          : 'https://convo.convergentview.com';    // Production server
+        const fullAudioUrl = audioUrl.startsWith('http') ? audioUrl : `${API_BASE_URL}${audioUrl}`;
         
         const { sound: newSound } = await Audio.Sound.createAsync(
           { uri: fullAudioUrl },

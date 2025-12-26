@@ -517,6 +517,11 @@ class SyncService {
         consentResponse: isConsentNo ? 'no' : null, // Set consentResponse if consent is "No"
         locationControlBooster: locationControlBooster, // Include booster status for geofencing enforcement
         geofencingError: locationControlBooster ? geofencingError : null, // Include error if booster enabled (enforce geofencing)
+        // CRITICAL: Include abandonment information from interview metadata if available
+        abandoned: interview.metadata?.isCompleted === false || (interview.metadata?.abandonReason !== null && interview.metadata?.abandonReason !== undefined) ? true : false,
+        abandonedReason: interview.metadata?.abandonReason || null,
+        abandonmentNotes: interview.metadata?.abandonNotes || null,
+        isCompleted: interview.metadata?.isCompleted !== undefined ? interview.metadata.isCompleted : true, // Default to true if not set
         // Include audio recording info if audio was uploaded successfully
         audioRecording: audioUrl ? {
           hasAudio: true,
