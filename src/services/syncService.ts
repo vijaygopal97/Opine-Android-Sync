@@ -1,6 +1,7 @@
 import { apiService } from './api';
 import { offlineStorage, OfflineInterview } from './offlineStorage';
 import * as FileSystem from 'expo-file-system/legacy';
+import { appLoggingService } from './appLoggingService';
 
 export interface SyncResult {
   success: boolean;
@@ -59,11 +60,22 @@ class SyncService {
       }
       
       console.log(`🔄 Starting sync for ${pendingInterviews.length} interviews`);
+      appLoggingService.info('SYNC', 'Starting offline interview sync', {
+        interviewCount: pendingInterviews.length,
+        interviewIds: pendingInterviews.map(i => i.id)
+      });
 
       // Sync each interview one by one
       for (const interview of pendingInterviews) {
         try {
           console.log(`🔄 Syncing interview: ${interview.id} (${interview.isCatiMode ? 'CATI' : 'CAPI'})`);
+          appLoggingService.logSyncAttempt(interview.id, 'SYNC_START', {
+            interviewId: interview.id,
+            surveyId: interview.surveyId,
+            isCatiMode: interview.isCatiMode,
+            currentStatus: interview.status,
+            syncAttempts: interview.syncAttempts || 0
+          });
           
           // Update status to syncing
           await offlineStorage.updateInterviewStatus(interview.id, 'syncing');
@@ -104,6 +116,11 @@ class SyncService {
           await offlineStorage.updateInterviewStatus(interview.id, 'synced');
           result.syncedCount++;
           console.log(`✅ Successfully synced interview: ${interview.id}`);
+          appLoggingService.logSyncResult(interview.id, true, {
+            interviewId: interview.id,
+            surveyId: interview.surveyId,
+            syncedCount: result.syncedCount
+          });
 
           // Delete from local storage after successful sync
           // Synced interviews don't need to be stored offline anymore
@@ -150,6 +167,13 @@ class SyncService {
           
           // Only log as error if it's NOT a duplicate
           console.error(`❌ Error syncing interview ${interview.id}:`, error);
+          appLoggingService.logSyncResult(interview.id, false, {
+            interviewId: interview.id,
+            surveyId: interview.surveyId,
+            error: errorMessage,
+            errorType: error.name,
+            syncAttempts: interview.syncAttempts || 0
+          });
           
           // CRITICAL: Update status to failed and preserve interview for retry
           // Do NOT delete the interview - it needs to be retried

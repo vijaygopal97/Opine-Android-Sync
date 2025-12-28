@@ -4121,32 +4121,81 @@ export default function InterviewInterface({ navigation, route }: any) {
       
       console.log('📊 Saving interview with duration:', actualDuration, 'seconds');
       
-      // Get audio URI - use provided one or current state
-      let finalAudioUri = interviewData.audioUri || audioUri;
+      // Get audio URI - CRITICAL: Use the audio from THIS interview session
+      // Priority: 1) interviewData.audioUri (explicitly passed), 2) Currently recording audio, 3) State audioUri (but verify it's recent)
+      let finalAudioUri = interviewData.audioUri || null;
       
+      // If currently recording, we MUST stop and get the current recording
       // Ensure audio is stopped and saved - CRITICAL for offline mode (only for CAPI)
-      if (!isCatiMode && (isRecording || !finalAudioUri)) {
+      if (!isCatiMode && isRecording) {
         console.log('🔄 Stopping audio recording before saving offline...');
         console.log('   Current isRecording:', isRecording);
-        console.log('   Current audioUri:', finalAudioUri);
+        console.log('   Interview startTime:', startTime);
         try {
           const stoppedUri = await stopAudioRecording();
           if (stoppedUri) {
             finalAudioUri = stoppedUri;
             setAudioUri(stoppedUri); // Update state
             console.log('✅ Audio stopped and URI retrieved:', finalAudioUri);
+            
+            // Verify the audio file was created during this interview session
+            try {
+              const audioFileInfo = await FileSystem.getInfoAsync(stoppedUri);
+              if (audioFileInfo.exists && startTime) {
+                const audioModTime = audioFileInfo.modificationTime || audioFileInfo.birthtime || 0;
+                const interviewStartTime = startTime.getTime() / 1000; // Convert to seconds
+                const timeDiff = Math.abs(audioModTime - interviewStartTime);
+                
+                // Audio should be created within 5 minutes of interview start (allowing for slight delays)
+                if (timeDiff > 300) {
+                  console.warn(`⚠️ Audio file modification time (${audioModTime}) is far from interview start (${interviewStartTime}), diff: ${timeDiff}s`);
+                  console.warn('⚠️ This audio file might not belong to this interview!');
+                } else {
+                  console.log('✅ Audio file time matches interview timeframe');
+                }
+              }
+            } catch (verifyError) {
+              console.warn('⚠️ Could not verify audio file timestamp:', verifyError);
+            }
           } else {
-            console.warn('⚠️ stopAudioRecording returned null/undefined, using existing audioUri:', audioUri);
+            console.warn('⚠️ stopAudioRecording returned null/undefined');
           }
         } catch (audioError) {
           console.error('❌ Error stopping audio before saving offline:', audioError);
-          // Try to use existing audioUri if available
-          if (!finalAudioUri) {
-            console.warn('⚠️ No audio URI available after error');
-          }
         }
-      } else {
-        console.log('✅ Using existing audio URI:', finalAudioUri);
+      } else if (!isCatiMode && !finalAudioUri && audioUri) {
+        // Not currently recording, but we have an audioUri in state
+        // CRITICAL: Verify this audio URI is from THIS interview, not a previous one
+        console.log('⚠️ Using state audioUri - verifying it belongs to this interview...');
+        try {
+          const audioFileInfo = await FileSystem.getInfoAsync(audioUri);
+          if (audioFileInfo.exists && startTime) {
+            const audioModTime = audioFileInfo.modificationTime || audioFileInfo.birthtime || 0;
+            const interviewStartTime = startTime.getTime() / 1000;
+            const timeDiff = Math.abs(audioModTime - interviewStartTime);
+            
+            // Audio should be created within 5 minutes of interview start
+            if (timeDiff <= 300) {
+              finalAudioUri = audioUri;
+              console.log('✅ State audioUri verified - belongs to this interview (time diff:', timeDiff, 's)');
+            } else {
+              console.error(`❌ AUDIO MISMATCH: State audioUri is from ${Math.round(timeDiff / 60)} minutes ${timeDiff > interviewStartTime ? 'after' : 'before'} interview start!`);
+              console.error('❌ This audio file does NOT belong to this interview - NOT using it');
+              finalAudioUri = null;
+            }
+          } else {
+            console.warn('⚠️ Could not verify audio file - using with caution');
+            finalAudioUri = audioUri; // Use it but log warning
+          }
+        } catch (verifyError) {
+          console.error('⚠️ Error verifying audio file timestamp:', verifyError);
+          console.warn('⚠️ Not using potentially incorrect audioUri from state');
+          finalAudioUri = null;
+        }
+      }
+      
+      if (!finalAudioUri && !isCatiMode) {
+        console.warn('⚠️ No valid audio URI available for this interview');
       }
       
       // Copy audio file to offline storage (only for CAPI, CATI doesn't have audio)

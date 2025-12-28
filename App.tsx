@@ -20,6 +20,7 @@ import { theme } from './src/theme/theme';
 
 // Import API service
 import { apiService } from './src/services/api';
+import { appLoggingService } from './src/services/appLoggingService';
 
 const Stack = createStackNavigator();
 
@@ -29,6 +30,11 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
+    // Initialize logging service
+    appLoggingService.initialize().catch(err => {
+      console.error('Failed to initialize logging service:', err);
+    });
+    
     checkAuthStatus();
   }, []);
 

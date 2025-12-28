@@ -2318,6 +2318,66 @@ class ApiService {
       };
     }
   }
+
+  /**
+   * Send app logs to backend
+   */
+  async sendAppLogs(data: {
+    logs: Array<{
+      level: string;
+      message: string;
+      timestamp: string;
+      category: string;
+      metadata?: any;
+      stackTrace?: string;
+    }>;
+    deviceInfo: any;
+    userId?: string | null;
+    appVersion: string;
+  }): Promise<{ success: boolean }> {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.post(
+        `${this.baseURL}/api/app-logs`,
+        data,
+        { headers }
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error('Error sending app logs:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Report offline interview status to backend
+   */
+  async reportOfflineInterviewStatus(data: {
+    interviews: Array<{
+      interviewId: string;
+      sessionId?: string;
+      surveyId: string;
+      status: string;
+      syncAttempts: number;
+      lastSyncAttempt?: string;
+      error?: string;
+      metadata: any;
+    }>;
+    deviceId: string;
+  }): Promise<{ success: boolean; reported: number }> {
+    try {
+      const headers = await this.getHeaders();
+      const response = await axios.post(
+        `${this.baseURL}/api/survey-responses/offline-interviews/report`,
+        data,
+        { headers }
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error('Error reporting offline interview status:', error);
+      throw error;
+    }
+  }
 }
 
 export const apiService = new ApiService();

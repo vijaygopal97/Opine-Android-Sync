@@ -282,16 +282,74 @@ class OfflineStorageService {
 
   /**
    * Get pending interviews (not synced)
+   * FIX: Now includes stuck 'syncing' interviews that are older than 5 minutes
    */
   async getPendingInterviews(): Promise<OfflineInterview[]> {
     try {
       const interviews = await this.getOfflineInterviews();
-      // Include interviews with status 'pending', 'failed', or no status (legacy)
-      const pending = interviews.filter(i => {
-        const status = i.status;
-        return !status || status === 'pending' || status === 'failed';
+      const now = new Date();
+      const STUCK_SYNCING_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+      
+      // Process interviews: reset stuck 'syncing' interviews
+      let hasStuckInterviews = false;
+      const processedInterviews = interviews.map(i => {
+        // If interview is stuck in 'syncing' status for more than 5 minutes, reset it to 'failed'
+        if (i.status === 'syncing' && i.lastSyncAttempt) {
+          const lastAttempt = new Date(i.lastSyncAttempt);
+          const timeSinceAttempt = now.getTime() - lastAttempt.getTime();
+          
+          if (timeSinceAttempt > STUCK_SYNCING_THRESHOLD_MS) {
+            console.log(`⚠️ Interview ${i.id} is stuck in 'syncing' status for ${Math.round(timeSinceAttempt / 1000 / 60)} minutes - resetting to 'failed'`);
+            hasStuckInterviews = true;
+            return {
+              ...i,
+              status: 'failed' as const,
+              error: i.error || 'Reset from stuck syncing status',
+              lastSyncAttempt: new Date().toISOString()
+            };
+          }
+        }
+        return i;
       });
+      
+      // Save updated interviews if any were reset
+      if (hasStuckInterviews) {
+        try {
+          await AsyncStorage.setItem(STORAGE_KEYS.OFFLINE_INTERVIEWS, JSON.stringify(processedInterviews));
+          console.log('✅ Reset stuck syncing interviews and saved updated status');
+        } catch (saveError) {
+          console.error('❌ Error saving reset interviews:', saveError);
+        }
+      }
+      
+      // Include interviews with status 'pending', 'failed', 'syncing' (recent), or no status (legacy)
+      const pending = processedInterviews.filter(i => {
+        const status = i.status;
+        
+        // Always include pending and failed
+        if (!status || status === 'pending' || status === 'failed') {
+          return true;
+        }
+        
+        // Include 'syncing' if it's recent (not stuck)
+        if (status === 'syncing') {
+          if (i.lastSyncAttempt) {
+            const lastAttempt = new Date(i.lastSyncAttempt);
+            const timeSinceAttempt = now.getTime() - lastAttempt.getTime();
+            // Include if syncing started less than 5 minutes ago
+            return timeSinceAttempt <= STUCK_SYNCING_THRESHOLD_MS;
+          }
+          // If no lastSyncAttempt, include it (will be processed)
+          return true;
+        }
+        
+        return false;
+      });
+      
       console.log(`📊 getPendingInterviews: Found ${pending.length} pending interviews out of ${interviews.length} total`);
+      if (hasStuckInterviews) {
+        console.log(`⚠️ Reset ${processedInterviews.filter((i, idx) => interviews[idx].status === 'syncing' && i.status === 'failed').length} stuck 'syncing' interviews to 'failed'`);
+      }
       return pending;
     } catch (error) {
       console.error('❌ Error getting pending interviews:', error);
@@ -330,6 +388,217 @@ class OfflineStorageService {
       }
     } catch (error) {
       console.error('❌ Error updating interview status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Manually change interview status (for fixing stuck interviews)
+   */
+  async changeInterviewStatus(interviewId: string, newStatus: OfflineInterview['status'], error?: string): Promise<void> {
+    try {
+      const interviews = await this.getOfflineInterviews();
+      const interview = interviews.find(i => i.id === interviewId);
+      if (!interview) {
+        throw new Error(`Interview ${interviewId} not found`);
+      }
+      
+      console.log(`📝 Manually changing interview ${interviewId} status from ${interview.status} to ${newStatus}`);
+      
+      interview.status = newStatus;
+      interview.lastSyncAttempt = new Date().toISOString();
+      if (error !== undefined) {
+        interview.error = error || undefined;
+      }
+      // Reset sync attempts if changing to pending
+      if (newStatus === 'pending') {
+        interview.syncAttempts = 0;
+      }
+      
+      await this.saveOfflineInterview(interview);
+      console.log(`✅ Interview ${interviewId} status changed to ${newStatus}`);
+    } catch (error) {
+      console.error('❌ Error changing interview status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Export interview data and audio for manual sharing
+   * Returns interview data as JSON string and audio file path (if exists)
+   */
+  async exportInterviewForSharing(interviewId: string): Promise<{
+    interviewData: string;
+    audioPath?: string;
+    audioExists: boolean;
+  }> {
+    try {
+      const interview = await this.getOfflineInterviewById(interviewId);
+      if (!interview) {
+        throw new Error(`Interview ${interviewId} not found`);
+      }
+
+      console.log('📋 Exporting interview:', {
+        interviewId,
+        startTime: interview.startTime,
+        endTime: interview.endTime,
+        duration: interview.duration,
+        audioOfflinePath: interview.audioOfflinePath || 'NOT SET',
+        audioUri: interview.audioUri || 'NOT SET'
+      });
+
+      // Check if audio file exists BEFORE preparing export data
+      // CRITICAL: Verify the audio file actually belongs to this interview by checking filename
+      let audioPath: string | undefined;
+      let audioExists = false;
+      let audioFileSize: number = 0;
+
+      if (interview.audioOfflinePath) {
+        try {
+          // Verify audio file path contains the interview ID (CRITICAL SAFETY CHECK)
+          const audioFilename = interview.audioOfflinePath.split('/').pop() || '';
+          const expectedPrefix = `audio_${interviewId}`;
+          
+          console.log('🔍 Verifying audio file match:', {
+            audioFilename,
+            expectedPrefix,
+            interviewId,
+            matches: audioFilename.startsWith(expectedPrefix)
+          });
+          
+          if (!audioFilename.startsWith(expectedPrefix)) {
+            console.error(`❌ AUDIO MISMATCH DETECTED!`);
+            console.error(`❌ Interview ID: ${interviewId}`);
+            console.error(`❌ Expected filename prefix: ${expectedPrefix}`);
+            console.error(`❌ Actual audio filename: ${audioFilename}`);
+            console.error(`❌ Audio path in interview: ${interview.audioOfflinePath}`);
+            console.error(`❌ This audio file does NOT belong to this interview - SKIPPING for safety`);
+            
+            // Check if there's a matching audio file in the directory
+            try {
+              const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+              const offlineAudioDir = `${baseDir}offline_audio/`;
+              const dirInfo = await FileSystem.getInfoAsync(offlineAudioDir);
+              
+              if (dirInfo.exists && dirInfo.isDirectory) {
+                // Try to find the correct audio file
+                const correctFilename = `${expectedPrefix}_*.m4a`;
+                console.log(`🔍 Looking for correct audio file matching: ${correctFilename}`);
+                // Note: FileSystem doesn't have list directory, so we can't easily search
+                // But we can try to construct the most likely filename based on interview start time
+                const interviewStartTime = interview.startTime ? new Date(interview.startTime).getTime() : null;
+                if (interviewStartTime) {
+                  // The filename format is: audio_{interviewId}_{timestamp}.m4a
+                  // The timestamp is when the file was copied, which should be close to startTime
+                  // Let's try a few timestamps around the start time
+                  for (let offset = -60000; offset <= 60000; offset += 10000) { // ±60 seconds in 10s increments
+                    const testTimestamp = interviewStartTime + offset;
+                    const testFilename = `${expectedPrefix}_${testTimestamp}.m4a`;
+                    const testPath = `${offlineAudioDir}${testFilename}`;
+                    try {
+                      const testInfo = await FileSystem.getInfoAsync(testPath);
+                      if (testInfo.exists) {
+                        console.log(`✅ Found matching audio file: ${testFilename}`);
+                        audioPath = testPath;
+                        audioExists = true;
+                        audioFileSize = testInfo.size || 0;
+                        console.log('✅ Using corrected audio file path:', audioPath);
+                        break;
+                      }
+                    } catch (e) {
+                      // Continue searching
+                    }
+                  }
+                }
+              }
+              
+              if (!audioExists) {
+                console.warn('⚠️ Could not find matching audio file - skipping audio export for safety');
+              }
+            } catch (searchError) {
+              console.error('Error searching for correct audio file:', searchError);
+            }
+          } else {
+            // Filename matches - verify file exists
+            const audioInfo = await FileSystem.getInfoAsync(interview.audioOfflinePath);
+            if (audioInfo.exists) {
+              audioPath = interview.audioOfflinePath;
+              audioExists = true;
+              audioFileSize = audioInfo.size || 0;
+              console.log('✅ Audio file verified and found for export:', audioPath, 'Size:', audioFileSize, 'bytes');
+              console.log('✅ Audio filename matches interview ID:', audioFilename);
+            } else {
+              console.warn('⚠️ Audio file path exists in interview but file not found:', interview.audioOfflinePath);
+            }
+          }
+        } catch (audioError) {
+          console.error('⚠️ Error verifying/checking audio file:', audioError);
+          console.warn('⚠️ Skipping audio export due to verification error');
+        }
+      } else if (interview.audioUri) {
+        // Fallback to original audioUri if audioOfflinePath is not set
+        // Note: audioUri might not contain interview ID, so we'll use it but log a warning
+        try {
+          const audioInfo = await FileSystem.getInfoAsync(interview.audioUri);
+          if (audioInfo.exists) {
+            const audioFilename = interview.audioUri.split('/').pop() || '';
+            console.warn('⚠️ Using original audioUri (not offline copy) - cannot verify interview ID match:', audioFilename);
+            audioPath = interview.audioUri;
+            audioExists = true;
+            audioFileSize = audioInfo.size || 0;
+            console.log('✅ Audio file found (using audioUri) for export:', audioPath, 'Size:', audioFileSize, 'bytes');
+          }
+        } catch (audioError) {
+          console.warn('⚠️ Could not check original audio file:', audioError);
+        }
+      } else {
+        console.log('ℹ️ No audio file path stored for this interview (audioOfflinePath and audioUri both null)');
+      }
+
+      // Prepare export data (include all interview information + audio info)
+      const exportData = {
+        interviewId: interview.id,
+        sessionId: interview.sessionId,
+        surveyId: interview.surveyId,
+        surveyName: interview.surveyName,
+        isCatiMode: interview.isCatiMode,
+        responses: interview.responses,
+        locationData: interview.locationData,
+        selectedAC: interview.selectedAC,
+        selectedPollingStation: interview.selectedPollingStation,
+        selectedSetNumber: interview.selectedSetNumber,
+        startTime: interview.startTime,
+        endTime: interview.endTime,
+        duration: interview.duration,
+        metadata: interview.metadata,
+        status: interview.status,
+        syncAttempts: interview.syncAttempts,
+        lastSyncAttempt: interview.lastSyncAttempt,
+        error: interview.error,
+        // Include audio information in export
+        audioInfo: {
+          hasAudio: audioExists,
+          audioPath: audioPath || null,
+          audioFileSize: audioFileSize,
+          audioOfflinePath: interview.audioOfflinePath || null,
+          audioUri: interview.audioUri || null,
+          note: audioExists 
+            ? `Audio file is stored at: ${audioPath}. Use the audio path to access the audio file from the device.`
+            : 'Audio file not found. It may have been deleted or was not recorded.'
+        },
+        exportedAt: new Date().toISOString(),
+        appVersion: '12'
+      };
+
+      const interviewDataJson = JSON.stringify(exportData, null, 2);
+
+      return {
+        interviewData: interviewDataJson,
+        audioPath,
+        audioExists
+      };
+    } catch (error) {
+      console.error('❌ Error exporting interview:', error);
       throw error;
     }
   }

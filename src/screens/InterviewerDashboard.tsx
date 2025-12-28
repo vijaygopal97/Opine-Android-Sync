@@ -32,6 +32,10 @@ import { User, Survey } from '../types';
 import { offlineStorage } from '../services/offlineStorage';
 import { syncService } from '../services/syncService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import JSZip from 'jszip';
+import { appLoggingService } from '../services/appLoggingService';
 
 const { width } = Dimensions.get('window');
 
@@ -94,19 +98,16 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   }, []);
 
   // Load network condition state
-  // CRITICAL FIX: Always reset to 'good_stable' since UI is commented out
-  // This ensures no network throttling is active
+  // Debug mode: Load saved network condition from storage
   useEffect(() => {
     const loadNetworkCondition = async () => {
       try {
-        // Always reset to 'good_stable' to ensure no throttling
-        // (UI is commented out, so users can't change it anyway)
-        const condition: 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow' = 'good_stable';
+        const stored = await AsyncStorage.getItem('networkCondition');
+        const condition: 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow' = 
+          (stored as any) || 'good_stable';
         setNetworkCondition(condition);
         apiService.setNetworkCondition(condition);
-        // Clear any stored slow condition
-        await AsyncStorage.removeItem('networkCondition');
-        console.log('✅ Network condition reset to: good_stable (no throttling)');
+        console.log('✅ Network condition loaded:', condition);
       } catch (error) {
         console.error('Error loading network condition:', error);
         // Fallback: ensure it's set to good_stable
@@ -757,21 +758,253 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
           style: 'destructive',
           onPress: async () => {
             try {
+              appLoggingService.info('INTERVIEW', 'Deleting offline interview', { interviewId });
               await offlineStorage.deleteSyncedInterview(interviewId);
               console.log('✅ Deleted offline interview:', interviewId);
               showSnackbar('Offline interview deleted', 'success');
-              // Only update what's necessary - don't reload full dashboard
               await loadOfflineInterviews();
               await loadPendingInterviewsCount();
-              // Stats will update on next focus or periodic refresh
             } catch (error) {
               console.error('Error deleting offline interview:', error);
+              appLoggingService.error('INTERVIEW', 'Failed to delete interview', { interviewId }, error as Error);
               showSnackbar('Failed to delete interview', 'error');
             }
           },
         },
       ]
     );
+  };
+
+  const handleChangeInterviewStatus = async (interviewId: string, currentStatus: string) => {
+    Alert.alert(
+      'Change Interview Status',
+      `Current status: ${currentStatus}\n\nSelect new status:`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Reset to Pending',
+          onPress: async () => {
+            try {
+              appLoggingService.info('SYNC', 'Manually resetting interview status to pending', { interviewId, oldStatus: currentStatus });
+              await offlineStorage.changeInterviewStatus(interviewId, 'pending');
+              showSnackbar('Interview status changed to pending', 'success');
+              await loadOfflineInterviews();
+              await loadPendingInterviewsCount();
+            } catch (error) {
+              console.error('Error changing interview status:', error);
+              appLoggingService.error('SYNC', 'Failed to change interview status', { interviewId }, error as Error);
+              showSnackbar('Failed to change status', 'error');
+            }
+          },
+        },
+        {
+          text: 'Mark as Failed',
+          onPress: async () => {
+            try {
+              appLoggingService.info('SYNC', 'Manually marking interview as failed', { interviewId, oldStatus: currentStatus });
+              await offlineStorage.changeInterviewStatus(interviewId, 'failed', 'Manually marked as failed');
+              showSnackbar('Interview marked as failed', 'success');
+              await loadOfflineInterviews();
+              await loadPendingInterviewsCount();
+            } catch (error) {
+              console.error('Error changing interview status:', error);
+              appLoggingService.error('SYNC', 'Failed to change interview status', { interviewId }, error as Error);
+              showSnackbar('Failed to change status', 'error');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleExportInterview = async (interviewId: string) => {
+    try {
+      showSnackbar('Exporting interview...', 'info');
+      appLoggingService.info('EXPORT', 'Exporting interview for sharing', { interviewId });
+      
+      const exportData = await offlineStorage.exportInterviewForSharing(interviewId);
+      
+      // Create export directory in cache (temporary, not stored with offline data)
+      // Use cacheDirectory for exports to avoid confusion with offline storage
+      const exportDir = `${FileSystem.cacheDirectory || FileSystem.documentDirectory}exports/`;
+      const dirInfo = await FileSystem.getInfoAsync(exportDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(exportDir, { intermediates: true });
+      }
+
+      // Get interview for filename
+      const interview = await offlineStorage.getOfflineInterviewById(interviewId);
+      const surveyName = interview?.surveyName?.replace(/[^a-z0-9]/gi, '_') || 'interview';
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const jsonFileName = `${surveyName}_${timestamp}.json`;
+
+      // Save JSON file
+      const jsonFilePath = `${exportDir}${jsonFileName}`;
+      await FileSystem.writeAsStringAsync(jsonFilePath, exportData.interviewData);
+
+      let shareMessage = `Interview exported successfully!\n\nFiles:\n- ${jsonFileName}`;
+      
+      // Copy audio file if exists (for sharing)
+      let audioFileName: string | null = null;
+      let audioDestPath: string | null = null;
+      
+      if (exportData.audioExists && exportData.audioPath) {
+        try {
+          const audioExt = exportData.audioPath.split('.').pop() || 'm4a';
+          audioFileName = `${surveyName}_${timestamp}.${audioExt}`;
+          audioDestPath = `${exportDir}${audioFileName}`;
+          
+          console.log('📋 Copying audio for export:', {
+            from: exportData.audioPath,
+            to: audioDestPath
+          });
+          
+          await FileSystem.copyAsync({
+            from: exportData.audioPath,
+            to: audioDestPath
+          });
+          
+          // Verify copy succeeded
+          const copiedFileInfo = await FileSystem.getInfoAsync(audioDestPath);
+          if (copiedFileInfo.exists) {
+            shareMessage += `\n- ${audioFileName} (${Math.round((copiedFileInfo.size || 0) / 1024)} KB)`;
+            appLoggingService.info('EXPORT', 'Audio file copied for export', { 
+              interviewId, 
+              audioFileName,
+              fileSize: copiedFileInfo.size 
+            });
+          } else {
+            throw new Error('Audio file copy verification failed');
+          }
+        } catch (audioError) {
+          console.error('Error copying audio file:', audioError);
+          appLoggingService.error('EXPORT', 'Failed to copy audio file', { interviewId }, audioError as Error);
+          shareMessage += `\n⚠️ Audio file could not be copied: ${audioError instanceof Error ? audioError.message : 'Unknown error'}`;
+          audioFileName = null;
+          audioDestPath = null;
+        }
+      } else {
+        console.log('ℹ️ No audio file to export:', {
+          hasAudioPath: !!exportData.audioPath,
+          audioExists: exportData.audioExists,
+          audioOfflinePath: interview?.audioOfflinePath,
+          audioUri: interview?.audioUri
+        });
+      }
+
+      // Create ZIP file containing both JSON and audio (if available)
+      const zipFileName = `${surveyName}_${timestamp}.zip`;
+      const zipFilePath = `${exportDir}${zipFileName}`;
+      
+      try {
+        const zip = new JSZip();
+        
+        // Add JSON file to ZIP
+        const jsonContent = await FileSystem.readAsStringAsync(jsonFilePath);
+        zip.file(jsonFileName, jsonContent);
+        console.log('✅ Added JSON file to ZIP:', jsonFileName);
+        
+        // Add audio file to ZIP if available
+        if (audioDestPath && audioFileName) {
+          try {
+            const audioFileInfo = await FileSystem.getInfoAsync(audioDestPath);
+            if (audioFileInfo.exists) {
+              // Read audio file as base64
+              const audioBase64 = await FileSystem.readAsStringAsync(audioDestPath, {
+                encoding: FileSystem.EncodingType.Base64
+              });
+              zip.file(audioFileName, audioBase64, { base64: true });
+              console.log('✅ Added audio file to ZIP:', audioFileName, `(${Math.round((audioFileInfo.size || 0) / 1024)} KB)`);
+            }
+          } catch (audioZipError) {
+            console.error('Error adding audio to ZIP:', audioZipError);
+            appLoggingService.warn('EXPORT', 'Failed to add audio to ZIP', { interviewId, error: audioZipError });
+          }
+        }
+        
+        // Generate ZIP file
+        console.log('📦 Generating ZIP file...');
+        const zipBlob = await zip.generateAsync({ 
+          type: 'base64',
+          compression: 'DEFLATE',
+          compressionOptions: { level: 6 }
+        });
+        
+        await FileSystem.writeAsStringAsync(zipFilePath, zipBlob, {
+          encoding: FileSystem.EncodingType.Base64
+        });
+        
+        console.log('✅ ZIP file created:', zipFilePath);
+        appLoggingService.info('EXPORT', 'ZIP file created successfully', { 
+          interviewId, 
+          zipFileName,
+          containsAudio: !!audioDestPath
+        });
+        
+        // Share ZIP file (contains both JSON and audio)
+        const isSharingAvailable = await Sharing.isAvailableAsync();
+        if (isSharingAvailable) {
+          try {
+            await Sharing.shareAsync(zipFilePath, {
+              mimeType: 'application/zip',
+              dialogTitle: 'Export Interview Data & Audio',
+              UTI: 'public.zip-archive'
+            });
+            
+            const successMessage = audioDestPath 
+              ? '✅ Interview data and audio exported in ZIP file!' 
+              : '✅ Interview data exported in ZIP file!';
+            showSnackbar(successMessage, 'success');
+          } catch (shareError) {
+            console.error('Error sharing ZIP file:', shareError);
+            Alert.alert(
+              'Export Complete',
+              `${shareMessage}\n\nZIP file created: ${zipFileName}\n\nFiles saved to:\n${exportDir}\n\nYou can find the ZIP file in your device's file manager.`,
+              [{ text: 'OK' }]
+            );
+          }
+        } else {
+          Alert.alert(
+            'Export Complete',
+            `${shareMessage}\n\nZIP file created: ${zipFileName}\n\nFiles saved to:\n${exportDir}\n\nThe ZIP file contains both JSON and audio files.`,
+            [{ text: 'OK' }]
+          );
+        }
+      } catch (zipError) {
+        console.error('Error creating ZIP file:', zipError);
+        appLoggingService.error('EXPORT', 'Failed to create ZIP file', { interviewId }, zipError as Error);
+        
+        // Fallback: Share JSON file only
+        const isSharingAvailable = await Sharing.isAvailableAsync();
+        if (isSharingAvailable) {
+          try {
+            await Sharing.shareAsync(jsonFilePath);
+            showSnackbar('Interview exported (ZIP creation failed, JSON shared)', 'info');
+          } catch (shareError) {
+            Alert.alert(
+              'Export Error',
+              `Failed to create ZIP file. JSON file saved to:\n${jsonFilePath}\n\nError: ${zipError instanceof Error ? zipError.message : 'Unknown error'}`,
+              [{ text: 'OK' }]
+            );
+          }
+        } else {
+          Alert.alert(
+            'Export Error',
+            `Failed to create ZIP file. JSON file saved to:\n${jsonFilePath}\n\nError: ${zipError instanceof Error ? zipError.message : 'Unknown error'}`,
+            [{ text: 'OK' }]
+          );
+        }
+      }
+      
+      appLoggingService.info('EXPORT', 'Interview exported successfully', { interviewId, jsonFileName });
+    } catch (error) {
+      console.error('Error exporting interview:', error);
+      appLoggingService.error('EXPORT', 'Failed to export interview', { interviewId }, error as Error);
+      showSnackbar('Failed to export interview', 'error');
+    }
   };
 
   const loadDashboardData = async () => {
@@ -1166,8 +1399,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
-      {/* Debug Controls - Force Offline Mode & Network Condition - COMMENTED OUT (can be re-enabled for debugging) */}
-      {/* <View style={styles.debugControlsContainer}>
+      {/* Debug Controls - Force Offline Mode & Network Condition - ENABLED for testing */}
+      <View style={styles.debugControlsContainer}>
         <TouchableOpacity
           style={[styles.debugControlButton, forceOfflineMode && styles.debugControlButtonActive]}
           onPress={toggleForceOfflineMode}
@@ -1228,7 +1461,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             titleStyle={networkCondition === 'very_slow' ? { fontWeight: 'bold' } : {}}
           />
         </Menu>
-      </View> */}
+      </View>
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
         start={{ x: 0, y: 0 }}
@@ -1651,18 +1884,39 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                       </Text>
                     </View>
                   </View>
-                  {/* Delete button row - separate row to prevent overlap */}
-                  {(interview.status === 'failed' || (interview.status === 'synced' && interview.error)) && (
-                    <View style={styles.deleteButtonContainer}>
+                  {/* Action buttons row */}
+                  <View style={styles.actionButtonsContainer}>
+                    {/* Change Status Button */}
+                    {(interview.status === 'failed' || interview.status === 'syncing') && (
+                      <TouchableOpacity
+                        onPress={() => handleChangeInterviewStatus(interview.id, interview.status || 'unknown')}
+                        style={styles.actionButton}
+                      >
+                        <Ionicons name="refresh-outline" size={16} color="#059669" />
+                        <Text style={styles.actionButtonText}>Reset Status</Text>
+                      </TouchableOpacity>
+                    )}
+                    
+                    {/* Export Button */}
+                    <TouchableOpacity
+                      onPress={() => handleExportInterview(interview.id)}
+                      style={styles.actionButton}
+                    >
+                      <Ionicons name="download-outline" size={16} color="#2563eb" />
+                      <Text style={styles.actionButtonText}>Export</Text>
+                    </TouchableOpacity>
+                    
+                    {/* Delete Button */}
+                    {(interview.status === 'failed' || interview.status === 'synced') && (
                       <TouchableOpacity
                         onPress={() => handleDeleteOfflineInterview(interview.id)}
-                        style={styles.deleteButtonRow}
+                        style={styles.actionButton}
                       >
-                        <Ionicons name="trash-outline" size={18} color="#dc2626" />
-                        <Text style={styles.deleteButtonText}>Delete Interview</Text>
+                        <Ionicons name="trash-outline" size={16} color="#dc2626" />
+                        <Text style={[styles.actionButtonText, { color: '#dc2626' }]}>Delete</Text>
                       </TouchableOpacity>
-                    </View>
-                  )}
+                    )}
+                  </View>
                   <View style={styles.interviewMeta}>
                     <View style={styles.metaItem}>
                       <Text style={styles.metaLabel}>Saved</Text>
@@ -1757,42 +2011,42 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 }
 
 const styles = StyleSheet.create({
-  // Debug Controls styles - Force Offline Mode & Network Condition - COMMENTED OUT (can be re-enabled for debugging)
-  // debugControlsContainer: {
-  //   flexDirection: 'row',
-  //   paddingHorizontal: 16,
-  //   paddingTop: 8,
-  //   paddingBottom: 4,
-  //   backgroundColor: '#f5f5f5',
-  //   borderBottomWidth: 1,
-  //   borderBottomColor: '#e0e0e0',
-  //   gap: 8,
-  // },
-  // debugControlButton: {
-  //   flex: 1,
-  //   flexDirection: 'row',
-  //   alignItems: 'center',
-  //   justifyContent: 'center',
-  //   paddingVertical: 8,
-  //   paddingHorizontal: 12,
-  //   backgroundColor: '#fff',
-  //   borderRadius: 8,
-  //   borderWidth: 1,
-  //   borderColor: '#ddd',
-  // },
-  // debugControlButtonActive: {
-  //   backgroundColor: '#dc2626',
-  //   borderColor: '#b91c1c',
-  // },
-  // debugControlText: {
-  //   marginLeft: 6,
-  //   fontSize: 13,
-  //   fontWeight: '600',
-  //   color: '#666',
-  // },
-  // debugControlTextActive: {
-  //   color: '#fff',
-  // },
+  // Debug Controls styles - Force Offline Mode & Network Condition - ENABLED for testing
+  debugControlsContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+    backgroundColor: '#f5f5f5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    gap: 8,
+  },
+  debugControlButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  debugControlButtonActive: {
+    backgroundColor: '#dc2626',
+    borderColor: '#b91c1c',
+  },
+  debugControlText: {
+    marginLeft: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+  },
+  debugControlTextActive: {
+    color: '#fff',
+  },
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
@@ -2277,5 +2531,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     fontStyle: 'italic',
+  },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    flexWrap: 'wrap',
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#ffffff',
+    minWidth: 100,
+  },
+  actionButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#374151',
   },
 });
