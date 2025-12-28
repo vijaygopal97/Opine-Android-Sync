@@ -1399,8 +1399,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
-      {/* Debug Controls - Force Offline Mode & Network Condition - ENABLED for testing */}
-      <View style={styles.debugControlsContainer}>
+      {/* Debug Controls - Force Offline Mode & Network Condition - COMMENTED OUT (can be re-enabled when needed for testing) */}
+      {/* <View style={styles.debugControlsContainer}>
         <TouchableOpacity
           style={[styles.debugControlButton, forceOfflineMode && styles.debugControlButtonActive]}
           onPress={toggleForceOfflineMode}
@@ -1461,7 +1461,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             titleStyle={networkCondition === 'very_slow' ? { fontWeight: 'bold' } : {}}
           />
         </Menu>
-      </View>
+      </View> */}
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
         start={{ x: 0, y: 0 }}
@@ -1868,6 +1868,19 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
                       <Text style={styles.interviewTitle} numberOfLines={2}>
                         {interview.surveyName || interview.survey?.surveyName || 'Unknown Survey'}
                       </Text>
+                      {/* Interview ID and Session ID - for identification */}
+                      <View style={styles.interviewIdContainer}>
+                        <Text style={styles.interviewIdText}>
+                          <Text style={styles.interviewIdLabel}>Interview ID: </Text>
+                          {interview.id || 'N/A'}
+                        </Text>
+                        {interview.sessionId && (
+                          <Text style={styles.interviewIdText}>
+                            <Text style={styles.interviewIdLabel}>Session ID: </Text>
+                            {interview.sessionId}
+                          </Text>
+                        )}
+                      </View>
                     </View>
                   </View>
                   {/* Status badge - moved to separate row below title to prevent overflow */}
@@ -2338,6 +2351,22 @@ const styles = StyleSheet.create({
   interviewTitleContainer: {
     flex: 1,
     marginRight: 0,
+  },
+  interviewIdContainer: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  interviewIdText: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginBottom: 4,
+    fontFamily: 'monospace',
+  },
+  interviewIdLabel: {
+    fontWeight: '600',
+    color: '#374151',
   },
   statusBadgeContainer: {
     marginTop: 8,
