@@ -393,6 +393,43 @@ class OfflineStorageService {
   }
 
   /**
+   * Fix 3: Atomic metadata and status update
+   * Updates both metadata and status in a single atomic operation
+   */
+  async updateInterviewMetadataAndStatus(
+    interviewId: string, 
+    metadataUpdates: Partial<OfflineInterview['metadata']>, 
+    status: OfflineInterview['status'],
+    error?: string
+  ): Promise<void> {
+    try {
+      const interviews = await this.getOfflineInterviews();
+      const interview = interviews.find(i => i.id === interviewId);
+      if (interview) {
+        // Update metadata and status atomically (in one object update)
+        interview.metadata = {
+          ...interview.metadata,
+          ...metadataUpdates,
+        };
+        interview.status = status;
+        interview.lastSyncAttempt = new Date().toISOString();
+        if (error) {
+          interview.error = error;
+          interview.syncAttempts = (interview.syncAttempts || 0) + 1;
+        }
+        // Save entire object atomically - this ensures metadata and status are updated together
+        await this.saveOfflineInterview(interview);
+        console.log(`✅ Atomically updated interview ${interviewId} metadata and status to ${status}`);
+      } else {
+        console.warn(`⚠️ Interview ${interviewId} not found for atomic update`);
+      }
+    } catch (error) {
+      console.error('❌ Error atomically updating interview metadata and status:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Manually change interview status (for fixing stuck interviews)
    */
   async changeInterviewStatus(interviewId: string, newStatus: OfflineInterview['status'], error?: string): Promise<void> {

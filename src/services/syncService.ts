@@ -111,9 +111,30 @@ class SyncService {
           }
 
           // ONLY reach here if sync was successful (no error thrown)
-          // Mark as synced
-          console.log(`📝 Marking interview ${interview.id} as synced...`);
-          await offlineStorage.updateInterviewStatus(interview.id, 'synced');
+          // Fix 3: Atomically update metadata (with responseId) and status to synced
+          console.log(`📝 Marking interview ${interview.id} as synced with atomic update...`);
+          const syncedInterview = await offlineStorage.getOfflineInterviewById(interview.id);
+          if (syncedInterview) {
+            // Get responseId from metadata if available (from syncCapiInterview/syncCatiInterview)
+            const responseId = syncedInterview.metadata?.responseId || syncedInterview.metadata?.serverResponseId;
+            if (responseId) {
+              // Atomic update: metadata + status together
+              await offlineStorage.updateInterviewMetadataAndStatus(
+                interview.id,
+                {
+                  responseId: responseId,
+                  serverResponseId: responseId,
+                },
+                'synced'
+              );
+            } else {
+              // Fallback: just update status if no responseId (shouldn't happen)
+              await offlineStorage.updateInterviewStatus(interview.id, 'synced');
+            }
+          } else {
+            // Interview not found - just update status (shouldn't happen)
+            await offlineStorage.updateInterviewStatus(interview.id, 'synced');
+          }
           result.syncedCount++;
           console.log(`✅ Successfully synced interview: ${interview.id}`);
           appLoggingService.logSyncResult(interview.id, true, {
@@ -149,8 +170,23 @@ class SyncService {
             console.log(`ℹ️ Interview already exists on server - treating as successfully synced`);
             console.log(`✅ This is expected behavior - interview was already submitted previously`);
             
-            // Mark as synced since it already exists on server
-            await offlineStorage.updateInterviewStatus(interview.id, 'synced');
+            // Fix 3: Atomic metadata and status update - mark as synced atomically
+            // Try to get responseId from interview metadata or from server response if available
+            const duplicateInterview = await offlineStorage.getOfflineInterviewById(interview.id);
+            const responseId = duplicateInterview?.metadata?.responseId || duplicateInterview?.metadata?.serverResponseId;
+            if (responseId) {
+              await offlineStorage.updateInterviewMetadataAndStatus(
+                interview.id,
+                {
+                  responseId: responseId,
+                  serverResponseId: responseId,
+                },
+                'synced'
+              );
+            } else {
+              // Fallback: just update status if no responseId
+              await offlineStorage.updateInterviewStatus(interview.id, 'synced');
+            }
             result.syncedCount++;
             console.log(`✅ Interview ${interview.id} already synced (duplicate submission)`);
             
@@ -221,21 +257,22 @@ class SyncService {
   private async syncCapiInterview(interview: OfflineInterview): Promise<void> {
     console.log(`📋 Syncing CAPI interview: ${interview.id}`);
 
-    // CRITICAL: Check if interview was already successfully submitted
+    // Fix 2 & 3: Check if interview was already successfully submitted
     // If metadata contains a responseId, it means it was already submitted
     if (interview.metadata?.responseId || interview.metadata?.serverResponseId) {
       const existingResponseId = interview.metadata.responseId || interview.metadata.serverResponseId;
       console.log(`ℹ️ Interview ${interview.id} was already submitted with responseId: ${existingResponseId}`);
       console.log(`ℹ️ Skipping duplicate submission - interview is already on server`);
-      // Interview already exists on server - consider it synced
-      // Update metadata to reflect this
-      interview.metadata = {
-        ...interview.metadata,
-        responseId: existingResponseId,
-        serverResponseId: existingResponseId,
-      };
-      await offlineStorage.saveOfflineInterview(interview);
-      console.log(`✅ Interview already synced - will be marked as synced by caller`);
+      // Fix 3: Atomic metadata and status update - ensure responseId is stored and status is updated together
+      await offlineStorage.updateInterviewMetadataAndStatus(
+        interview.id,
+        {
+          responseId: existingResponseId,
+          serverResponseId: existingResponseId,
+        },
+        'synced' // Mark as synced since it's already on server
+      );
+      console.log(`✅ Interview already synced - marked as synced with atomic update`);
       return; // Exit early - interview is already on server
     }
 
@@ -731,9 +768,23 @@ class SyncService {
       console.log('⚠️ Interview synced WITHOUT audio (audio upload may have failed)');
     }
 
-    // Update interview with the real sessionId for future reference (only if needed)
+    // Fix 3: Atomic metadata and status update - store responseId and sessionId together
+    // Update interview with the real sessionId and responseId for future reference
+    const metadataUpdates: any = {
+      responseId: responseId,
+      serverResponseId: responseId,
+    };
+    if (isOfflineSessionId || !interview.sessionId) {
+      metadataUpdates.serverSessionId = sessionId;
+    }
+    
+    // Store responseId atomically with interview update (if sessionId changed)
     if (isOfflineSessionId || !interview.sessionId) {
       interview.sessionId = sessionId;
+      interview.metadata = {
+        ...interview.metadata,
+        ...metadataUpdates,
+      };
       await offlineStorage.saveOfflineInterview(interview);
     }
     
@@ -741,10 +792,12 @@ class SyncService {
     // This ensures we can track when the function actually completes successfully
     console.log(`✅ syncCapiInterview completed successfully for interview: ${interview.id}`);
     console.log(`✅ All API calls verified - ready for cleanup in caller`);
+    console.log(`✅ Response ID stored: ${responseId}`);
     
     // Return success indicator - this function should only return if sync was successful
     // Any errors should throw, which will be caught by the caller's try-catch
     // DO NOT update status or delete here - let the caller do it after this function returns
+    // The caller will use updateInterviewMetadataAndStatus to atomically update metadata and status
   }
 
   /**

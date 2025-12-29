@@ -4658,27 +4658,23 @@ export default function InterviewInterface({ navigation, route }: any) {
         throw new Error('Submission returned success but no response ID - may have failed');
       }
       
-      // CRITICAL: Store responseId in interview metadata so sync service knows it's already submitted
-      const savedInterview = await offlineStorage.getOfflineInterviewById(interviewId);
-      if (savedInterview) {
-        savedInterview.metadata = {
-          ...savedInterview.metadata,
+      // Fix 3: Atomic metadata and status update - store responseId and update status together
+      // This prevents race conditions where metadata might be updated but status is not
+      await offlineStorage.updateInterviewMetadataAndStatus(
+        interviewId,
+        {
           responseId: responseId,
           serverResponseId: responseId,
-        };
-        await offlineStorage.saveOfflineInterview(savedInterview);
-        console.log('✅ Stored responseId in interview metadata:', responseId);
-      }
+        },
+        'pending' // Keep as pending so sync service can verify and mark as synced
+      );
+      console.log('✅ Atomically stored responseId in interview metadata and updated status:', responseId);
       
       // CRITICAL: Do NOT mark as synced or delete here
       // Let the sync service handle status updates and cleanup after proper verification
       // Just log success - the sync service will pick it up and verify it properly
       console.log('✅ Background submission completed - sync service will verify and cleanup:', interviewId);
       console.log('✅ Response ID:', responseId);
-      
-      // Update status back to pending so sync service can handle it properly
-      // The sync service will verify the submission and mark as synced
-      await offlineStorage.updateInterviewStatus(interviewId, 'pending');
     } catch (error: any) {
       console.error('❌ Background submission error:', error);
       // Mark as failed, will retry later
