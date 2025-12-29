@@ -13,3 +13,7 @@ chmod 755 "$TMPDIR"
 # Start Expo
 exec npx expo start "$@"
 
+
+
+
+

@@ -911,6 +911,10 @@ class SyncService {
       }
     }
 
+    // Extract consent response
+    const consentResponse = interview.responses['consent-form'];
+    const isConsentNo = consentResponse === 'no' || consentResponse === '0' || consentResponse === false;
+
     // Prepare polling station data
     let pollingStationData = null;
     if (interview.selectedPollingStation && interview.selectedPollingStation.stationName) {
@@ -944,7 +948,20 @@ class SyncService {
       setNumber: finalSetNumber,
       OldinterviewerID: oldInterviewerID,
       callStatus: finalCallStatus,
-      supervisorID: supervisorID
+      supervisorID: supervisorID,
+      consentResponse: isConsentNo ? 'no' : null, // Set consentResponse if consent is "No"
+      // CRITICAL: Include abandonment information from interview metadata if available (same as CAPI)
+      abandoned: interview.metadata?.isCompleted === false || (interview.metadata?.abandonReason !== null && interview.metadata?.abandonReason !== undefined) ? true : false,
+      abandonedReason: interview.metadata?.abandonReason || null,
+      abandonmentNotes: interview.metadata?.abandonNotes || null,
+      isCompleted: interview.metadata?.isCompleted !== undefined ? interview.metadata.isCompleted : true, // Default to true if not set
+      // Include metadata object for backward compatibility (backend checks both top-level and metadata fields)
+      metadata: {
+        abandoned: interview.metadata?.isCompleted === false || (interview.metadata?.abandonReason !== null && interview.metadata?.abandonReason !== undefined) ? true : false,
+        abandonedReason: interview.metadata?.abandonReason || null,
+        abandonmentNotes: interview.metadata?.abandonNotes || null,
+        isCompleted: interview.metadata?.isCompleted !== undefined ? interview.metadata.isCompleted : true
+      }
     });
 
     if (!result.success) {
