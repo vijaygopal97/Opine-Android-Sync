@@ -72,102 +72,102 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
     rejected: 0,
     pendingApproval: 0
   });
-  // Force Offline Mode - Enabled for debugging
-  const [forceOfflineMode, setForceOfflineMode] = useState(false);
+  // Force Offline Mode - COMMENTED OUT (can be re-enabled when needed)
+  // const [forceOfflineMode, setForceOfflineMode] = useState(false);
   
-  // Network Condition Emulation - Enabled for debugging
-  const [networkCondition, setNetworkCondition] = useState<'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow'>('good_stable');
-  const [networkMenuVisible, setNetworkMenuVisible] = useState(false);
+  // Network Condition Emulation - COMMENTED OUT (can be re-enabled when needed)
+  // const [networkCondition, setNetworkCondition] = useState<'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow'>('good_stable');
+  // const [networkMenuVisible, setNetworkMenuVisible] = useState(false);
   
   // Get safe area insets for bottom navigation
   const insets = useSafeAreaInsets();
 
-  // Load force offline mode state
-  useEffect(() => {
-    const loadForceOfflineMode = async () => {
-      try {
-        const stored = await AsyncStorage.getItem('forceOfflineMode');
-        const enabled = stored === 'true';
-        setForceOfflineMode(enabled);
-        apiService.setForceOfflineMode(enabled);
-      } catch (error) {
-        console.error('Error loading force offline mode:', error);
-      }
-    };
-    loadForceOfflineMode();
-  }, []);
+  // Load force offline mode state - COMMENTED OUT (can be re-enabled when needed)
+  // useEffect(() => {
+  //   const loadForceOfflineMode = async () => {
+  //     try {
+  //       const stored = await AsyncStorage.getItem('forceOfflineMode');
+  //       const enabled = stored === 'true';
+  //       setForceOfflineMode(enabled);
+  //       apiService.setForceOfflineMode(enabled);
+  //     } catch (error) {
+  //       console.error('Error loading force offline mode:', error);
+  //     }
+  //   };
+  //   loadForceOfflineMode();
+  // }, []);
 
-  // Load network condition state
+  // Load network condition state - COMMENTED OUT (can be re-enabled when needed)
   // Debug mode: Load saved network condition from storage
-  useEffect(() => {
-    const loadNetworkCondition = async () => {
-      try {
-        const stored = await AsyncStorage.getItem('networkCondition');
-        const condition: 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow' = 
-          (stored as any) || 'good_stable';
-        setNetworkCondition(condition);
-        apiService.setNetworkCondition(condition);
-        console.log('✅ Network condition loaded:', condition);
-      } catch (error) {
-        console.error('Error loading network condition:', error);
-        // Fallback: ensure it's set to good_stable
-        setNetworkCondition('good_stable');
-        apiService.setNetworkCondition('good_stable');
-      }
-    };
-    loadNetworkCondition();
-  }, []);
+  // useEffect(() => {
+  //   const loadNetworkCondition = async () => {
+  //     try {
+  //       const stored = await AsyncStorage.getItem('networkCondition');
+  //       const condition: 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow' = 
+  //         (stored as any) || 'good_stable';
+  //       setNetworkCondition(condition);
+  //       apiService.setNetworkCondition(condition);
+  //       console.log('✅ Network condition loaded:', condition);
+  //     } catch (error) {
+  //       console.error('Error loading network condition:', error);
+  //       // Fallback: ensure it's set to good_stable
+  //       setNetworkCondition('good_stable');
+  //       apiService.setNetworkCondition('good_stable');
+  //     }
+  //   };
+  //   loadNetworkCondition();
+  // }, []);
 
-  // Toggle force offline mode function
-  const toggleForceOfflineMode = async () => {
-    const newValue = !forceOfflineMode;
-    setForceOfflineMode(newValue);
-    apiService.setForceOfflineMode(newValue);
-    try {
-      await AsyncStorage.setItem('forceOfflineMode', String(newValue));
-      showSnackbar(
-        newValue 
-          ? '🔴 Force Offline Mode ENABLED - All API calls will be blocked' 
-          : '🟢 Force Offline Mode DISABLED - Normal mode restored',
-        newValue ? 'info' : 'success'
-      );
-    } catch (error) {
-      console.error('Error saving force offline mode:', error);
-    }
-  };
+  // Toggle force offline mode function - COMMENTED OUT (can be re-enabled when needed)
+  // const toggleForceOfflineMode = async () => {
+  //   const newValue = !forceOfflineMode;
+  //   setForceOfflineMode(newValue);
+  //   apiService.setForceOfflineMode(newValue);
+  //   try {
+  //     await AsyncStorage.setItem('forceOfflineMode', String(newValue));
+  //     showSnackbar(
+  //       newValue 
+  //         ? '🔴 Force Offline Mode ENABLED - All API calls will be blocked' 
+  //         : '🟢 Force Offline Mode DISABLED - Normal mode restored',
+  //       newValue ? 'info' : 'success'
+  //     );
+  //   } catch (error) {
+  //     console.error('Error saving force offline mode:', error);
+  //   }
+  // };
 
-  // Change network condition function
-  const changeNetworkCondition = async (condition: 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow') => {
-    setNetworkCondition(condition);
-    apiService.setNetworkCondition(condition);
-    setNetworkMenuVisible(false);
-    try {
-      await AsyncStorage.setItem('networkCondition', condition);
-      const conditionNames: Record<string, string> = {
-        'good_stable': 'Good Stable Internet',
-        'below_average': 'Below Average Internet',
-        'slow_unstable': 'Slow & Unstable Internet',
-        'very_slow': 'Very Slow Internet',
-      };
-      showSnackbar(
-        `🌐 Network condition: ${conditionNames[condition]}`,
-        'info'
-      );
-    } catch (error) {
-      console.error('Error saving network condition:', error);
-    }
-  };
+  // Change network condition function - COMMENTED OUT (can be re-enabled when needed)
+  // const changeNetworkCondition = async (condition: 'good_stable' | 'below_average' | 'slow_unstable' | 'very_slow') => {
+  //   setNetworkCondition(condition);
+  //   apiService.setNetworkCondition(condition);
+  //   setNetworkMenuVisible(false);
+  //   try {
+  //     await AsyncStorage.setItem('networkCondition', condition);
+  //     const conditionNames: Record<string, string> = {
+  //       'good_stable': 'Good Stable Internet',
+  //       'below_average': 'Below Average Internet',
+  //       'slow_unstable': 'Slow & Unstable Internet',
+  //       'very_slow': 'Very Slow Internet',
+  //     };
+  //     showSnackbar(
+  //       `🌐 Network condition: ${conditionNames[condition]}`,
+  //       'info'
+  //     );
+  //   } catch (error) {
+  //     console.error('Error saving network condition:', error);
+  //   }
+  // };
 
-  // Get network condition display name
-  const getNetworkConditionName = (condition: string): string => {
-    const names: Record<string, string> = {
-      'good_stable': 'Good Stable',
-      'below_average': 'Below Average',
-      'slow_unstable': 'Slow & Unstable',
-      'very_slow': 'Very Slow',
-    };
-    return names[condition] || condition;
-  };
+  // Get network condition display name - COMMENTED OUT (can be re-enabled when needed)
+  // const getNetworkConditionName = (condition: string): string => {
+  //   const names: Record<string, string> = {
+  //     'good_stable': 'Good Stable',
+  //     'below_average': 'Below Average',
+  //     'slow_unstable': 'Slow & Unstable',
+  //     'very_slow': 'Very Slow',
+  //   };
+  //   return names[condition] || condition;
+  // };
   
   // Animation effects for loading screen
   useEffect(() => {
@@ -1399,8 +1399,8 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
-      {/* Debug Controls - Force Offline Mode & Network Condition - ENABLED for testing */}
-      <View style={styles.debugControlsContainer}>
+      {/* Debug Controls - Force Offline Mode & Network Condition - COMMENTED OUT (can be re-enabled when needed) */}
+      {/* <View style={styles.debugControlsContainer}>
         <TouchableOpacity
           style={[styles.debugControlButton, forceOfflineMode && styles.debugControlButtonActive]}
           onPress={toggleForceOfflineMode}
@@ -1461,7 +1461,7 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
             titleStyle={networkCondition === 'very_slow' ? { fontWeight: 'bold' } : {}}
           />
         </Menu>
-      </View>
+      </View> */}
       <LinearGradient
         colors={['#001D48', '#373177', '#3FADCC']}
         start={{ x: 0, y: 0 }}
@@ -2024,42 +2024,42 @@ export default function InterviewerDashboard({ navigation, user, onLogout }: Das
 }
 
 const styles = StyleSheet.create({
-  // Debug Controls styles - Force Offline Mode & Network Condition - ENABLED for testing
-  debugControlsContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 4,
-    backgroundColor: '#f5f5f5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    gap: 8,
-  },
-  debugControlButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  debugControlButtonActive: {
-    backgroundColor: '#dc2626',
-    borderColor: '#b91c1c',
-  },
-  debugControlText: {
-    marginLeft: 6,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#666',
-  },
-  debugControlTextActive: {
-    color: '#fff',
-  },
+  // Debug Controls styles - Force Offline Mode & Network Condition - COMMENTED OUT (can be re-enabled when needed)
+  // debugControlsContainer: {
+  //   flexDirection: 'row',
+  //   paddingHorizontal: 16,
+  //   paddingTop: 8,
+  //   paddingBottom: 4,
+  //   backgroundColor: '#f5f5f5',
+  //   borderBottomWidth: 1,
+  //   borderBottomColor: '#e0e0e0',
+  //   gap: 8,
+  // },
+  // debugControlButton: {
+  //   flex: 1,
+  //   flexDirection: 'row',
+  //   alignItems: 'center',
+  //   justifyContent: 'center',
+  //   paddingVertical: 8,
+  //   paddingHorizontal: 12,
+  //   backgroundColor: '#fff',
+  //   borderRadius: 8,
+  //   borderWidth: 1,
+  //   borderColor: '#ddd',
+  // },
+  // debugControlButtonActive: {
+  //   backgroundColor: '#dc2626',
+  //   borderColor: '#b91c1c',
+  // },
+  // debugControlText: {
+  //   marginLeft: 6,
+  //   fontSize: 13,
+  //   fontWeight: '600',
+  //   color: '#666',
+  // },
+  // debugControlTextActive: {
+  //   color: '#fff',
+  // },
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
