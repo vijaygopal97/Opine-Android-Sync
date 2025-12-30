@@ -805,47 +805,6 @@ class OfflineDataCacheService {
     }
 
     console.log('✅ Finished downloading dependent data (AC and polling data skipped - using bundled files)');
-
-    // Download gender quotas for all surveys (still needed from server)
-    for (const surveyId of surveyIds) {
-      try {
-        const result = await apiService.getGenderResponseCounts(surveyId);
-        if (result.success && result.data) {
-          await this.saveGenderQuotas(surveyId, result.data);
-          console.log(`✅ Cached gender quotas for survey: ${surveyId}`);
-        }
-      } catch (error) {
-        console.error(`❌ Error downloading gender quotas for ${surveyId}:`, error);
-      }
-    }
-
-    // Download CATI set numbers for CATI surveys (still needed from server)
-    for (const survey of surveys) {
-      if (survey.mode === 'cati' || survey.assignedMode === 'cati') {
-        try {
-          const result = await apiService.getLastCatiSetNumber(survey._id || survey.id);
-          if (result && result.success && result.data) {
-            await this.saveCatiSetNumber(survey._id || survey.id, result.data);
-            console.log(`✅ Cached CATI set number for survey: ${survey._id || survey.id}`);
-          }
-        } catch (error) {
-          console.error(`❌ Error downloading CATI set number for ${survey._id}:`, error);
-        }
-      }
-    }
-
-    // Download user data - ALWAYS force refresh from server to get latest locationControlBooster
-    try {
-      const userResult = await apiService.getCurrentUser(true); // forceRefresh = true to get latest booster status
-      if (userResult.success && userResult.user) {
-        await this.saveUserData(userResult.user);
-        console.log('✅ Cached fresh user data (locationControlBooster refreshed)');
-      }
-    } catch (error) {
-      console.error('❌ Error downloading user data:', error);
-    }
-
-    console.log('✅ Finished downloading dependent data (AC and polling data skipped - using bundled files)');
     } catch (error) {
       console.error('❌ Error in downloadDependentDataForSurveys:', error);
       throw error;

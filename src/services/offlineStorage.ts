@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
+import { offlineDataCache } from './offlineDataCache';
 
 // Storage keys
 const STORAGE_KEYS = {
@@ -77,9 +78,8 @@ class OfflineStorageService {
           try {
             this.isDownloadingDependentData = true;
             console.log('📥 Downloading all dependent data for surveys...');
-            const { offlineDataCache } = await import('./offlineDataCache');
-            // Always include GPS data for geofencing to work offline
-            await offlineDataCache.downloadDependentDataForSurveys(surveys, true);
+            // GPS data is fetched on-demand during interviews, no need to download upfront
+            await offlineDataCache.downloadDependentDataForSurveys(surveys, false);
             console.log('✅ All dependent data downloaded and cached');
           } catch (dependentDataError) {
             console.error('❌ Error downloading dependent data:', dependentDataError);
